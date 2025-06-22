@@ -147,8 +147,10 @@ def main(args):
                 kps = np.concatenate((kps_xy, kps_logit, kps_prob), axis=2)
                 kps = kps.transpose(0, 2, 1)
             else:
-                kps = []
-                bbox_tensor = []
+                # kps = []
+                # bbox_tensor = []
+                bbox_tensor = np.zeros((1, 5))  # Dummy bbox with shape (1, 5)
+                kps = np.zeros((1, 4, 17))
 
             # print("boxes type:", type(bbox_tensor), "len:", len(bbox_tensor))
             # print("keypoints shape:", np.shape(kps))
@@ -179,9 +181,9 @@ def main(args):
 
         np.savez_compressed(
             npz_out_path,
-            boxes=boxes,
-            segments=segments,
-            keypoints=keypoints,
+            boxes=np.array(boxes, dtype=object),
+            segments=np.array(segments, dtype=object),
+            keypoints=np.array(keypoints, dtype=object),
             metadata=metadata,
         )
 
