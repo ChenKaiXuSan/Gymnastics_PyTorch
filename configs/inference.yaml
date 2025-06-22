@@ -1,0 +1,22 @@
+# * this method should use python -m to make sure the hydra config is loaded correctly
+# hydra config
+hydra:
+  run:
+    dir: ${log_path}
+  sweep:
+    dir: ${log_path}
+    # subdir: 
+  job:
+    chdir: false 
+
+log_path: logs/
+
+data:
+  path: /workspace/data/
+  frame_path: ${data.path}/frames
+  npz_path: ${data.path}/npz
+  res_path: ${data.path}/results
+
+cfg: COCO-Keypoints/keypoint_rcnn_R_101_FPN_3x.yaml
+
+gpu: 0

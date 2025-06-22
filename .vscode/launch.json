@@ -5,6 +5,14 @@
       "type": "debugpy",
       "request": "launch",
       "module": "enter-your-module-name"
-    }
+    },
+    {
+      "name": "inference_d2",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "videopose3d.inference.infer_video_d2",
+      "cwd": "/workspace/code",
+      "console": "integratedTerminal"
+    },
   ]
 }

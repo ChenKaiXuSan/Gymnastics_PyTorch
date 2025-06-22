@@ -11,3 +11,5 @@ hydra:
 
 trian:
   log_path: logs/
+
+cfg: COCO-Keypoints/keypoint_rcnn_R_101_FPN_3x.yaml
