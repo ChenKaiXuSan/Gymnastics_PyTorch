@@ -1013,7 +1013,7 @@ def evaluate(
     return e1, e2, e3, ev
 
 
-if args.render:
+if cfg.generate_3d_pose.render:
     print("Rendering...")
 
     for viz_subject in subjects_test:
@@ -1112,7 +1112,7 @@ if args.render:
                 Path(cfg.data.pose_3d_viz_path)
                 / viz_subject.parent.parent.stem
                 / viz_subject.parent.stem
-                / f"{viz_subject.stem}.gif"
+                / f"{viz_subject.stem}.mp4"
             )
             if not _output.exists():
                 _output.parent.mkdir(parents=True, exist_ok=True)
@@ -1134,107 +1134,107 @@ if args.render:
                 input_video_skip=args.viz_skip,
             )
 
-else:
-    print("Evaluating...")
-    all_actions = {}
-    all_actions_by_subject = {}
-    for subject in subjects_test:
-        if subject not in all_actions_by_subject:
-            all_actions_by_subject[subject] = {}
+# else:
+#     print("Evaluating...")
+#     all_actions = {}
+#     all_actions_by_subject = {}
+#     for subject in subjects_test:
+#         if subject not in all_actions_by_subject:
+#             all_actions_by_subject[subject] = {}
 
-        for action in dataset[subject].keys():
-            action_name = action.split(" ")[0]
-            if action_name not in all_actions:
-                all_actions[action_name] = []
-            if action_name not in all_actions_by_subject[subject]:
-                all_actions_by_subject[subject][action_name] = []
-            all_actions[action_name].append((subject, action))
-            all_actions_by_subject[subject][action_name].append((subject, action))
+#         for action in dataset[subject].keys():
+#             action_name = action.split(" ")[0]
+#             if action_name not in all_actions:
+#                 all_actions[action_name] = []
+#             if action_name not in all_actions_by_subject[subject]:
+#                 all_actions_by_subject[subject][action_name] = []
+#             all_actions[action_name].append((subject, action))
+#             all_actions_by_subject[subject][action_name].append((subject, action))
 
-    def fetch_actions(actions):
-        out_poses_3d = []
-        out_poses_2d = []
+#     def fetch_actions(actions):
+#         out_poses_3d = []
+#         out_poses_2d = []
 
-        for subject, action in actions:
-            poses_2d = keypoints[subject][action]
-            for i in range(len(poses_2d)):  # Iterate across cameras
-                out_poses_2d.append(poses_2d[i])
+#         for subject, action in actions:
+#             poses_2d = keypoints[subject][action]
+#             for i in range(len(poses_2d)):  # Iterate across cameras
+#                 out_poses_2d.append(poses_2d[i])
 
-            poses_3d = dataset[subject][action]["positions_3d"]
-            assert len(poses_3d) == len(poses_2d), "Camera count mismatch"
-            for i in range(len(poses_3d)):  # Iterate across cameras
-                out_poses_3d.append(poses_3d[i])
+#             poses_3d = dataset[subject][action]["positions_3d"]
+#             assert len(poses_3d) == len(poses_2d), "Camera count mismatch"
+#             for i in range(len(poses_3d)):  # Iterate across cameras
+#                 out_poses_3d.append(poses_3d[i])
 
-        stride = args.downsample
-        if stride > 1:
-            # Downsample as requested
-            for i in range(len(out_poses_2d)):
-                out_poses_2d[i] = out_poses_2d[i][::stride]
-                if out_poses_3d is not None:
-                    out_poses_3d[i] = out_poses_3d[i][::stride]
+#         stride = args.downsample
+#         if stride > 1:
+#             # Downsample as requested
+#             for i in range(len(out_poses_2d)):
+#                 out_poses_2d[i] = out_poses_2d[i][::stride]
+#                 if out_poses_3d is not None:
+#                     out_poses_3d[i] = out_poses_3d[i][::stride]
 
-        return out_poses_3d, out_poses_2d
+#         return out_poses_3d, out_poses_2d
 
-    def run_evaluation(actions, action_filter=None):
-        errors_p1 = []
-        errors_p2 = []
-        errors_p3 = []
-        errors_vel = []
+#     def run_evaluation(actions, action_filter=None):
+#         errors_p1 = []
+#         errors_p2 = []
+#         errors_p3 = []
+#         errors_vel = []
 
-        for action_key in actions.keys():
-            if action_filter is not None:
-                found = False
-                for a in action_filter:
-                    if action_key.startswith(a):
-                        found = True
-                        break
-                if not found:
-                    continue
+#         for action_key in actions.keys():
+#             if action_filter is not None:
+#                 found = False
+#                 for a in action_filter:
+#                     if action_key.startswith(a):
+#                         found = True
+#                         break
+#                 if not found:
+#                     continue
 
-            poses_act, poses_2d_act = fetch_actions(actions[action_key])
-            gen = UnchunkedGenerator(
-                None,
-                poses_act,
-                poses_2d_act,
-                pad=pad,
-                causal_shift=causal_shift,
-                augment=args.test_time_augmentation,
-                kps_left=kps_left,
-                kps_right=kps_right,
-                joints_left=joints_left,
-                joints_right=joints_right,
-            )
-            e1, e2, e3, ev = evaluate(gen, action_key)
-            errors_p1.append(e1)
-            errors_p2.append(e2)
-            errors_p3.append(e3)
-            errors_vel.append(ev)
+#             poses_act, poses_2d_act = fetch_actions(actions[action_key])
+#             gen = UnchunkedGenerator(
+#                 None,
+#                 poses_act,
+#                 poses_2d_act,
+#                 pad=pad,
+#                 causal_shift=causal_shift,
+#                 augment=args.test_time_augmentation,
+#                 kps_left=kps_left,
+#                 kps_right=kps_right,
+#                 joints_left=joints_left,
+#                 joints_right=joints_right,
+#             )
+#             e1, e2, e3, ev = evaluate(gen, action_key)
+#             errors_p1.append(e1)
+#             errors_p2.append(e2)
+#             errors_p3.append(e3)
+#             errors_vel.append(ev)
 
-        print(
-            "Protocol #1   (MPJPE) action-wise average:",
-            round(np.mean(errors_p1), 1),
-            "mm",
-        )
-        print(
-            "Protocol #2 (P-MPJPE) action-wise average:",
-            round(np.mean(errors_p2), 1),
-            "mm",
-        )
-        print(
-            "Protocol #3 (N-MPJPE) action-wise average:",
-            round(np.mean(errors_p3), 1),
-            "mm",
-        )
-        print(
-            "Velocity      (MPJVE) action-wise average:",
-            round(np.mean(errors_vel), 2),
-            "mm",
-        )
+#         print(
+#             "Protocol #1   (MPJPE) action-wise average:",
+#             round(np.mean(errors_p1), 1),
+#             "mm",
+#         )
+#         print(
+#             "Protocol #2 (P-MPJPE) action-wise average:",
+#             round(np.mean(errors_p2), 1),
+#             "mm",
+#         )
+#         print(
+#             "Protocol #3 (N-MPJPE) action-wise average:",
+#             round(np.mean(errors_p3), 1),
+#             "mm",
+#         )
+#         print(
+#             "Velocity      (MPJVE) action-wise average:",
+#             round(np.mean(errors_vel), 2),
+#             "mm",
+#         )
 
-    if not args.by_subject:
-        run_evaluation(all_actions, action_filter)
-    else:
-        for subject in all_actions_by_subject.keys():
-            print("Evaluating on subject", subject)
-            run_evaluation(all_actions_by_subject[subject], action_filter)
-            print("")
+#     if not args.by_subject:
+#         run_evaluation(all_actions, action_filter)
+#     else:
+#         for subject in all_actions_by_subject.keys():
+#             print("Evaluating on subject", subject)
+#             run_evaluation(all_actions_by_subject[subject], action_filter)
+#             print("")

@@ -26,3 +26,4 @@ gpu: 0
 
 generate_3d_pose: 
   ckpt: checkpoint
+  render: True
