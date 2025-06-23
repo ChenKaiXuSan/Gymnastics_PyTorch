@@ -13,6 +13,7 @@ from matplotlib.animation import FuncAnimation, writers
 from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 import subprocess as sp
+import cv2
 
 def get_resolution(filename):
     command = ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
@@ -29,30 +30,21 @@ def get_fps(filename):
         for line in pipe.stdout:
             a, b = line.decode().strip().split('/')
             return int(a) / int(b)
-
-def read_video(filename, skip=0, limit=-1):
-    w, h = get_resolution(filename)
-    
-    command = ['ffmpeg',
-            '-i', filename,
-            '-f', 'image2pipe',
-            '-pix_fmt', 'rgb24',
-            '-vsync', '0',
-            '-vcodec', 'rawvideo', '-']
-    
-    i = 0
-    with sp.Popen(command, stdout = sp.PIPE, bufsize=-1) as pipe:
-        while True:
-            data = pipe.stdout.read(w*h*3)
-            if not data:
-                break
-            i += 1
-            if i > limit and limit != -1:
-                continue
-            if i > skip:
-                yield np.frombuffer(data, dtype='uint8').reshape((h, w, 3))
             
-                
+def video_frame_generator(video_path):
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise IOError(f"Failed to open video: {video_path}")
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        # 顺时针旋转90度
+        frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+        # BGR 转 RGB
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        yield frame
+    cap.release()
                 
     
 def downsample_tensor(X, factor):
@@ -109,7 +101,9 @@ def render_animation(keypoints, keypoints_metadata, poses, skeleton, fps, bitrat
     else:
         # Load video using ffmpeg
         all_frames = []
-        for f in read_video(input_video_path, skip=input_video_skip, limit=limit):
+        
+        # for f in read_video(input_video_path, skip=input_video_skip, limit=limit):
+        for f in video_frame_generator(input_video_path):
             all_frames.append(f)
         effective_length = min(keypoints.shape[0], len(all_frames))
         all_frames = all_frames[:effective_length]
@@ -198,6 +192,7 @@ def render_animation(keypoints, keypoints_metadata, poses, skeleton, fps, bitrat
     fig.tight_layout()
     
     anim = FuncAnimation(fig, update_video, frames=np.arange(0, limit), interval=1000/fps, repeat=False)
+    output = str(output)
     if output.endswith('.mp4'):
         Writer = writers['ffmpeg']
         writer = Writer(fps=fps, metadata={}, bitrate=bitrate)

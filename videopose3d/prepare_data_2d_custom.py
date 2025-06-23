@@ -82,7 +82,7 @@ def main(args):
     file_list = list(npz_path.rglob("*.npz"))
 
     for f in file_list:
-        canonical_name = f
+        canonical_name = str(f)
         data, video_metadata = decode(f)
         output[canonical_name] = {}
         output[canonical_name]["custom"] = [data[0]["keypoints"].astype("float32")]

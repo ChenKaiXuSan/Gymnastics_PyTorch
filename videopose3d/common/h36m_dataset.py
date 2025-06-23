@@ -7,9 +7,9 @@
 
 import numpy as np
 import copy
-from common.skeleton import Skeleton
-from common.mocap_dataset import MocapDataset
-from common.camera import normalize_screen_coordinates, image_coordinates
+from videopose3d.common.skeleton import Skeleton
+from videopose3d.common.mocap_dataset import MocapDataset
+from videopose3d.common.camera import normalize_screen_coordinates, image_coordinates
        
 h36m_skeleton = Skeleton(parents=[-1,  0,  1,  2,  3,  4,  0,  6,  7,  8,  9,  0, 11, 12, 13, 14, 12,
        16, 17, 18, 19, 20, 19, 22, 12, 24, 25, 26, 27, 28, 27, 30],

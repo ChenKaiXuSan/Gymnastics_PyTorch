@@ -17,7 +17,12 @@ data:
   res_path: ${data.path}/results
   npz_path: ${data.path}/npz
   filter_npz_path: ${data.path}/filter_npz
+  pose_3d_path: ${data.path}/pose_3d
+  pose_3d_viz_path: ${data.path}/pose_3d_viz
 
 cfg: COCO-Keypoints/keypoint_rcnn_R_101_FPN_3x.yaml
 
 gpu: 0
+
+generate_3d_pose: 
+  ckpt: checkpoint

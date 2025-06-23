@@ -7,10 +7,10 @@
 
 import numpy as np
 import copy
-from common.skeleton import Skeleton
-from common.mocap_dataset import MocapDataset
-from common.camera import normalize_screen_coordinates, image_coordinates
-from common.h36m_dataset import h36m_skeleton
+from videopose3d.common.skeleton import Skeleton
+from videopose3d.common.mocap_dataset import MocapDataset
+from videopose3d.common.camera import normalize_screen_coordinates, image_coordinates
+from videopose3d.common.h36m_dataset import h36m_skeleton
        
 
 custom_camera_params = {

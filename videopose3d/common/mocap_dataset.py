@@ -6,7 +6,7 @@
 #
 
 import numpy as np
-from common.skeleton import Skeleton
+from videopose3d.common.skeleton import Skeleton
 
 class MocapDataset:
     def __init__(self, fps, skeleton):
