@@ -10,9 +10,17 @@
       "name": "inference_d2",
       "type": "debugpy",
       "request": "launch",
-      "module": "videopose3d.inference.infer_video_d2",
+      "module": "videopose3d.infer_video_d2",
       "cwd": "/workspace/code",
       "console": "integratedTerminal"
     },
+    {
+      "name": "prepare_data",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "videopose3d.prepare_data_2d_custom",
+      "cwd": "/workspace/code",
+      "console": "integratedTerminal"
+    }
   ]
 }

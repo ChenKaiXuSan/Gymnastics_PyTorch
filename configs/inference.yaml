@@ -14,8 +14,9 @@ log_path: logs/
 data:
   path: /workspace/data/
   frame_path: ${data.path}/frames
-  npz_path: ${data.path}/npz
   res_path: ${data.path}/results
+  npz_path: ${data.path}/npz
+  filter_npz_path: ${data.path}/filter_npz
 
 cfg: COCO-Keypoints/keypoint_rcnn_R_101_FPN_3x.yaml
 
