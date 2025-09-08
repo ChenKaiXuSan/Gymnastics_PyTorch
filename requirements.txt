@@ -1,9 +1,9 @@
-pytorch-lightning >= 1.0.0rc2
-torch >= 2.2.0
-torchvision >= 0.8.0
+pytorch-lightning 
+torch
+torchvision
 
 # yolo api
-ultralytics
+ultralytics==8.3.113
 
 # config hydra 
 hydra-core
@@ -11,4 +11,20 @@ hydra-core
 # for cross validation
 scikit-learn
 
+imblearn
+
+grad-cam
+
+captum
+
+tensorboard
+
+rich
+
+av
+
+transformers
+
+opencv-python
+numpy
 plotly

@@ -18,7 +18,7 @@
       "name": "prepare_data",
       "type": "debugpy",
       "request": "launch",
-      "module": "videopose3d.prepare_data_2d_custom",
+      "module": "prepare_dataset.main_chunk",
       "cwd": "/workspace/code",
       "console": "integratedTerminal"
     },

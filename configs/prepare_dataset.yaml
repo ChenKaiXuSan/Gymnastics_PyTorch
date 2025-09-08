@@ -1,0 +1,45 @@
+# hydra config
+hydra:
+  run:
+    dir: ${logs}/prepare_dataset/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false
+
+YOLO:
+  pose_ckpt: "/workspace/code/ckpt/yolo11x-pose.pt"
+  seg_ckpt: "/workspace/code/ckpt/yolo11x-seg.pt"
+  bbox_ckpt: "/workspace/code/ckpt/yolo11x.pt"
+  conf: 0.3
+  iou: 0.5
+  verbose: False
+  img_size: 640
+  tracking: true
+  save: true
+
+depth_estimator:
+  dpt_processor_path: "/workspace/code/ckpt/"
+  dpt_model_path: "/workspace/code/ckpt/"
+  save: true
+  model: Intel/dpt-large
+
+# Path
+# use YOLOv11 detection with tracking.
+extract_dataset:
+  data_path: "/workspace/data/raw"
+  save_path: "/workspace/data/" # this is extracted video path.
+  overwrite: true
+  embed_frames_in_pt: true
+
+optical_flow:
+  save: true
+
+chunk_size: 128
+device: 1
+
+task: ["depth", "optical_flow", "yolo", "detectron2"]
+
+detectron2:
+  cfg: "COCO-Keypoints/keypoint_rcnn_R_50_FPN_3x.yaml"
+  score_thresh: 0.7
+
+logs: "/workspace/code/logs"
