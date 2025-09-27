@@ -48,8 +48,6 @@ class CalibConfig:
     rotate_deg: int = 0  # rotate frames/images by deg (0/90/180/270)
     prune_top_ratio: float = 0.1  # auto-drop worst x% images once; set 0 to disable
     output_dir: str = "logs/calibration_vis"
-    output_npz: str = "logs/calibration_vis/calibration_parameters.npz"
-    output_yml: str = "logs/calibration_vis/calibration_parameters.yml"
 
     @property
     def board_size(self) -> Tuple[int, int]:
@@ -440,9 +438,11 @@ def calibrate_camera(
                 )
 
     # Save parameters (.npz + .yml)
-    Path(cfg.output_npz).parent.mkdir(parents=True, exist_ok=True)
+    output_npz = out_dir / "calibration_parameters.npz"
+    output_npz.parent.mkdir(parents=True, exist_ok=True)
+
     np.savez(
-        cfg.output_npz,
+        output_npz,
         camera_matrix=K,
         dist_coeffs=dist,
         rvecs=rvecs,
@@ -455,7 +455,8 @@ def calibrate_camera(
     )
 
     try:
-        fs = cv2.FileStorage(cfg.output_yml, cv2.FILE_STORAGE_WRITE)
+        output_yml = out_dir / "calibration_parameters.yaml"
+        fs = cv2.FileStorage(output_yml, cv2.FILE_STORAGE_WRITE)
         fs.write("image_width", int(w))
         fs.write("image_height", int(h))
         fs.write("camera_matrix", K)
@@ -578,7 +579,12 @@ def calibrate_from_input(input_path: str | os.PathLike, cfg: CalibConfig) -> dic
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Camera calibration (images or video)")
-    p.add_argument("input", help="Directory of images or a video file path")
+    p.add_argument(
+        "--input",
+        type=str,
+        default="/workspace/code/camera_calibration/input_video",
+        help="Directory of images or a video file path",
+    )
     p.add_argument(
         "--board", type=str, default="9x6", help="Inner corners as CxR, e.g., 9x6"
     )
@@ -586,12 +592,7 @@ def parse_args() -> argparse.Namespace:
         "--square", type=float, default=25.0, help="Square size in your length unit"
     )
     p.add_argument("--out_dir", type=str, default="logs/calibration_vis")
-    p.add_argument(
-        "--out_npz", type=str, default="logs/calibration_vis/calibration_parameters.npz"
-    )
-    p.add_argument(
-        "--out_yml", type=str, default="logs/calibration_vis/calibration_parameters.yml"
-    )
+
     p.add_argument("--fast_check", action="store_true")
     p.add_argument(
         "--no_rational", action="store_true", help="Disable rational distortion model"
@@ -626,8 +627,6 @@ def main() -> None:
         fast_check=args.fast_check,
         prune_top_ratio=max(0.0, min(0.9, args.prune)),
         output_dir=args.out_dir,
-        output_npz=args.out_npz,
-        output_yml=args.out_yml,
         rotate_deg=args.rotate_deg,
     )
     LOG.info("Config: %s", cfg)
