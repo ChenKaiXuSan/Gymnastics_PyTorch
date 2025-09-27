@@ -13,33 +13,36 @@ import numpy as np
 import pandas as pd
 
 
-def extract_frames_from_video(video_path, output_dir, step=1):
+def extract_frames_from_video(video_path, output_dir, step=1, rotate_cw=False):
     os.makedirs(output_dir, exist_ok=True)
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        raise IOError(f"❌ Failed to open video: {video_path}")
+        raise RuntimeError(f"Failed to open: {video_path}")
 
-    frame_idx, saved_idx = 0, 0
+    idx, kept = -1, 0
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-        if frame_idx % step == 0:
-            fname = os.path.join(output_dir, f"frame_{saved_idx:04d}.JPG")
-            cv2.imwrite(fname, frame)
-            saved_idx += 1
-        frame_idx += 1
-
+        idx += 1
+        if idx % step != 0:
+            continue
+        if rotate_cw:
+            frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)  # 向右旋转90°
+        cv2.imwrite(os.path.join(output_dir, f"frame_{idx:06d}.jpg"), frame)
+        kept += 1
     cap.release()
-    print(f"✅ {saved_idx} frames extracted from {os.path.basename(video_path)}")
+    return kept
 
 
-def extract_frames_from_multiple_videos(video_paths, base_output_dir, step=1):
+def extract_frames_from_multiple_videos(
+    video_paths, base_output_dir, step=1, rotate_cw=False
+):
     frame_dirs = []
     for video_path in video_paths:
         video_name = os.path.splitext(os.path.basename(video_path))[0]
         output_dir = os.path.join(base_output_dir, f"{video_name}_frames")
-        extract_frames_from_video(video_path, output_dir, step)
+        extract_frames_from_video(video_path, output_dir, step, rotate_cw=rotate_cw)
         frame_dirs.append(output_dir)
     return frame_dirs
 
@@ -160,7 +163,7 @@ if __name__ == "__main__":
 
     # === Process Each Video ===
     all_frame_dirs = extract_frames_from_multiple_videos(
-        video_list, FRAME_BASE_DIR, step=STEP
+        video_list, FRAME_BASE_DIR, step=STEP, rotate_cw=True
     )
 
     for frame_dir in all_frame_dirs:

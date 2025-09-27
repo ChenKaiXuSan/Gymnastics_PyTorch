@@ -37,6 +37,17 @@
       "module": "kpt_generation.main",
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal"
+    },
+    {
+      "name": "calibration",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "camera_calibration.main2",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "args": [
+        "/workspace/code/camera_calibration/input_video"
+      ]
     }
   ]
 }
