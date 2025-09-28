@@ -45,9 +45,9 @@
       "module": "camera_calibration.main2",
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
-      "args": [
-        "/workspace/code/camera_calibration/input_video"
-      ]
+    //   "args": [
+    //     "/workspace/code/camera_calibration/input_video"
+    //   ]
     }
   ]
 }
