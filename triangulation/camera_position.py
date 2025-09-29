@@ -23,6 +23,7 @@ import numpy as np
 import cv2
 import torch
 import matplotlib
+import os
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -133,6 +134,9 @@ def save_sift_keypoints_image(img_gray, keypoints, save_path, figsize=(10, 8)):
         save_path: str, 要保存的文件路径（如 'keypoints.jpg'）
         figsize: tuple, 图像大小（用于 matplotlib）
     """
+
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
     img_kp = cv2.drawKeypoints(
         img_gray,
         keypoints,
@@ -200,8 +204,8 @@ def visualize_SIFT_matches(img1, img2, kp1, kp2, save_path, top_n=50, figsize=(1
     kp2, des2 = sift.detectAndCompute(img2, None)
 
     # 保存关键点图
-    save_sift_keypoints_image(img1, kp1, "left_keypoints.jpg")
-    save_sift_keypoints_image(img2, kp2, "right_keypoints.jpg")
+    # save_sift_keypoints_image(img1, kp1, save_path)
+    # save_sift_keypoints_image(img2, kp2, save_path)
 
     # 匹配与 ratio test
     bf = cv2.BFMatcher()
@@ -213,4 +217,4 @@ def visualize_SIFT_matches(img1, img2, kp1, kp2, save_path, top_n=50, figsize=(1
             good_matches.append(m)
 
     # 保存匹配图
-    save_sift_matches_image(img1, img2, kp1, kp2, good_matches, "sift_matches.jpg")
+    save_sift_matches_image(img1, img2, kp1, kp2, good_matches, save_path)

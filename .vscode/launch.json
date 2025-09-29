@@ -34,7 +34,7 @@
       "name": "triangulate",
       "type": "debugpy",
       "request": "launch",
-      "module": "kpt_generation.main",
+      "module": "triangulation.main",
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal"
     },

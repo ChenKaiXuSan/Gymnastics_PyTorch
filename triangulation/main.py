@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 import plotly.graph_objs as go
 import plotly.offline as py
 
-from kpt_generation.camera_position import (
+from triangulation.camera_position import (
     estimate_camera_pose_from_sift_imgs,
     estimate_pose,
     to_gray_cv_image,
@@ -40,6 +40,7 @@ def draw_and_save_keypoints_from_frame(
     thickness=-1,
     with_index=True,
 ):
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
     img = frame.numpy() if isinstance(frame, torch.Tensor) else frame.copy()
     for i, (x, y) in enumerate(keypoints):
         if np.isnan(x) or np.isnan(y):
@@ -93,9 +94,9 @@ def draw_camera(ax, R, T, scale=0.1, label="Cam"):
 # ---------- 相机参数 ----------
 K = np.array(
     [
-        [1.53905292e03, 0.00000000e00, 8.67619960e02],
-        [0.00000000e00, 1.54153123e03, 5.72745232e02],
-        [0.00000000e00, 0.00000000e00, 1.00000000e00],
+        [1710.4629148432577, 0.0, 550.11524355156632],
+        [0.0, 1711.318414718867, 896.8609628805682],
+        [0.0, 0.0, 1.0],
     ],
     dtype=np.float32,
 )
@@ -107,7 +108,7 @@ def triangulate_joints(keypoints1, keypoints2, K, R, T):
         raise ValueError(
             f"Keypoints shape mismatch: {keypoints1.shape} vs {keypoints2.shape}"
         )
-    
+
     if keypoints1.dtype == object:
         keypoints1 = np.array([kp for kp in keypoints1], dtype=np.float32)
     if keypoints2.dtype == object:
@@ -120,6 +121,7 @@ def triangulate_joints(keypoints1, keypoints2, K, R, T):
 
 
 def visualize_3d_joints(joints_3d, R, T, save_path, title="Triangulated 3D Joints"):
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
     draw_camera(ax, np.eye(3), np.zeros(3), label="Cam1")
@@ -298,13 +300,13 @@ def process_one_video(left_path, right_path, output_path):
             draw_and_save_keypoints_from_frame(
                 l_frame,
                 l_kpt,
-                os.path.join(output_path, f"left_frame_{i:04d}.png"),
+                os.path.join(output_path, f"frames/left/{i:04d}.png"),
                 color=(0, 255, 0),
             )
             draw_and_save_keypoints_from_frame(
                 r_frame,
                 r_kpt,
-                os.path.join(output_path, f"right_frame_{i:04d}.png"),
+                os.path.join(output_path, f"frames/right/{i:04d}.png"),
                 color=(0, 0, 255),
             )
 
@@ -319,7 +321,7 @@ def process_one_video(left_path, right_path, output_path):
             to_gray_cv_image(r_frame),
             pts1,
             pts2,
-            os.path.join(output_path, f"sift_matches_{i:04d}.png"),
+            os.path.join(output_path, f"sift/matches_{i:04d}.png"),
         )
 
         # R, T, mask = estimate_pose(l_kpt, r_kpt, K)
@@ -331,12 +333,12 @@ def process_one_video(left_path, right_path, output_path):
             joints_3d,
             R,
             T,
-            os.path.join(output_path, f"frame_{i:04d}.png"),
+            os.path.join(output_path, f"3d/frame_{i:04d}.png"),
             title=f"Frame {i} - 3D Joints",
         )
         # 保存交互式3D场景
-        html_path = os.path.join(output_path, f"scene_{i:04d}.html")
-        visualize_3d_scene_interactive(joints_3d, R, T, html_path)
+        # html_path = os.path.join(output_path, f"scene_{i:04d}.html")
+        # visualize_3d_scene_interactive(joints_3d, R, T, html_path)
 
 
 # ---------- 多人批量处理入口 ----------
@@ -357,10 +359,6 @@ def main_pt(input_root, output_root):
         out_dir = Path(output_root) / person_name
 
         process_one_video(left, right, out_dir)
-        # try:
-        #     process_one_video(left, right, out_dir)
-        # except Exception as e:
-        #     print(f"[ERROR] Failed: {person_name} – {e}")
 
 
 if __name__ == "__main__":
