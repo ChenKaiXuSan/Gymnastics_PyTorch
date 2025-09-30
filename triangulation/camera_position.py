@@ -52,7 +52,7 @@ def to_gray_cv_image(tensor_img):
     """
     if not isinstance(tensor_img, torch.Tensor):
         tensor_img = torch.tensor(tensor_img)
-        
+
     if tensor_img.dim() != 3 or tensor_img.shape[2] != 3:
         raise ValueError("输入必须是 (H, W, 3) 的 RGB 图像")
 
@@ -167,6 +167,9 @@ def save_sift_matches_image(
         top_n: int, 显示前多少个匹配点
         figsize: tuple, 图像大小
     """
+
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
     img_match = cv2.drawMatches(
         img1,
         kp1,
@@ -185,7 +188,7 @@ def save_sift_matches_image(
     plt.close()
 
 
-def visualize_SIFT_matches(img1, img2, kp1, kp2, save_path, top_n=50, figsize=(16, 8)):
+def visualize_SIFT_matches(img1, img2, kp1, kp2, save_path):
     """
     可视化并保存 SIFT 匹配结果图像
 

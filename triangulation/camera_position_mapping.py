@@ -1,44 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding:utf-8 -*-
-"""
-File: /workspace/code/triangulation/camera_position_mapping.py
-Project: /workspace/code/triangulation
-Created Date: Monday September 29th 2025
-Author: Kaixu Chen
------
-Comment:
-# Create a reusable Python module that maps camera IDs to extrinsic matrices (R, t).
-# The module supports multiple ways to define orientation:
-# - look-at target + up
-# - yaw/pitch/roll (degrees, ZYX order)
-# - rotation vector (Rodrigues) in radians
-# It returns both world->camera and camera->world forms, plus projection matrices if K is provided.
-
-Have a good code time :)
------
-Last Modified: Monday September 29th 2025 10:43:13 am
-Modified By: the developer formerly known as Kaixu Chen at <chenkaixusan@gmail.com>
------
-Copyright (c) 2025 The University of Tsukuba
------
-HISTORY:
-Date      	By	Comments
-----------	---	---------------------------------------------------------
-"""
 
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Tuple, Optional, Iterable, Union
 import numpy as np
+import matplotlib.pyplot as plt
+
+
+# ---------------------------- Core types ----------------------------
 
 
 @dataclass
 class Extrinsics:
-    """Extrinsic parameters for a single camera.
-
-    R_wc, t_wc: world -> camera (cv2/colmap style: X_cam = R*X_world + t)
-    R_cw, t_cw: camera -> world (X_world = R^T * (X_cam - t))
-    C: camera center in world coordinates (== t_cw)
+    """
+    OpenCV 约定：
+      X_cam = R_wc * X_world + t_wc
+    同时提供 camera->world：
+      X_world = R_cw * X_cam + t_cw，且 t_cw == C (相机中心, world)
     """
 
     R_wc: np.ndarray  # (3,3)
@@ -48,76 +27,91 @@ class Extrinsics:
     C: np.ndarray  # (3,)
 
 
-def _normalize(v: np.ndarray) -> np.ndarray:
-    n = np.linalg.norm(v)
-    if n < 1e-12:
+# ---------------------------- Math utils ----------------------------
+
+
+def _normalize(v: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+    n = float(np.linalg.norm(v))
+    if n < eps:
         raise ValueError("Zero-length vector cannot be normalized")
     return v / n
 
 
+def _proj_to_so3(R: np.ndarray) -> np.ndarray:
+    """将 3x3 矩阵投影到最近的 SO(3)，稳定正交化。"""
+    U, _, Vt = np.linalg.svd(R)
+    R_ = U @ Vt
+    if np.linalg.det(R_) < 0:
+        U[:, -1] *= -1
+        R_ = U @ Vt
+    return R_
+
+
 def rodrigues_to_R(rvec: Iterable[float]) -> np.ndarray:
-    """Rodrigues rotation vector (radians) -> rotation matrix (3x3)."""
-    rvec = np.asarray(rvec, dtype=float).reshape(3)
-    theta = np.linalg.norm(rvec)
-    if theta < 1e-12:
+    """Rodrigues 向量(弧度, 世界->相机) -> 旋转矩阵(3x3)"""
+    r = np.asarray(rvec, float).reshape(3)
+    th = np.linalg.norm(r)
+    if th < 1e-12:
         return np.eye(3)
-    k = rvec / theta
-    K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]], dtype=float)
-    R = np.eye(3) + np.sin(theta) * K + (1 - np.cos(theta)) * (K @ K)
-    return R
+    k = r / th
+    K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]], float)
+    R = np.eye(3) + np.sin(th) * K + (1 - np.cos(th)) * (K @ K)
+    return _proj_to_so3(R)
 
 
 def ypr_deg_to_R(
     yaw_deg: float, pitch_deg: float, roll_deg: float, order: str = "ZYX"
 ) -> np.ndarray:
-    """Convert yaw/pitch/roll in degrees to rotation matrix.
-    Default order ZYX: R = Rz(yaw) * Ry(pitch) * Rx(roll)
+    """
+    yaw/pitch/roll(度) -> R_cw(相机->世界)；默认 ZYX：R = Rz(yaw)*Ry(pitch)*Rx(roll)
     """
     y, p, r = np.deg2rad([yaw_deg, pitch_deg, roll_deg])
     cy, sy = np.cos(y), np.sin(y)
     cp, sp = np.cos(p), np.sin(p)
     cr, sr = np.cos(r), np.sin(r)
-
     Rz = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]], float)
     Ry = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]], float)
     Rx = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]], float)
-
-    # multiply in the provided order
     mapping = {"X": Rx, "Y": Ry, "Z": Rz}
     R = np.eye(3)
     for ax in order:
         R = mapping[ax] @ R
-    return R
+    return _proj_to_so3(R)
 
 
-def lookat_to_Rt(
-    cam_pos: Iterable[float],
-    target: Iterable[float],
-    up: Iterable[float] = (0, 0, 1),
-    cv_convention: bool = True,
+# ------------------------- Pose construction ------------------------
+
+
+def lookat_Rt(
+    C: Iterable[float], T: Iterable[float], up: Iterable[float] = (0, 0, 1), filp_y=True
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Build world->camera (R, t) from a camera position, look-at target and up vector.
-
-    If cv_convention=True: camera's +Z looks forward, +X right, +Y down (OpenCV pinhole).
-    If False (OpenGL style): camera's -Z looks forward, +X right, +Y up.
     """
-    C = np.asarray(cam_pos, dtype=float).reshape(3)
-    T = np.asarray(target, dtype=float).reshape(3)
-    up = _normalize(np.asarray(up, dtype=float).reshape(3))
+    由相机位置 C 和目标点 T 生成世界->相机 (R_wc, t_wc)
+    相机坐标：+Z 前、+X 右、+Y 下 (OpenCV)
+    """
+    C = np.asarray(C, float).reshape(3)
+    T = np.asarray(T, float).reshape(3)
+    up = _normalize(np.asarray(up, float).reshape(3))
 
-    if cv_convention:
-        z_cam = _normalize(T - C)  # forward (+Z)
-        x_cam = _normalize(np.cross(z_cam, up))  # right
-        y_cam = np.cross(x_cam, z_cam)  # down-ish
-    else:
-        z_cam = _normalize(C - T)  # forward (-Z in OpenGL)
-        x_cam = _normalize(np.cross(up, z_cam))
-        y_cam = np.cross(z_cam, x_cam)
+    z_cam = T - C
+    if np.linalg.norm(z_cam) < 1e-12:
+        raise ValueError("Camera and target coincide")
+    z_cam = _normalize(z_cam)
 
-    R_cw = np.stack([x_cam, y_cam, z_cam], axis=0)  # camera axes expressed in world
+    x_cam = np.cross(z_cam, up)
+    if np.linalg.norm(x_cam) < 1e-6:  # up ~ z_cam，换一个应急 up
+        alt_up = np.array([0, 1, 0]) if abs(z_cam[1]) < 0.9 else np.array([1, 0, 0])
+        x_cam = np.cross(z_cam, alt_up)
+    x_cam = _normalize(x_cam)
+
+    y_cam = np.cross(x_cam, z_cam)
+    y_cam = _normalize(y_cam)
+    if filp_y:
+        y_cam = -y_cam
+
+    R_cw = np.stack([x_cam, y_cam, z_cam], axis=1)  # cam->world
     R_wc = R_cw.T
     t_wc = -R_wc @ C
-    t_cw = C
     return R_wc, t_wc
 
 
@@ -127,16 +121,16 @@ def compose_extrinsics_from(
     orientation_mode: str = "lookat",
     up: Iterable[float] = (0, 0, 1),
 ) -> Extrinsics:
-    """Create Extrinsics from different orientation specs.
-
-    orientation_mode:
-      - 'lookat': orientation must contain key 'target' -> (x,y,z)
-      - 'ypr': orientation must contain ('yaw','pitch','roll') in degrees (ZYX)
-      - 'rodrigues': orientation must contain 'rvec' (rx,ry,rz) radians, rotation from world to camera
     """
-    C = np.asarray(cam_pos, dtype=float).reshape(3)
+    orientation_mode:
+      - 'lookat': orientation['target'] = (x,y,z)
+      - 'ypr'   : orientation['yaw','pitch','roll'] (度)，得到 R_cw 再转置
+      - 'rodrigues': orientation['rvec'] 世界->相机
+    """
+    C = np.asarray(cam_pos, float).reshape(3)
+
     if orientation_mode == "lookat":
-        R_wc, t_wc = lookat_to_Rt(C, orientation["target"], up=up, cv_convention=True)
+        R_wc, t_wc = lookat_Rt(C, orientation["target"], up=up)
     elif orientation_mode == "ypr":
         R_cw = ypr_deg_to_R(
             orientation["yaw"], orientation["pitch"], orientation["roll"], order="ZYX"
@@ -155,22 +149,14 @@ def compose_extrinsics_from(
 
 
 def build_extrinsics_map(
-    camera_layout: Dict[int, Dict],
-    default_mode: str = "lookat",
-    default_up: Iterable[float] = (0, 0, 1),
+    camera_layout: Dict[int, Dict], default_up: Iterable[float] = (0, 0, 1)
 ) -> Dict[int, Extrinsics]:
-    """Given a layout dict (id -> spec), produce a map id -> Extrinsics.
-
-    Each spec must contain:
-    - 'pos': (x,y,z) camera center in world
-    - and one of:
-        * 'target': (x,y,z)  # used with lookat
-        * 'ypr': (yaw_deg, pitch_deg, roll_deg)
-        * 'rvec': (rx,ry,rz) radians (Rodrigues)
-
-    Example camera_layout entry:
-        1: {'pos': (0, -3, 1.5), 'target': (0, 0, 1.5)}
-        2: {'pos': (3, 0, 1.5), 'ypr': (90, 0, 0)}
+    """
+    camera_layout[id] = {
+        'pos': (x,y,z),
+        one of: 'target' | 'ypr' | 'rvec',
+        optional: 'up'
+    }
     """
     out: Dict[int, Extrinsics] = {}
     for cid, spec in camera_layout.items():
@@ -199,7 +185,7 @@ def build_extrinsics_map(
             )
         else:
             raise ValueError(
-                f"Camera {cid} spec must contain one of: 'target', 'ypr', or 'rvec'"
+                f"Camera {cid} must contain one of: 'target' | 'ypr' | 'rvec'"
             )
         out[cid] = ext
     return out
@@ -208,9 +194,7 @@ def build_extrinsics_map(
 def make_projection_matrices(
     extrinsics_map: Dict[int, Extrinsics], K_map: Optional[Dict[int, np.ndarray]] = None
 ) -> Dict[int, np.ndarray]:
-    """Optionally build projection matrices P = K [R|t] for each camera id.
-    If K_map is None, use identity intrinsics.
-    """
+    """P = K [R|t]；若 K_map=None 则用 I3。"""
     P_map: Dict[int, np.ndarray] = {}
     for cid, ext in extrinsics_map.items():
         K = np.eye(3) if K_map is None else K_map[cid]
@@ -219,29 +203,228 @@ def make_projection_matrices(
     return P_map
 
 
-# -------------------------
-# Example TEMPLATE (edit this with your actual positions/orientations)
-# Coordinate frame assumption:
-# - World: Z up, X right, Y forward (you can adapt to your convention)
-# - Cameras follow OpenCV pinhole: +Z forward, +X right, +Y down
-# -------------------------
+# ------------------------- Layout helpers ---------------------------
 
-CAMERA_LAYOUT_EXAMPLE: Dict[int, Dict] = {
-    # Cam 1: at (-3, 0, 1.5) looking at the origin (0,0,1.5)
-    1: {"pos": (-3.0, 0.0, 1.5), "target": (0.0, 0.0, 1.5)},
-    # Cam 2: at ( 3, 0, 1.5) looking at the origin
-    2: {"pos": (3.0, 0.0, 1.5), "target": (0.0, 0.0, 1.5)},
-    # Cam 3: at (0, -3, 1.5) looking at the origin
-    3: {"pos": (0.0, -3.0, 1.5), "target": (0.0, 0.0, 1.5)},
-    # Cam 4: at (0,  3, 1.5) with explicit yaw/pitch/roll (deg): yaw=180 faces -Y, pitch=0, roll=0
-    4: {"pos": (0.0, 3.0, 1.5), "ypr": (180.0, 0.0, 0.0)},
-}
+
+def angles_to_position(
+    target: Tuple[float, float, float],
+    distance: float,
+    yaw_deg: float,
+    pitch_deg: float = 0.0,
+    z_override: Optional[float] = None,
+) -> Tuple[float, float, float]:
+    """
+    由 (distance, yaw, pitch) 计算相机中心 C，使相机 +Z 指向 target。
+    约定：Z↑，yaw 绕 Z（0° 向 +X，逆时针为 +），pitch 仰角。
+    """
+    y = np.deg2rad(yaw_deg)
+    p = np.deg2rad(pitch_deg)
+    f = np.array(
+        [np.cos(p) * np.cos(y), np.cos(p) * np.sin(y), np.sin(p)], float
+    )  # cam forward(+Z)
+    T = np.asarray(target, float)
+    C = T - distance * f
+    if z_override is not None:
+        C[2] = z_override
+    return tuple(C.tolist())
+
+
+def build_layout_from_angles(
+    target: Tuple[float, float, float], specs: Dict[int, Dict]
+) -> Dict[int, Dict]:
+    """
+    specs[cid] = {'d':..., 'yaw':..., 'pitch':(optional)}
+    返回 camera_layout，可直接喂给 build_extrinsics_map
+    """
+    layout = {}
+    for cid, s in specs.items():
+        C = angles_to_position(
+            target, s["d"], s["yaw"], s.get("pitch", 0.0), s.get("z_override")
+        )
+        layout[cid] = {"pos": C, "target": target}
+    return layout
+
+
+# --------------------------- Visualization -------------------------
+
+
+def _make_axes_points(
+    ext: Extrinsics, axis_len: float = 0.2
+) -> Tuple[np.ndarray, np.ndarray]:
+    Xc = np.eye(3) * axis_len  # cam axes endpoints in cam
+    # Xc[:,1] *= -1                      # 这里渲染的时候让 Y 轴反向更直观
+    Xw = (ext.R_cw @ Xc) + ext.t_cw.reshape(3, 1)
+    return Xw, ext.C
+
+
+def _frustum_corners_world(
+    ext: Extrinsics,
+    K: Optional[np.ndarray],
+    img_size: Optional[Tuple[int, int]],
+    depth: float,
+) -> np.ndarray:
+    """
+    返回 (3,4) 的世界坐标四角点。img_size = (width, height)
+    """
+    if K is None or img_size is None:
+        fov = np.deg2rad(60 / 2)
+        w = depth * np.tan(fov)
+        h = w * 0.75
+        corners_cam = np.array(
+            [[-w, -h, depth], [w, -h, depth], [w, h, depth], [-w, h, depth]], float
+        ).T
+    else:
+        W, H = img_size
+        fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
+        pixels = np.array([[0, 0], [W - 1, 0], [W - 1, H - 1], [0, H - 1]], float)
+        x = (pixels[:, 0] - cx) * (depth / fx)
+        y = (pixels[:, 1] - cy) * (depth / fy)
+        z = np.full_like(x, depth)
+        corners_cam = np.vstack([x, y, z])
+
+    corners_world = (ext.R_cw @ corners_cam) + ext.t_cw.reshape(3, 1)
+    return corners_world
+
+
+def draw_cameras_matplotlib(
+    extrinsics_map: Dict[int, Extrinsics],
+    K_map: Optional[Dict[int, np.ndarray]] = None,
+    img_size: Optional[Tuple[int, int]] = None,
+    frustum_depth: float = 0.4,
+    axis_len: float = 0.2,
+    figsize: Tuple[int, int] = (8, 8),
+    elev: float = 20,
+    azim: float = 40,
+    auto_equal: bool = True,
+    save_path: Optional[str] = None,
+):
+    """画相机中心、坐标轴、视锥；img_size=(width,height)"""
+    fig = plt.figure(figsize=figsize)
+    ax = fig.add_subplot(111, projection="3d")
+
+    all_pts = []
+
+    for cid, ext in sorted(extrinsics_map.items()):
+        # center
+        ax.scatter(ext.C[0], ext.C[1], ext.C[2], marker="o")
+        all_pts.append(ext.C)
+
+        # axes
+        axes_end, Cw = _make_axes_points(ext, axis_len=axis_len)
+        ax.plot(
+            [Cw[0], axes_end[0, 0]],
+            [Cw[1], axes_end[1, 0]],
+            [Cw[2], axes_end[2, 0]],
+            color="r",
+        )  # X
+        ax.plot(
+            [Cw[0], axes_end[0, 1]],
+            [Cw[1], axes_end[1, 1]],
+            [Cw[2], axes_end[2, 1]],
+            color="g",
+        )  # Y
+        ax.plot(
+            [Cw[0], axes_end[0, 2]],
+            [Cw[1], axes_end[1, 2]],
+            [Cw[2], axes_end[2, 2]],
+            color="b",
+        )  # Z
+
+        # frustum
+        K = None if K_map is None else K_map.get(cid, None)
+        corners = _frustum_corners_world(ext, K, img_size, depth=frustum_depth)  # (3,4)
+
+        order = [0, 1, 2, 3, 0]  # rim
+        ax.plot(corners[0, order], corners[1, order], corners[2, order], color="orange")
+        for j in range(4):  # rays
+            ax.plot(
+                [Cw[0], corners[0, j]],
+                [Cw[1], corners[1, j]],
+                [Cw[2], corners[2, j]],
+                color="orange",
+            )
+
+        all_pts.append(corners.T)
+        ax.text(ext.C[0], ext.C[1], ext.C[2], f"Cam {cid}", fontsize=9)
+
+    all_pts = np.vstack(all_pts)
+    ax.set_xlabel("X (world)")
+    ax.set_ylabel("Y (world)")
+    ax.set_zlabel("Z (world)")
+    ax.view_init(elev=elev, azim=azim)
+
+    if auto_equal and all_pts.size > 0:
+        mins, maxs = all_pts.min(axis=0), all_pts.max(axis=0)
+        centers = (mins + maxs) / 2.0
+        ranges = maxs - mins
+        radius = float(np.max(ranges)) * 0.6 if np.all(ranges > 0) else 1.0
+        ax.set_xlim([centers[0] - radius, centers[0] + radius])
+        ax.set_ylim([centers[1] - radius, centers[1] + radius])
+        ax.set_zlim([centers[2] - radius, centers[2] + radius])
+
+    if save_path:
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=180)
+    return fig, ax
+
+
+def save_multi_views(
+    extrinsics_map: Dict[int, Extrinsics],
+    K_map: Optional[Dict[int, np.ndarray]] = None,
+    img_size: Optional[Tuple[int, int]] = None,
+    save_prefix: str = "cameras",
+    views: Optional[Dict[str, Dict[str, float]]] = None,
+):
+    """
+    一次性导出多视图（可自定义）
+    默认：front/left/top
+    """
+    if views is None:
+        views = {
+            "front": dict(elev=0, azim=0),  # 从 +X 看
+            "left": dict(elev=0, azim=90),  # 从 +Y 看
+            "top": dict(elev=90, azim=-90),  # 俯视
+        }
+    for name, view in views.items():
+        fig, _ = draw_cameras_matplotlib(
+            extrinsics_map,
+            K_map=K_map,
+            img_size=img_size,
+            elev=view["elev"],
+            azim=view["azim"],
+            save_path=f"{save_prefix}_{name}.png",
+        )
+        plt.close(fig)
+
+
+# ------------------------------- Demo -------------------------------
 
 if __name__ == "__main__":
-    # Build extrinsics map from the example layout
-    extr_map = build_extrinsics_map(CAMERA_LAYOUT_EXAMPLE)
+    # —— 相机布局（按角度放置，全部看向原点） ——
+    T = (0.0, 0.0, 1.5)  # 目标（人）位置
+    r = 3.5  # 半径 (m)
+    z = 1.5  # 高度 (m)
+    yaws = {1: 90.0, 2: 45.0, 3: 0.0, 4: 135.0}  # 示例：环形分布
 
-    # Print a compact summary
+    CAMERA_LAYOUT: Dict[int, Dict] = {}
+    for cid, yaw in yaws.items():
+        C = angles_to_position(T, r, yaw, pitch_deg=0.0, z_override=z)
+        CAMERA_LAYOUT[cid] = {"pos": C, "target": T}
+
+    extr_map = build_extrinsics_map(CAMERA_LAYOUT)
+
+    # —— 内参（若多相机不同，可分别给） ——
+    K = np.array(
+        [
+            [1710.4629148432577, 0.0, 550.1152435515663],
+            [0.0, 1711.318414718867, 896.8609628805682],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=float,
+    )
+    K_map = {cid: K for cid in CAMERA_LAYOUT.keys()}
+
+    # —— 打印外参摘要 ——
     for cid, ext in sorted(extr_map.items()):
         print(f"[Cam {cid}]")
         print(
@@ -257,3 +440,17 @@ if __name__ == "__main__":
             np.array2string(ext.C, formatter={"float_kind": lambda x: f"{x: .5f}"}),
         )
         print()
+
+    # —— 可视化 & 多视图导出 ——
+    img_size = (1080, 1920)  # (width, height)
+    draw_cameras_matplotlib(
+        extr_map,
+        K_map=K_map,
+        img_size=img_size,
+        frustum_depth=0.6,
+        axis_len=0.25,
+        save_path="camera_poses.png",
+    )
+    save_multi_views(
+        extr_map, K_map=K_map, img_size=img_size, save_prefix="camera_poses"
+    )

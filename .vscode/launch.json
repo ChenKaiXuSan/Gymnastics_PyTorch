@@ -48,6 +48,14 @@
     //   "args": [
     //     "/workspace/code/camera_calibration/input_video"
     //   ]
-    }
+    },
+    {
+      "name": "camera_position_mapping",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "triangulation.camera_position_mapping",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
   ]
 }
