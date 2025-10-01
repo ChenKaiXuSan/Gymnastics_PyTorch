@@ -16,6 +16,7 @@ from torchvision.io import read_video
 import glob
 from pathlib import Path
 import matplotlib
+import hydra
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -29,6 +30,7 @@ from triangulation.camera_position import (
     visualize_SIFT_matches,
 )
 
+from triangulation.camera_position_mapping import prepare_camera_position
 
 # ---------- 可视化工具 ----------
 def draw_and_save_keypoints_from_frame(
@@ -91,15 +93,6 @@ def draw_camera(ax, R, T, scale=0.1, label="Cam"):
     ax.text(*origin, label, color="black")
 
 
-# ---------- 相机参数 ----------
-K = np.array(
-    [
-        [1710.4629148432577, 0.0, 550.11524355156632],
-        [0.0, 1711.318414718867, 896.8609628805682],
-        [0.0, 0.0, 1.0],
-    ],
-    dtype=np.float32,
-)
 
 
 # ---------- 三角测量 ----------
@@ -342,11 +335,13 @@ def process_one_video(left_path, right_path, output_path):
 
 
 # ---------- 多人批量处理入口 ----------
-def main_pt(input_root, output_root):
-    subjects = sorted(glob.glob(f"{input_root}/*/"))
+# TODO：这里需要同时加载一个人的四个视频逻辑才行
+# TODO: 这里需要使用rt info里面的外部参数才行
+def process_person_videos(input_path, output_path, rt_info, K):
+    subjects = sorted(glob.glob(f"{input_path}/*/"))
     if not subjects:
-        raise FileNotFoundError(f"No folders found in: {input_root}")
-    print(f"[INFO] Found {len(subjects)} subjects in {input_root}")
+        raise FileNotFoundError(f"No folders found in: {input_path}")
+    print(f"[INFO] Found {len(subjects)} subjects in {input_path}")
     for person_dir in subjects:
         person_name = os.path.basename(person_dir.rstrip("/"))
         print(f"\n[INFO] Processing: {person_name}")
@@ -356,12 +351,27 @@ def main_pt(input_root, output_root):
         left = npz_file[0]
         right = npz_file[1]
 
-        out_dir = Path(output_root) / person_name
+        out_dir = Path(output_path) / person_name
 
         process_one_video(left, right, out_dir)
 
+@hydra.main(version_base=None, config_path="../configs", config_name="triangulation")
+def main(cfg):
+
+    # 准备相机外部参数
+    camera_position_dict = prepare_camera_position(
+        K=np.array(cfg.camera_K.K),
+        yaws=cfg.camera_position.yaws,
+        T=cfg.camera_position.T,
+        r=cfg.camera_position.r,
+        z=cfg.camera_position.z,
+        output_path=cfg.paths.log_path,
+        img_size=cfg.camera_K.image_size,
+    )
+
+    process_person_videos(input_path=cfg.paths.input_path, output_path=cfg.paths.log_path, rt_info=camera_position_dict['rt_info'], K=cfg.camera_K)
 
 if __name__ == "__main__":
-    input_path = "/workspace/data/npz/raw/suwabe"
-    output_path = "/workspace/code/logs/triangulated_3d_joints"
-    main_pt(input_path, output_path)
+
+    os.environ["HYDRA_FULL_ERROR"] = "1"
+    main()

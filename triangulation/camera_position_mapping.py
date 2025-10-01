@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Dict, Tuple, Optional, Iterable, Union
 import numpy as np
 import matplotlib.pyplot as plt
-
+import os
 
 # ---------------------------- Core types ----------------------------
 
@@ -215,7 +215,18 @@ def angles_to_position(
 ) -> Tuple[float, float, float]:
     """
     由 (distance, yaw, pitch) 计算相机中心 C，使相机 +Z 指向 target。
-    约定：Z↑，yaw 绕 Z（0° 向 +X，逆时针为 +），pitch 仰角。
+    约定：Z上,yaw 绕 Z轴，（逆时针为 +），pitch 仰角。
+    注意，这里的相机是需要看向 target 的。
+
+    Args:
+        target (Tuple[float, float, float]): 目标点坐标
+        distance (float): 相机与目标点的距离
+        yaw_deg (float): 相机绕 Z 轴旋转的角度
+        pitch_deg (float, optional): 相机绕 X 轴旋转的角度。默认为 0.0。
+        z_override (Optional[float], optional): 覆盖相机 Z 轴坐标。默认为 None。
+
+    Returns:
+        Tuple[float, float, float]: 相机中心 C 的坐标
     """
     y = np.deg2rad(yaw_deg)
     p = np.deg2rad(pitch_deg)
@@ -227,22 +238,6 @@ def angles_to_position(
     if z_override is not None:
         C[2] = z_override
     return tuple(C.tolist())
-
-
-def build_layout_from_angles(
-    target: Tuple[float, float, float], specs: Dict[int, Dict]
-) -> Dict[int, Dict]:
-    """
-    specs[cid] = {'d':..., 'yaw':..., 'pitch':(optional)}
-    返回 camera_layout，可直接喂给 build_extrinsics_map
-    """
-    layout = {}
-    for cid, s in specs.items():
-        C = angles_to_position(
-            target, s["d"], s["yaw"], s.get("pitch", 0.0), s.get("z_override")
-        )
-        layout[cid] = {"pos": C, "target": target}
-    return layout
 
 
 # --------------------------- Visualization -------------------------
@@ -363,6 +358,7 @@ def draw_cameras_matplotlib(
         ax.set_zlim([centers[2] - radius, centers[2] + radius])
 
     if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.tight_layout()
         plt.savefig(save_path, dpi=180)
     return fig, ax
@@ -397,6 +393,83 @@ def save_multi_views(
         plt.close(fig)
 
 
+def prepare_camera_position(
+    K: np.array,
+    yaws: Dict[int, float],
+    T: Tuple[float, float, float],
+    r: float,
+    z: float,
+    output_path: Optional[str] = None,
+    img_size: Optional[Tuple[int, int]] = None,
+) -> Dict[int, Dict]:
+    """
+    准备相机位置数据，返回字典格式，包含相机ID、位置和朝向信息。
+
+    Args:
+        extrinsics_map (Dict[int, Extrinsics]): 包含相机外参的字典，键为相机ID，值为Extrinsics对象。
+
+    Returns:
+        Dict[int, Dict]: 包含相机位置和朝向信息的字典，键为相机ID，值为包含位置和朝向的字典。
+    """
+    CAMERA_LAYOUT: Dict[int, Dict] = {}
+    for cid, yaw in yaws.items():
+        C = angles_to_position(T, r, yaw, pitch_deg=0.0, z_override=z)
+        CAMERA_LAYOUT[cid] = {"pos": C, "target": T}
+
+    # 由布局生成外参
+    extr_map = build_extrinsics_map(CAMERA_LAYOUT)
+
+    # —— 打印外参摘要 ——
+    for cid, ext in sorted(extr_map.items()):
+        print(f"[Cam {cid}]")
+        print(
+            "R_wc=\n",
+            np.array2string(ext.R_wc, formatter={"float_kind": lambda x: f"{x: .5f}"}),
+        )
+        print(
+            "t_wc=",
+            np.array2string(ext.t_wc, formatter={"float_kind": lambda x: f"{x: .5f}"}),
+        )
+        print(
+            "C(w) =",
+            np.array2string(ext.C, formatter={"float_kind": lambda x: f"{x: .5f}"}),
+        )
+        print()
+
+    rt_info = dict()
+    for cid, ext in extr_map.items():
+        rt_info[cid] = {
+            "R": ext.R_wc,
+            "t": ext.t_wc,
+            "C": ext.C,
+        }
+
+    # —— 可视化 & 多视图导出 ——
+    K_map = {cid: K for cid in CAMERA_LAYOUT.keys()}
+    
+    draw_cameras_matplotlib(
+        extr_map,
+        K_map=K_map,
+        img_size=img_size,
+        frustum_depth=0.6,
+        axis_len=0.25,
+        save_path=os.path.join(output_path, "camera_poses.png"),
+    )
+    save_multi_views(
+        extr_map,
+        K_map=K_map,
+        img_size=img_size,
+        save_prefix=os.path.join(output_path, "camera_poses"),
+    )
+
+    return {
+        "layout": CAMERA_LAYOUT,  # {cid: {"pos": (x, y, z), "target": T}}
+        "extrinsics_map": extr_map,  # {cid: Extrinsics}
+        "K_map": K_map,  # {cid: K}
+        "rt_info": rt_info,  # {cid: {"R": R_wc, "t": t_wc, "C": C}}
+    }
+
+
 # ------------------------------- Demo -------------------------------
 
 if __name__ == "__main__":
@@ -404,7 +477,8 @@ if __name__ == "__main__":
     T = (0.0, 0.0, 1.5)  # 目标（人）位置
     r = 3.5  # 半径 (m)
     z = 1.5  # 高度 (m)
-    yaws = {1: 90.0, 2: 45.0, 3: 0.0, 4: 135.0}  # 示例：环形分布
+    # * 按照3号相机为原点进行旋转
+    yaws = {1: -90.0, 2: -45.0, 3: 0.0, 4: -135.0}
 
     CAMERA_LAYOUT: Dict[int, Dict] = {}
     for cid, yaw in yaws.items():

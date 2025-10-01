@@ -1,0 +1,32 @@
+# hydra config
+hydra:
+  run:
+    dir: ${paths.log_path}
+  job:
+    chdir: false
+
+camera_K:
+  K:
+    - [1710.4629148432577, 0.0, 550.11524355156632]
+    - [0.0, 1711.318414718867, 896.8609628805682]
+    - [0.0, 0.0, 1.0]
+  distortion_coefficients:
+    [0.17697328, -0.45675065, -0.0026601, -0.00330938, 0.35538705]
+  image_size: [1080, 1920] # (width, height)
+
+paths:
+  log_path: logs/triangulated/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  input_path: /workspace/data/npz/raw/suwabe
+  mix_path: /workspace/data/npz/mix
+
+camera_position:
+  # 相机布局
+  T: [0.0, 0.0, 1.5] # 人体目标点位置 (x, y, z)
+  r: 3.5 # 相机到目标点的水平距离， 半径（m）
+  z: 1.5 # 相机高度（m）
+  # 相机旋转角度， 按照3号相机为原点进行旋转
+  yaws:
+    1: -90.0
+    2: -45.0
+    3: 0.0
+    4: -135.0

@@ -24,7 +24,7 @@
     },
     {
       "name": "run_custom",
-      "type": "python",
+      "type": "debugpy",
       "request": "launch",
       "module": "videopose3d.run",
       "cwd": "/workspace/code",
@@ -42,7 +42,7 @@
       "name": "calibration",
       "type": "debugpy",
       "request": "launch",
-      "module": "camera_calibration.main2",
+      "module": "camera_calibration.main",
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
     //   "args": [
