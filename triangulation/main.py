@@ -17,6 +17,7 @@ import glob
 from pathlib import Path
 import matplotlib
 import hydra
+from typing import Iterable, List, Optional, Sequence, Tuple, Union, Dict
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -31,6 +32,27 @@ from triangulation.camera_position import (
 )
 
 from triangulation.camera_position_mapping import prepare_camera_position
+
+# COCO-17 骨架（左/右臂、腿、躯干、头部）
+COCO_SKELETON: List[Tuple[int, int]] = [
+    (0, 1),
+    (0, 2),
+    (1, 3),
+    (2, 4),
+    (5, 7),
+    (7, 9),
+    (6, 8),
+    (8, 10),
+    (5, 6),
+    (5, 11),
+    (6, 12),
+    (11, 12),
+    (11, 13),
+    (13, 15),
+    (12, 14),
+    (14, 16),
+]
+
 
 # ---------- 可视化工具 ----------
 def draw_and_save_keypoints_from_frame(
@@ -62,73 +84,222 @@ def draw_and_save_keypoints_from_frame(
     cv2.imwrite(save_path, img)
     print(f"[INFO] Saved image with keypoints to: {save_path}")
 
+def draw_camera(
+    ax: plt.Axes,
+    rt_info: Union[Dict[str, np.ndarray], Tuple[np.ndarray, np.ndarray]],
+    K: np.ndarray,  # (3,3)
+    image_size: Tuple[int, int],  # (W, H) in px
+    axis_len: float = 1.0,
+    frustum_depth: float = 1.0,
+    colors: Tuple[str, str, str] = ("r", "g", "b"),
+    label: Optional[str] = None,
+    convention: str = "cam2world",  # or "cam2world"
+    ray_scale_mode: str = "depth",  # "depth" or "focal"
+    linewidths: Optional[Dict[str, float]] = None,
+    frustum_alpha: float = 1.0,
+) -> np.ndarray:
+    """
+    在 Matplotlib 3D 轴上绘制 OpenCV 相机坐标系与视锥体。
 
-def draw_camera(ax, R, T, scale=0.1, label="Cam"):
-    origin = T.reshape(3)
-    x_axis = R @ np.array([1, 0, 0]) * scale + origin
-    y_axis = R @ np.array([0, 1, 0]) * scale + origin
-    z_axis = R @ np.array([0, 0, 1]) * scale + origin
-    view_dir = R @ np.array([0, 0, -1]) * scale * 1.5 + origin  # 摄像头朝向（-Z轴）
+    坐标系对应：
+      OpenCV: x→右, y→下, z→前
+      Matplotlib: x→右, y→前, z→上
 
-    ax.plot(
-        [origin[0], x_axis[0]], [origin[1], x_axis[1]], [origin[2], x_axis[2]], c="r"
-    )
-    ax.plot(
-        [origin[0], y_axis[0]], [origin[1], y_axis[1]], [origin[2], y_axis[2]], c="g"
-    )
-    ax.plot(
-        [origin[0], z_axis[0]], [origin[1], z_axis[1]], [origin[2], z_axis[2]], c="b"
-    )
+    返回:
+        C_plt: (3,) 相机中心在 Matplotlib 世界坐标中的位置
+    """
+    # ---------------- 参数准备 ----------------
+    if linewidths is None:
+        linewidths = {"axis": 1.0, "frustum": 0.5}
 
-    # 视线方向箭头（黑色）
+    R, T, C = rt_info['R'], rt_info['t'], rt_info['C']
+    K = np.asarray(K, float).reshape(3, 3)
+    W, H = [float(v) for v in image_size]
+
+    # ---------------- 相机中心计算 ----------------
+    # Xc = R Xw + T → C = -R^T T
+    R_wc = R
+    C_world = -R.T @ T
+    
+    C_plt = C_world.ravel()
+
+    # ---------------- 绘制相机坐标轴 ----------------
+    for axis_vec, color in zip(R_wc, colors):  # R_wc 的行向量即各相机轴方向
+        end_cv = axis_vec * axis_len
+        end_plt = end_cv
+        ax.plot(
+            [C_plt[0], C_plt[0] + end_plt[0]],
+            [C_plt[1], C_plt[1] + end_plt[1]],
+            [C_plt[2], C_plt[2] + end_plt[2]],
+            c=color,
+            lw=linewidths["axis"],
+        )
+
+    # ---------------- 计算视锥体四个角点 ----------------
+    corners_px = np.array(
+        [
+            [0, 0, 1],
+            [W - 1, 0, 1],
+            [W - 1, H - 1, 1],
+            [0, H - 1, 1],
+        ],
+        dtype=float,
+    )
+    rays_cam = np.linalg.inv(K) @ corners_px.T  # (3,4)
+
+    if ray_scale_mode == "depth":
+        scale = frustum_depth / np.clip(rays_cam[2, :], 1e-9, None)
+        rays_cam = rays_cam * scale
+    else:
+        fx, fy = K[0, 0], K[1, 1]
+        s = max(axis_len, frustum_depth) / max((fx + fy) / 2, 1e-6)
+        rays_cam *= s
+
+    # cam→world(OpenCV)
+    corners_world_cv = (R_wc @ rays_cam).T + C_world.reshape(1, 3)
+    # world(OpenCV) → Matplotlib
+    corners_world_plt = corners_world_cv 
+
+    # ---------------- 绘制视锥体边缘 ----------------
+    for p in corners_world_plt:
+        ax.plot(
+            [C_plt[0], p[0]],
+            [C_plt[1], p[1]],
+            [C_plt[2], p[2]],
+            c="k",
+            lw=linewidths["frustum"],
+            alpha=frustum_alpha,
+        )
+
+    loop = [0, 1, 2, 3, 0]
     ax.plot(
-        [origin[0], view_dir[0]],
-        [origin[1], view_dir[1]],
-        [origin[2], view_dir[2]],
+        corners_world_plt[loop, 0],
+        corners_world_plt[loop, 1],
+        corners_world_plt[loop, 2],
         c="k",
-        linestyle="--",
+        lw=linewidths["frustum"],
+        alpha=frustum_alpha,
     )
 
-    # 相机标签
-    ax.text(*origin, label, color="black")
+    # ---------------- 标签 ----------------
+    if label:
+        ax.text(C_plt[0], C_plt[1], C_plt[2], label, color="black", fontsize=9)
 
-
+    return C_plt
 
 
 # ---------- 三角测量 ----------
-def triangulate_joints(keypoints1, keypoints2, K, R, T):
-    if keypoints1.shape != keypoints2.shape or keypoints1.shape[1] != 2:
+def triangulate_joints(keypoints1, keypoints2, K_info, first_rt_info, second_rt_info):
+    """
+    使用两视点关键点进行三角测量，返回三维坐标（相机1坐标系下）。
+    参数:
+        keypoints1, keypoints2: (N, 2) 像素坐标
+        K: (3, 3) 相机内参矩阵
+        first_rt_info, second_rt_info: dict，包含 R (3x3), T (3,)
+    返回:
+        pts_3d: (N, 3) 三维点坐标
+    """
+    # ----------- 输入检查 -----------
+    keypoints1 = np.asarray(keypoints1, np.float32).reshape(-1, 2)
+    keypoints2 = np.asarray(keypoints2, np.float32).reshape(-1, 2)
+
+    if keypoints1.shape != keypoints2.shape:
         raise ValueError(
             f"Keypoints shape mismatch: {keypoints1.shape} vs {keypoints2.shape}"
         )
+    if keypoints1.shape[0] < 5:
+        raise ValueError("Need at least 5 correspondences for triangulation.")
 
-    if keypoints1.dtype == object:
-        keypoints1 = np.array([kp for kp in keypoints1], dtype=np.float32)
-    if keypoints2.dtype == object:
-        keypoints2 = np.array([kp for kp in keypoints2], dtype=np.float32)
+    K = np.asarray(K_info["K"], np.float32).reshape(3, 3)
+    distortion_coefficients = K_info.get("distortion_coefficients", None)
+    # ----------- 相对姿态计算 -----------
+    # R1, T1: 第一个相机的外参，R2, T2: 第二个相机的外参，均在世界坐标系下
+    R1, T1 = first_rt_info["R"], first_rt_info["t"].reshape(3, 1)
+    R2, T2 = second_rt_info["R"], second_rt_info["t"].reshape(3, 1)
 
-    P1 = K @ np.hstack((np.eye(3), np.zeros((3, 1))))
-    P2 = K @ np.hstack((R, T.reshape(3, 1)))
-    pts_4d = cv2.triangulatePoints(P1, P2, keypoints1.T, keypoints2.T)
-    return (pts_4d[:3, :] / pts_4d[3, :]).T
+    # ----------- 投影矩阵构造 -----------
+    # 投影矩阵 P = K [R|T]
+    P1 = K @ np.hstack((R1, T1))
+    P2 = K @ np.hstack((R2, T2))
+
+    # ----------- 三角测量 -----------
+    pts_4d_h = cv2.triangulatePoints(P1, P2, keypoints1.T, keypoints2.T)
+    pts_3d = (pts_4d_h[:3] / pts_4d_h[3]).T  # 齐次归一化 (N,3)
+
+    # ----------- 数值清理与验证 -----------
+    pts_3d = np.nan_to_num(pts_3d)
+    mask_valid = np.isfinite(pts_3d).all(axis=1)
+    pts_3d = pts_3d[mask_valid]
+
+    return pts_3d
 
 
-def visualize_3d_joints(joints_3d, R, T, save_path, title="Triangulated 3D Joints"):
+def visualize_3d_joints(
+    joints_3d,
+    first_rt_info,
+    second_rt_info,
+    K_info,
+    save_path,
+    title="Triangulated 3D Joints",
+):
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
-    draw_camera(ax, np.eye(3), np.zeros(3), label="Cam1")
-    draw_camera(ax, R, T, label="Cam2")
 
-    ax.scatter(joints_3d[:, 0], joints_3d[:, 2], joints_3d[:, 1], c="blue", s=30)
-    for i, (x, y, z) in enumerate(joints_3d):
-        ax.text(x, z, y, str(i), size=8)
+    K = np.asarray(K_info["K"], np.float32).reshape(3, 3)
+    distortion_coefficients = K_info.get("distortion_coefficients", None)
+
+    # ----------- 相对姿态计算 -----------
+    R1, T1, C1 = first_rt_info["R"], first_rt_info["t"].reshape(3, 1), first_rt_info["C"].reshape(3, 1)
+    R2, T2, C2 = second_rt_info["R"], second_rt_info["t"].reshape(3, 1), second_rt_info["C"].reshape(3, 1)
+
+    # 第二个相机相对第一个相机的姿态
+    R_rel = R2 @ R1.T
+    T_rel = T2 - R_rel @ T1
+
+    # draw_camera(ax, np.eye(3), np.zeros(3), label="Cam1")
+    # draw_camera(ax, R_rel, T_rel, label="Cam2")
+
+    draw_camera(ax, first_rt_info, K, K_info["image_size"], label="Cam1_K", frustum_alpha=0.3, convention="world2cam")
+    draw_camera(ax, second_rt_info, K, K_info["image_size"], label="Cam2_K", frustum_alpha=0.3, convention="world2cam")
+
+    plots = joints_3d
+    xlab, ylab, zlab = "X", "Z", "Y (up)"
+
+    # 点与索引
+    plots[:, 1] = -plots[:, 1]  # 反转Y轴以符合Y朝上习惯
+    ax.scatter(plots[:, 0], plots[:, 1], plots[:, 2], c="blue", s=30)
+
+    for i, (x, y, z) in enumerate(plots):
+        ax.text(x, y, z, str(i), size=8)
+
+    # 骨架与长度
+    skeleton = COCO_SKELETON
+    # 画线（在绘图坐标系）
+    for i, j in skeleton:
+        if i < len(plots) and j < len(plots):
+            if not (np.all(np.isfinite(plots[i])) and np.all(np.isfinite(plots[j]))):
+                continue
+            ax.plot(
+                [plots[i, 0], plots[j, 0]],
+                [plots[i, 1], plots[j, 1]],
+                [plots[i, 2], plots[j, 2]],
+                c="red",
+                linewidth=2,
+            )
+
     ax.set_title(title)
-    ax.set_xlabel("X")
-    ax.set_ylabel("Z")
-    ax.set_zlabel("Y")
+    ax.set_xlabel(xlab)
+    ax.set_ylabel(ylab)
+    ax.set_zlabel(zlab)
+    
     plt.tight_layout()
-    fig.savefig(save_path, dpi=300)
+
+    ax.set_xlim(-3, 3)
+    ax.set_ylim(0, 3)
+    ax.set_zlim(0, 3)
+
+    fig.savefig(str(save_path))
     plt.close(fig)
     print(f"[INFO] Saved: {save_path}")
 
@@ -255,19 +426,21 @@ def load_keypoints_from_npz(npz_path, key="keypoints"):
 
 
 # ---------- 主处理函数 ----------
-def process_one_video(left_path, right_path, output_path):
+def process_one_video(
+    first_path, second_path, first_rt_info, second_rt_info, output_path, K, extrinsics
+):
     os.makedirs(output_path, exist_ok=True)
-    left_kpts, left_vframes = load_keypoints_from_npz(left_path)
-    right_kpts, right_vframes = load_keypoints_from_npz(right_path)
+    first_kpts, first_vframes = load_keypoints_from_npz(first_path)
+    second_kpts, second_vframes = load_keypoints_from_npz(second_path)
 
     # 如果视频长度不一样，按照短的视频进行对齐
-    if left_kpts.shape[0] != right_kpts.shape[0]:
-        min_frames = min(left_kpts.shape[0], right_kpts.shape[0])
-        left_kpts = left_kpts[:min_frames]
-        right_kpts = right_kpts[:min_frames]
+    if first_kpts.shape[0] != second_kpts.shape[0]:
+        min_frames = min(first_kpts.shape[0], second_kpts.shape[0])
+        first_kpts = first_kpts[:min_frames]
+        second_kpts = second_kpts[:min_frames]
 
-    for i in range(min(6, left_kpts.shape[0])):
-        l_kpt, r_kpt = left_kpts[i], right_kpts[i]
+    for i in range(first_kpts.shape[0]):
+        l_kpt, r_kpt = first_kpts[i], second_kpts[i]
 
         # drop the 0 value keypoints
         assert (
@@ -286,8 +459,8 @@ def process_one_video(left_path, right_path, output_path):
         # l_kpt = l_kpt[valid_mask]
         # r_kpt = r_kpt[valid_mask]
 
-        l_frame = left_vframes[i] if left_vframes is not None else None
-        r_frame = right_vframes[i] if right_vframes is not None else None
+        l_frame = first_vframes[i] if first_vframes is not None else None
+        r_frame = second_vframes[i] if second_vframes is not None else None
 
         if l_frame is not None and r_frame is not None:
             draw_and_save_keypoints_from_frame(
@@ -303,41 +476,40 @@ def process_one_video(left_path, right_path, output_path):
                 color=(0, 0, 255),
             )
 
-        R, T, pts1, pts2, mask_pose = estimate_camera_pose_from_sift_imgs(
-            to_gray_cv_image(l_frame),
-            to_gray_cv_image(r_frame),
-            K,
-        )
+        # * 使用SIFT特征匹配估计相机姿态
+        # R, T, pts1, pts2, mask_pose = estimate_camera_pose_from_sift_imgs(
+        #     to_gray_cv_image(l_frame),
+        #     to_gray_cv_image(r_frame),
+        #     K,
+        # )
 
-        visualize_SIFT_matches(
-            to_gray_cv_image(l_frame),
-            to_gray_cv_image(r_frame),
-            pts1,
-            pts2,
-            os.path.join(output_path, f"sift/matches_{i:04d}.png"),
-        )
+        # visualize_SIFT_matches(
+        #     to_gray_cv_image(l_frame),
+        #     to_gray_cv_image(r_frame),
+        #     pts1,
+        #     pts2,
+        #     os.path.join(output_path, f"sift/matches_{i:04d}.png"),
+        # )
 
         # R, T, mask = estimate_pose(l_kpt, r_kpt, K)
-        if R is None or T is None:
-            print(f"[WARN] Frame {i}: pose estimation failed")
-            continue
-        joints_3d = triangulate_joints(l_kpt, r_kpt, K, R, T)
+        # if R is None or T is None:
+        #     print(f"[WARN] Frame {i}: pose estimation failed")
+        #     continue
+
+        joints_3d = triangulate_joints(l_kpt, r_kpt, K, first_rt_info, second_rt_info)
         visualize_3d_joints(
             joints_3d,
-            R,
-            T,
+            first_rt_info,
+            second_rt_info,
+            K,
             os.path.join(output_path, f"3d/frame_{i:04d}.png"),
             title=f"Frame {i} - 3D Joints",
         )
-        # 保存交互式3D场景
-        # html_path = os.path.join(output_path, f"scene_{i:04d}.html")
-        # visualize_3d_scene_interactive(joints_3d, R, T, html_path)
 
 
 # ---------- 多人批量处理入口 ----------
 # TODO：这里需要同时加载一个人的四个视频逻辑才行
-# TODO: 这里需要使用rt info里面的外部参数才行
-def process_person_videos(input_path, output_path, rt_info, K):
+def process_person_videos(input_path, output_path, rt_info, K, extrinsics):
     subjects = sorted(glob.glob(f"{input_path}/*/"))
     if not subjects:
         raise FileNotFoundError(f"No folders found in: {input_path}")
@@ -348,12 +520,18 @@ def process_person_videos(input_path, output_path, rt_info, K):
 
         # TODO: 这里预测的代码需要修改一下，统一为一个格式比较好。
         npz_file = sorted(Path(person_dir).glob("*.npz"))
-        left = npz_file[0]
-        right = npz_file[1]
+        first = npz_file[0]
+        second = npz_file[1]
 
         out_dir = Path(output_path) / person_name
+        # TODO: 这里需要根据相机位置选择对应的外参
+        first_rt_info = rt_info[int(first.stem)]
+        second_rt_info = rt_info[int(second.stem)]
 
-        process_one_video(left, right, out_dir)
+        process_one_video(
+            first, second, first_rt_info, second_rt_info, out_dir, K, extrinsics
+        )
+
 
 @hydra.main(version_base=None, config_path="../configs", config_name="triangulation")
 def main(cfg):
@@ -369,7 +547,14 @@ def main(cfg):
         img_size=cfg.camera_K.image_size,
     )
 
-    process_person_videos(input_path=cfg.paths.input_path, output_path=cfg.paths.log_path, rt_info=camera_position_dict['rt_info'], K=cfg.camera_K)
+    process_person_videos(
+        input_path=cfg.paths.input_path,
+        output_path=cfg.paths.log_path,
+        rt_info=camera_position_dict["rt_info"],
+        K=cfg.camera_K,
+        extrinsics=camera_position_dict["extrinsics_map"],
+    )
+
 
 if __name__ == "__main__":
 
