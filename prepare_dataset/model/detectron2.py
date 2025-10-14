@@ -84,7 +84,7 @@ def to_numpy_bgr(
 
     if assume_rgb:
         arr = arr[:, :, ::-1]  # RGB->BGR
-    return arr
+    return np.ascontiguousarray(arr)
 
 
 # ---------- 2) 单帧推理 ----------

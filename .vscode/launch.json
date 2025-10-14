@@ -12,7 +12,7 @@
       "request": "launch",
       "module": "videopose3d.infer_video_d2",
       "cwd": "/workspace/code",
-      "console": "integratedTerminal"
+      "console": "integratedTerminal",
     },
     {
       "name": "prepare_data",
@@ -20,7 +20,10 @@
       "request": "launch",
       "module": "prepare_dataset.main_chunk",
       "cwd": "/workspace/code",
-      "console": "integratedTerminal"
+      "console": "integratedTerminal",
+      "args": [
+        "task=detectron2"
+      ]
     },
     {
       "name": "run_custom",
