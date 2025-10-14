@@ -24,7 +24,7 @@ Date      	By	Comments
 14-10-2025	Kaixu Chen	目前只支持两视点的三角测量，后续可以扩展到多视点。
 """
 
-from typing import Iterable, List, Optional, Sequence, Tuple, Union, Dict
+from typing import Iterable, List, Optional, Sequence, Tuple, Union, Dict, Any
 
 import os
 import glob
@@ -36,9 +36,10 @@ import hydra
 
 
 from triangulation.camera_position_mapping import prepare_camera_position
-from triangulation.load import load_keypoints_from_npz
+from triangulation.load import load_keypoints_from_npz, load_kpt_and_bbox_from_d2_pt
 from triangulation.vis.frame_visualization import draw_and_save_keypoints_from_frame
 from triangulation.vis.pose_visualization import draw_camera, visualize_3d_joints
+from triangulation.vis.merge_video import merge_frames_to_video
 
 # COCO-17 骨架（左/右臂、腿、躯干、头部）
 COCO_SKELETON: List[Tuple[int, int]] = [
@@ -109,11 +110,27 @@ def triangulate_joints(keypoints1, keypoints2, K_info, first_rt_info, second_rt_
 
 # ---------- 主处理函数 ----------
 def process_one_video(
-    first_path, second_path, first_rt_info, second_rt_info, output_path, K, extrinsics
+    first_path,
+    second_path,
+    first_rt_info,
+    second_rt_info,
+    output_path: Path,
+    K,
+    extrinsics,
+    vis: Dict[str, Any],
 ):
-    os.makedirs(output_path, exist_ok=True)
-    first_kpts, first_vframes = load_keypoints_from_npz(first_path)
-    second_kpts, second_vframes = load_keypoints_from_npz(second_path)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # FIXME: 因为npz的2-4结果有问题，所以暂时不使用
+    # first_kpts, first_vframes = load_keypoints_from_npz(npz_path=first_path)
+    # second_kpts, second_vframes = load_keypoints_from_npz(npz_path=second_path)
+
+    first_kpts, first_kpts_score, _, _, first_vframes = load_kpt_and_bbox_from_d2_pt(
+        file_path=first_path, return_frames=True
+    )
+    second_kpts, second_kpts_score, _, _, second_vframes = load_kpt_and_bbox_from_d2_pt(
+        file_path=second_path, return_frames=True
+    )
 
     # 如果视频长度不一样，按照短的视频进行对齐
     if first_kpts.shape[0] != second_kpts.shape[0]:
@@ -122,6 +139,10 @@ def process_one_video(
         second_kpts = second_kpts[:min_frames]
 
     for i in range(first_kpts.shape[0]):
+
+        # if i > 60:
+        #     break
+
         l_kpt, r_kpt = first_kpts[i], second_kpts[i]
 
         # drop the 0 value keypoints
@@ -132,7 +153,7 @@ def process_one_video(
         l_frame = first_vframes[i] if first_vframes is not None else None
         r_frame = second_vframes[i] if second_vframes is not None else None
 
-        if l_frame is not None and r_frame is not None:
+        if l_frame is not None and r_frame is not None or vis.save_kpts_frames:
             draw_and_save_keypoints_from_frame(
                 l_frame,
                 l_kpt,
@@ -147,19 +168,34 @@ def process_one_video(
             )
 
         joints_3d = triangulate_joints(l_kpt, r_kpt, K, first_rt_info, second_rt_info)
-        visualize_3d_joints(
-            joints_3d,
-            first_rt_info,
-            second_rt_info,
-            K,
-            os.path.join(output_path, f"3d/frame_{i:04d}.png"),
-            title=f"Frame {i} - 3D Joints",
+
+        if vis.save_pose_3d_frames:
+            visualize_3d_joints(
+                joints_3d,
+                first_rt_info,
+                second_rt_info,
+                K,
+                os.path.join(output_path, f"3d/frame_{i:04d}.png"),
+                title=f"Frame {i} - 3D Joints",
+                skeleton=COCO_SKELETON,
+            )
+
+        # * 保存三维关键点
+
+    # * merge frame to video
+    if vis.merge_3d_frames_to_video:
+        merge_frames_to_video(
+            frame_dir=output_path / "3d",
+            output_video_path=output_path / (output_path.stem + ".mp4"),
+            fps=30,
         )
 
 
 # ---------- 多人批量处理入口 ----------
 # TODO：这里需要同时加载一个人的四个视频逻辑才行
-def process_person_videos(input_path, output_path, rt_info, K, extrinsics):
+def process_person_videos(
+    input_path, output_path, rt_info, K, extrinsics, vis: Dict[str, Any]
+):
     subjects = sorted(glob.glob(f"{input_path}/*/"))
     if not subjects:
         raise FileNotFoundError(f"No folders found in: {input_path}")
@@ -169,9 +205,10 @@ def process_person_videos(input_path, output_path, rt_info, K, extrinsics):
         print(f"\n[INFO] Processing: {person_name}")
 
         # TODO: 这里预测的代码需要修改一下，统一为一个格式比较好。
-        npz_file = sorted(Path(person_dir).glob("*.npz"))
-        first = npz_file[0]
-        second = npz_file[1]
+        pt_file = sorted(Path(person_dir).glob("*.pt"))
+
+        first = pt_file[0]
+        second = pt_file[1]
 
         out_dir = Path(output_path) / person_name
         # TODO: 这里需要根据相机位置选择对应的外参
@@ -179,7 +216,14 @@ def process_person_videos(input_path, output_path, rt_info, K, extrinsics):
         second_rt_info = rt_info[int(second.stem)]
 
         process_one_video(
-            first, second, first_rt_info, second_rt_info, out_dir, K, extrinsics
+            first,
+            second,
+            first_rt_info,
+            second_rt_info,
+            out_dir,
+            K,
+            extrinsics,
+            vis,
         )
 
 
@@ -203,6 +247,7 @@ def main(cfg):
         rt_info=camera_position_dict["rt_info"],
         K=cfg.camera_K,
         extrinsics=camera_position_dict["extrinsics_map"],
+        vis=cfg.vis,
     )
 
 

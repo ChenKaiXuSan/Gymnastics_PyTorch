@@ -20,8 +20,9 @@ Date      	By	Comments
 ----------	---	---------------------------------------------------------
 """
 
-import os
 from typing import Optional, Tuple, Dict, Any
+import os
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -353,24 +354,3 @@ def load_keypoints_from_npz(npz_path, key="keypoints"):
     video_frames = np.rot90(video_frames, k=-1, axes=(1, 2)).copy()
 
     return kpts, video_frames
-
-
-# ---------- 加载关键点 ----------
-def load_keypoints_from_pt(file_path):
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Missing file: {file_path}")
-    print(f"[INFO] Loading: {file_path}")
-    data = torch.load(file_path, map_location="cpu")
-    video_path = data.get("video_path", None)
-    vframes = (
-        read_video(video_path, pts_unit="sec", output_format="THWC")[0]
-        if video_path
-        else None
-    )
-    keypoints = np.array(data["keypoint"]["keypoint"]).squeeze(0)
-    if keypoints.ndim != 3 or keypoints.shape[2] != 2:
-        raise ValueError(f"Invalid shape: {keypoints.shape}")
-    if vframes is not None:
-        keypoints[:, :, 0] *= vframes.shape[2]
-        keypoints[:, :, 1] *= vframes.shape[1]
-    return keypoints, vframes

@@ -22,10 +22,65 @@ Date      	By	Comments
 from typing import Iterable, List, Optional, Sequence, Tuple, Union, Dict
 
 import os
+from pathlib import Path
 
 import numpy as np
 
 import matplotlib.pyplot as plt
+
+# ---- 新增：骨长计算 ----
+
+
+def compute_bone_lengths(
+    pts: np.ndarray,
+    skeleton: Iterable[Tuple[int, int]],
+    *,
+    ignore_nan: bool = True,
+) -> np.ndarray:
+    """
+    计算一帧 3D 关键点在给定骨架下的骨长。
+    pts: (K,3)
+    返回: (E,) 对应 skeleton 中每条边的长度；无效边为 np.nan
+    """
+    P = np.asarray(pts, dtype=float)
+    L: List[float] = []
+    for i, j in skeleton:
+        if i >= len(P) or j >= len(P):
+            L.append(np.nan)
+            continue
+        a, b = P[i], P[j]
+        if ignore_nan and (not np.all(np.isfinite(a)) or not np.all(np.isfinite(b))):
+            L.append(np.nan)
+            continue
+        L.append(float(np.linalg.norm(a - b)))
+    return np.asarray(L, dtype=float)
+
+
+def compute_bone_stats(lengths: np.ndarray) -> Dict[str, float]:
+    """
+    对骨长（含 nan）做统计，返回 mean/median/std/min/max/valid_count。
+    """
+    x = np.asarray(lengths, dtype=float)
+    valid = np.isfinite(x)
+    if not np.any(valid):
+        return dict(
+            mean=np.nan,
+            median=np.nan,
+            std=np.nan,
+            min=np.nan,
+            max=np.nan,
+            valid_count=0,
+        )
+    xv = x[valid]
+    return dict(
+        mean=float(np.nanmean(xv)),
+        median=float(np.nanmedian(xv)),
+        std=float(np.nanstd(xv)),
+        min=float(np.nanmin(xv)),
+        max=float(np.nanmax(xv)),
+        valid_count=int(valid.sum()),
+    )
+
 
 def draw_camera(
     ax: plt.Axes,
@@ -137,9 +192,13 @@ def visualize_3d_joints(
     second_rt_info,
     K_info,
     save_path,
+    skeleton,
     title="Triangulated 3D Joints",
 ):
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
 
@@ -161,9 +220,6 @@ def visualize_3d_joints(
     # 第二个相机相对第一个相机的姿态
     R_rel = R2 @ R1.T
     T_rel = T2 - R_rel @ T1
-
-    # draw_camera(ax, np.eye(3), np.zeros(3), label="Cam1")
-    # draw_camera(ax, R_rel, T_rel, label="Cam2")
 
     draw_camera(
         ax,
@@ -195,7 +251,6 @@ def visualize_3d_joints(
         ax.text(x, y, z, str(i), size=8)
 
     # 骨架与长度
-    skeleton = COCO_SKELETON
     # 画线（在绘图坐标系）
     for i, j in skeleton:
         if i < len(plots) and j < len(plots):
@@ -208,6 +263,42 @@ def visualize_3d_joints(
                 c="red",
                 linewidth=2,
             )
+
+    # * 计算并显示骨长统计
+    bone_lengths = compute_bone_lengths(joints_3d, skeleton, ignore_nan=True)
+    stats = compute_bone_stats(bone_lengths)
+    stats['frame'] = save_path.stem
+
+    # TODO: save teh stats to one txt file alongside the image
+
+    stats_txt_path = save_path.parent.parent / "bone_stats.txt"
+    with open(stats_txt_path, "a") as f:
+        for k, v in stats.items():
+            f.write(f"{k}: {v}\n")
+
+    print(f"[INFO] Saved: {stats_txt_path}")
+
+    # 叠加统计文本
+    if stats is not None:
+        txt = (
+            f"bones: {stats['valid_count']}\n"
+            f"mean:  {stats['mean']:.3f}\n"
+            f"median:{stats['median']:.3f}\n"
+            f"std:   {stats['std']:.3f}\n"
+            f"min:   {stats['min']:.3f}\n"
+            f"max:   {stats['max']:.3f}"
+        )
+        ax.text2D(
+            0.02,
+            0.98,
+            txt,
+            transform=ax.transAxes,
+            va="top",
+            fontsize=9,
+            bbox=dict(facecolor="white", alpha=0.6, edgecolor="none"),
+        )
+
+    plt.tight_layout()
 
     ax.set_title(title)
     ax.set_xlabel(xlab)

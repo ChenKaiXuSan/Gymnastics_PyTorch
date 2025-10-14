@@ -49,3 +49,8 @@ COCO_SKELETON:
   - (13, 15),
   - (12, 14),
   - (14, 16),
+
+vis:
+  save_kpts_frames: false
+  save_pose_3d_frames: true
+  merge_3d_frames_to_video: true
