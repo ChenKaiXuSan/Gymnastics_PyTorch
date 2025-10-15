@@ -33,12 +33,13 @@ extract_dataset:
 optical_flow:
   save: true
 
-chunk_size: 512
+chunk_size: 128
 device: 1
 
 task: ["depth", "optical_flow", "yolo", "detectron2"]
 
 detectron2:
+  save: true
   cfg: "COCO-Keypoints/keypoint_rcnn_R_50_FPN_3x.yaml"
   score_thresh: 0.7
 

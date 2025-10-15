@@ -451,9 +451,9 @@ class Detectron2Wrapper:
             getattr(config, "weights", None),
         )
         root = Path(config.extract_dataset.save_path)
-        self.save_dir = root / "vis" / "d2" / person
 
-        self.save_vis = bool(getattr(config, "vis", True))
+        self.save_vis = bool(getattr(config.detectron2, "save", True))
+        self.save_dir = root / "vis" / "d2" / person
         self.vis_stride = int(getattr(config, "vis_stride", 1))
         self.assume_rgb = bool(getattr(config, "assume_rgb", True))
 
@@ -471,8 +471,9 @@ class Detectron2Wrapper:
         """
         video_path = Path(video_path)
         stem = video_path.stem
-        out_dir = self.save_dir / "img" / stem
-        out_dir.mkdir(parents=True, exist_ok=True)
+        if self.save_vis:
+            out_dir = self.save_dir / "img" / stem
+            out_dir.mkdir(parents=True, exist_ok=True)
 
         # 统一可迭代和长度
         if isinstance(vframes, (torch.Tensor, np.ndarray)):
