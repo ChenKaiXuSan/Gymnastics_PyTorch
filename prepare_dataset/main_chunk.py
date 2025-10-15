@@ -45,10 +45,6 @@ def _iter_videos(root: Path, recursive: bool = False) -> Iterable[Path]:
         )
 
 
-def _target_pt_path(save_root: Path, person: str, video_stem: str) -> Path:
-    return save_root / "pt" / person / f"{video_stem}.pt"
-
-
 def _safe_save_pt(pt_path: Path, obj: Dict[str, Any], legacy_zip: bool = True) -> None:
     pt_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = pt_path.with_suffix(pt_path.suffix + ".tmp")
@@ -79,7 +75,6 @@ def process_video_chunked(
     config,
     person: str,
     video_path: Path,
-    *,
     chunk_size: int = 128,
 ) -> Dict[str, Any]:
     """
@@ -91,24 +86,13 @@ def process_video_chunked(
     - For optical flow (T-1): keep the entire block (includes the cross-chunk pair)
     """
     preprocess = Preprocess(config=config, person=person)
+    logger.info("Processing video: %s", video_path)
 
     # read meta (robust)
-    fps, duration = 0.0, 0.0
-    try:
-        vr = VideoReader(str(video_path), "video")
-        meta = vr.get_metadata()
-        fps = float(meta.get("video", {}).get("fps", [0.0])[0] or 0.0)
-        duration = float(meta.get("video", {}).get("duration", [0.0])[0] or 0.0)
-    except Exception as e:
-        logger.warning(
-            "VideoReader meta failed (%s): %s. Fallback to read_video.",
-            video_path.name,
-            e,
-        )
-        _, _, info = read_video(video_path, pts_unit="sec", output_format="THWC")
-        fps = float(info.get("video_fps", 0.0))
-        duration = float(info.get("duration", 0.0))
-        vr = VideoReader(str(video_path), "video")
+    raw_vframes, _, info = read_video(video_path, pts_unit="sec", output_format="THWC")
+    fps = float(info.get("video_fps", 0.0))
+    duration = float(info.get("duration", 0.0))
+    vr = VideoReader(str(video_path), "video")
 
     vr.set_current_stream("video")
     rotate_deg = int(getattr(config.extract_dataset, "rotate_deg", -90))
@@ -132,7 +116,7 @@ def process_video_chunked(
     d2_kpt_score: List[torch.Tensor] = []
 
     H = W = None  # determined after first chunk
-
+    # FIXME: 这个写有问题，推到的时候会多出来几帧，具体是根据chunk size分的batch来的
     with torch.inference_mode():
         while True:
             buf: List[torch.Tensor] = []
@@ -239,6 +223,58 @@ def process_video_chunked(
     d_kpt = _maybe_cat(d2_kpt, dim=0)
     d_kpt_s = _maybe_cat(d2_kpt_score, dim=0)
 
+    # * check shapes
+    logger.info(
+        "check shapes: depth=%s flow=%s yolo_bbox=%s yolo_mask=%s yolo_kpt=%s yolo_kpt_s=%s d2_bbox=%s d2_kpt=%s d2_kpt_s=%s",
+        tuple(depth.shape),
+        tuple(flow.shape),
+        tuple(y_bbox.shape),
+        tuple(y_mask.shape),
+        tuple(y_kpt.shape),
+        tuple(y_kpt_s.shape),
+        tuple(d_bbox.shape),
+        tuple(d_kpt.shape),
+        tuple(d_kpt_s.shape),
+    )
+    logger.info("Total frames processed: %d (none_index: %d)", total_T, len(none_idx))
+
+    if depth.shape[0] != raw_vframes.shape[0] and depth.numel() > 0:
+        raise ValueError(
+            f"Depth frame count mismatch {depth.shape[0]} vs {raw_vframes.shape[0]}"
+        )
+    if flow.shape[0] != raw_vframes.shape[0] - 1 and flow.numel() > 0:
+        raise ValueError(
+            f"Flow frame count mismatch {flow.shape[0]} vs {raw_vframes.shape[0]-1}"
+        )
+    if y_bbox.shape[0] != raw_vframes.shape[0] and y_bbox.numel() > 0:
+        raise ValueError(
+            f"YOLO bbox frame count mismatch {y_bbox.shape[0]} vs {raw_vframes.shape[0]}"
+        )
+    if y_mask.shape[0] != raw_vframes.shape[0] and y_mask.numel() > 0:
+        raise ValueError(
+            f"YOLO mask frame count mismatch {y_mask.shape[0]} vs {raw_vframes.shape[0]}"
+        )
+    if y_kpt.shape[0] != raw_vframes.shape[0] and y_kpt.numel() > 0:
+        raise ValueError(
+            f"YOLO kpt frame count mismatch {y_kpt.shape[0]} vs {raw_vframes.shape[0]}"
+        )
+    if y_kpt_s.shape[0] != raw_vframes.shape[0] and y_kpt_s.numel() > 0:
+        raise ValueError(
+            f"YOLO kpt_score frame count mismatch {y_kpt_s.shape[0]} vs {raw_vframes.shape[0]}"
+        )
+    if d_bbox.shape[0] != raw_vframes.shape[0] and d_bbox.numel() > 0:
+        raise ValueError(
+            f"D2 bbox frame count mismatch {d_bbox.shape[0]} vs {raw_vframes.shape[0]}"
+        )
+    if d_kpt.shape[0] != raw_vframes.shape[0] and d_kpt.numel() > 0:
+        raise ValueError(
+            f"D2 kpt frame count mismatch {d_kpt.shape[0]} vs { raw_vframes.shape[0]}"
+        )
+    if d_kpt_s.shape[0] != raw_vframes.shape[0] and d_kpt_s.numel() > 0:
+        raise ValueError(
+            f"D2 kpt_score frame count mismatch {d_kpt_s.shape[0]} vs {raw_vframes.shape[0]}"
+        )
+
     pt_info: Dict[str, Any] = {
         "optical_flow": flow.contiguous(),
         "depth": depth.contiguous(),
@@ -298,7 +334,7 @@ def process_one_person(config, person: str) -> None:
     )
 
     for video_path in _iter_videos(person_dir, recursive=recursive):
-        out_pt = _target_pt_path(save_root, person, video_path.stem)
+        out_pt = save_root / "pt" / person / f"{video_path.stem}.pt"
         if out_pt.exists() and not overwrite:
             logger.info("Skip existed: %s", out_pt)
             continue
