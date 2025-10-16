@@ -304,6 +304,9 @@ def load_kpt_and_bbox_from_d2_pt(
         bboxes_xyxy[..., 1] = np.clip(bboxes_xyxy[..., 1], 0, H - 1)
         bboxes_xyxy[..., 3] = np.clip(bboxes_xyxy[..., 3], 0, H - 1)
 
+    # 视频的frame向右旋转90°
+    frames= np.rot90(frames, k=-1, axes=(1, 2)).copy()
+
     return (
         kpts_xy.astype(dtype, copy=False),
         kpt_scores.astype(dtype, copy=False),

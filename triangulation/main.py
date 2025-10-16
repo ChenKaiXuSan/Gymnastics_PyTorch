@@ -40,6 +40,7 @@ from triangulation.load import load_keypoints_from_npz, load_kpt_and_bbox_from_d
 from triangulation.vis.frame_visualization import draw_and_save_keypoints_from_frame
 from triangulation.vis.pose_visualization import draw_camera, visualize_3d_joints
 from triangulation.vis.merge_video import merge_frames_to_video
+from triangulation.save import save_3d_joints
 
 # COCO-17 骨架（左/右臂、腿、躯干、头部）
 COCO_SKELETON: List[Tuple[int, int]] = [
@@ -117,7 +118,7 @@ def process_one_video(
     output_path: Path,
     K,
     extrinsics,
-    vis: Dict[str, Any],
+    vis,
 ):
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -153,7 +154,7 @@ def process_one_video(
         l_frame = first_vframes[i] if first_vframes is not None else None
         r_frame = second_vframes[i] if second_vframes is not None else None
 
-        if l_frame is not None and r_frame is not None or vis.save_kpts_frames:
+        if l_frame is not None and r_frame is not None and vis.save_kpts_frames:
             draw_and_save_keypoints_from_frame(
                 l_frame,
                 l_kpt,
@@ -181,6 +182,16 @@ def process_one_video(
             )
 
         # * 保存三维关键点
+
+        save_3d_joints(
+            joints_3d=joints_3d,
+            save_dir=output_path / "joints_3d",
+            frame_idx=i,
+            first_rt_info=first_rt_info,
+            second_rt_info=second_rt_info,
+            K_info=K,
+            pt_path={"first": str(first_path), "second": str(second_path)},
+        )
 
     # * merge frame to video
     if vis.merge_3d_frames_to_video:
@@ -215,6 +226,9 @@ def process_person_videos(
         first_rt_info = rt_info[int(first.stem)]
         second_rt_info = rt_info[int(second.stem)]
 
+        # convert omegaconf to dict np
+        K = {k: np.array(v) for k, v in K.items() if v is not None}
+        
         process_one_video(
             first,
             second,

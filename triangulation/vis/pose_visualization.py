@@ -23,6 +23,7 @@ from typing import Iterable, List, Optional, Sequence, Tuple, Union, Dict
 
 import os
 from pathlib import Path
+import json
 
 import numpy as np
 
@@ -271,12 +272,9 @@ def visualize_3d_joints(
 
     # TODO: save teh stats to one txt file alongside the image
 
-    stats_txt_path = save_path.parent.parent / "bone_stats.txt"
-    with open(stats_txt_path, "a") as f:
-        for k, v in stats.items():
-            f.write(f"{k}: {v}\n")
-
-    print(f"[INFO] Saved: {stats_txt_path}")
+    stats_json_path = save_path.parent.parent / "bone_stats.json"
+    with open(stats_json_path, "a") as f:
+        json.dump(stats, f, indent=4)
 
     # 叠加统计文本
     if stats is not None:

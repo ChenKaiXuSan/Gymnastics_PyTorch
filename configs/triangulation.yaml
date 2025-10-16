@@ -17,8 +17,7 @@ camera_K:
 
 paths:
   log_path: logs/triangulated/${now:%Y-%m-%d}/${now:%H-%M-%S}
-  input_path: /workspace/data/npz/raw/suwabe
-  mix_path: /workspace/data/npz/mix
+  input_path: /workspace/data/pt/suwabe
 
 camera_position:
   # 相机布局
