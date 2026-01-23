@@ -48,9 +48,9 @@
       "module": "camera_calibration.main",
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
-    //   "args": [
-    //     "/workspace/code/camera_calibration/input_video"
-    //   ]
+      //   "args": [
+      //     "/workspace/code/camera_calibration/input_video"
+      //   ]
     },
     {
       "name": "camera_position_mapping",
@@ -59,6 +59,18 @@
       "module": "triangulation.camera_position_mapping",
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal"
+    },
+    {
+      "name": "sam3d_body",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "SAM3Dbody.main",
+      "cwd": "/workspace/code",
+      "python": "/opt/conda/envs/sam_3d_body/bin/python",
+      "console": "integratedTerminal",
+      "args": [
+        "infer.gpu=0",
+      ]
     },
   ]
 }

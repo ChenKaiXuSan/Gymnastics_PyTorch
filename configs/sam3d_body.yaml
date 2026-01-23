@@ -1,0 +1,40 @@
+# hydra config
+hydra:
+  run:
+    dir: ${paths.log_path}
+  job:
+    chdir: false
+
+# Path
+paths:
+  video_path: /workspace/data/raw/test
+  image_path: /workspace/data/frames/test
+  log_path: logs/sam3d-body/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  result_output_path: /workspace/data/sam3d_body_results
+
+# Model
+model:
+  root_path: /workspace/code/ckpt/sam-3d-body-dinov3
+  checkpoint_path: ${model.root_path}/model.ckpt
+  mhr_path: ${model.root_path}/assets/mhr_model.pt
+
+  # detector_name: yolov8n
+  # segmentor_name: sam_vit_b
+  fov_name: moge2
+
+visualize:
+  save_video: true
+  plot_3d: true
+  plot_2d: true
+  plot_skeleton: true
+  plot_skeleton_3d: true
+
+infer:
+  type: image # video or image
+  conf_thres: 50.0
+  keep_frames: true
+  num_inference_steps: 4
+  gpu: 0
+
+dataset:
+  recursive: false
