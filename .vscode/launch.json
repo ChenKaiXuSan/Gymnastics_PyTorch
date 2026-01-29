@@ -72,5 +72,17 @@
         "infer.gpu=[0]",
       ]
     },
+    {
+      "name": "split_cycle",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "split_cycle.main",
+      "cwd": "/workspace/code",
+      "python": "/opt/conda/envs/sam_3d_body/bin/python",
+      "console": "integratedTerminal",
+      "args": [
+        // "infer.gpu=[0]",
+      ]
+    },
   ]
 }
