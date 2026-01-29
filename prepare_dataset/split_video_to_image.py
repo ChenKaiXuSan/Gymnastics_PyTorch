@@ -78,8 +78,17 @@ def extract_frames(video_path, save_dir, interval):
 
         # 指定間隔で保存
         if count % interval == 0:
+            # --- 回転処理を追加 ---
+            # cv2.ROTATE_90_CLOCKWISE: 時計回りに90度
+            # cv2.ROTATE_180: 180度
+            # cv2.ROTATE_90_COUNTERCLOCKWISE: 反時計回りに90度
+            rotated_frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+
             file_name = f"{saved_count:05d}.jpg"
-            cv2.imwrite(os.path.join(save_dir, file_name), frame)
+            save_path = os.path.join(save_dir, file_name)
+
+            # 回転後の画像を保存
+            cv2.imwrite(save_path, rotated_frame)
             saved_count += 1
 
         count += 1

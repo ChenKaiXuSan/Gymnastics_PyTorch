@@ -7,10 +7,9 @@ hydra:
 
 # Path
 paths:
-  video_path: /workspace/data/raw/test
-  image_path: /workspace/data/frames/test
+  video_path: /workspace/data/raw/person
   log_path: logs/sam3d-body/${now:%Y-%m-%d}/${now:%H-%M-%S}
-  result_output_path: /workspace/data/sam3d_body_results
+  result_output_path: /workspace/data/sam3d_body_results/person
 
 # Model
 model:
@@ -23,18 +22,21 @@ model:
   fov_name: moge2
 
 visualize:
-  save_video: true
-  plot_3d: true
-  plot_2d: true
-  plot_skeleton: true
-  plot_skeleton_3d: true
+  save_focal_length: false
+  save_mesh_ply: false
+  save_mesh_overlay: true
+  save_bbox_image: true
+  save_3d_mesh: false
+  save_3d_keypoints: true
+  save_together: true
 
 infer:
-  type: image # video or image
   conf_thres: 50.0
   keep_frames: true
   num_inference_steps: 4
-  gpu: 0
+  gpu: [0, 1] # 指定使用的 GPU 列表
+  workers_per_gpu: 2 # 每个 GPU 使用的工作线程数,3090 建议 2
+  person_list: [-1] # 指定需要处理的人物 ID 列表，-1 表示处理所有人物
 
 dataset:
-  recursive: false
+  recursive: true

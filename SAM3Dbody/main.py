@@ -1,114 +1,243 @@
+#!/usr/bin/env python3
+# -*- coding:utf-8 -*-
+"""
+File: /workspace/code/SAM3Dbody/main_multi_gpu_process.py
+Project: /workspace/code/SAM3Dbody
+Created Date: Monday January 26th 2026
+Author: Kaixu Chen
+-----
+Comment:
+根据多GPU并行处理SAM-3D-Body推理任务。
+
+Have a good code time :)
+-----
+Last Modified: Monday January 26th 2026 5:12:10 pm
+Modified By: the developer formerly known as Kaixu Chen at <chenkaixusan@gmail.com>
+-----
+Copyright (c) 2026 The University of Tsukuba
+-----
+HISTORY:
+Date      	By	Comments
+----------	---	---------------------------------------------------------
+"""
+
 import logging
 import os
+import multiprocessing as mp
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List
+import numpy as np
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
+# 假设这些是从你的其他模块导入的
 from .infer import process_frame_list
 from .load import load_data
+
+# --- 常量定义 ---
+REQUIRED_VIEWS = {"face", "side"}
 
 logger = logging.getLogger(__name__)
 
 
-# --------------------------------------------------------------------------- #
-# Utility
-# --------------------------------------------------------------------------- #
-def find_files(
-    subject_dir: Path,
-    patterns: List[str],
-    recursive: bool = False,
-) -> List[Path]:
-    """指定されたディレクトリ配下でパターンに一致するファイルを検索"""
-    files: List[Path] = []
-    search_func = subject_dir.rglob if recursive else subject_dir.glob
-    for pat in patterns:
-        files.extend(search_func(pat))
-    return sorted({f.resolve() for f in files})
+# ---------------------------------------------------------------------
+# 核心处理逻辑：处理单个人的数据
+# ---------------------------------------------------------------------
+import cv2
+import logging
+from pathlib import Path
+import numpy as np
+from typing import Dict, List
 
 
-# --------------------------------------------------------------------------- #
-# Main
-# --------------------------------------------------------------------------- #
-@hydra.main(config_path="../configs", config_name="sam3d_body", version_base=None)
-def main(cfg: DictConfig) -> None:
-    logger.info("==== Config ====\n" + OmegaConf.to_yaml(cfg))
+def process_single_person(
+    person_dir: Path,
+    source_root: Path,
+    out_root: Path,
+    infer_root: Path,
+    cfg: DictConfig,
+):
+    """处理单个人员的所有环境和视角（右回転処理を追加）"""
+    person_id = person_dir.name
+    vid_extensions = {".mp4", ".mov", ".avi", ".mkv"}
 
-    infer_type = cfg.infer.get("type", "video")  # video or image
-    recursive = bool(cfg.dataset.get("recursive", False))
+    # --- 1. Person専用のログ設定 ---
+    log_dir = out_root / "person_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    person_log_file = log_dir / f"{person_id}.log"
 
-    # 共通の出力パス設定
-    out_root = Path(cfg.paths.log_path).resolve()
-    inference_output_path = Path(cfg.paths.result_output_path).resolve()
-    out_root.mkdir(parents=True, exist_ok=True)
-    inference_output_path.mkdir(parents=True, exist_ok=True)
+    logger = logging.getLogger(person_id)
+    logger.setLevel(logging.INFO)
 
-    # 検索パターンの定義
-    vid_patterns = ["*.mp4", "*.mov", "*.avi", "*.mkv", "*.MP4", "*.MOV"]
-    img_patterns = ["*.png", "*.jpg", "*.jpeg", "*.PNG", "*.JPG", "*.JPEG"]
+    # 既存のハンドラがあればクリア（重複防止）
+    if logger.hasHandlers():
+        logger.handlers.clear()
 
-    # ---------------------------------------------------------------------- #
-    # 入力ソースの決定とスキャン
-    # ---------------------------------------------------------------------- #
-    if infer_type == "video":
-        data_root = Path(cfg.paths.video_path).resolve()
-        patterns = vid_patterns
-        logger.info(f"Mode: VIDEO | Root: {data_root}")
-    else:
-        data_root = Path(cfg.paths.image_path).resolve()
-        patterns = img_patterns
-        logger.info(f"Mode: IMAGE | Root: {data_root}")
+    handler = logging.FileHandler(person_log_file, mode="a", encoding="utf-8")
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
-    if not data_root.exists():
-        raise FileNotFoundError(f"Path not found: {data_root}")
+    logger.info(f"==== Starting Process for Person: {person_id} ====")
 
-    # Subject（サブフォルダ）の取得
-    subjects_dirs = sorted([p for p in data_root.iterdir() if p.is_dir()])
-    if not subjects_dirs:
-        # 直下にファイルがある可能性も考慮（サブフォルダがない場合）
-        subjects_dirs = [data_root]
+    # --- 2. 視角（View）のフィルタリング ---
+    view_map: Dict[str, Path] = {}
+    # person_dir 直下のファイルを走査
+    for file_path in person_dir.iterdir():
+        if not file_path.is_file():
+            continue
 
-    # { subject_name: [file paths] }
-    data_map: Dict[str, List[Path]] = {}
-    for s_dir in subjects_dirs:
-        found_files = find_files(s_dir, patterns, recursive)
-        if found_files:
-            data_map[s_dir.name] = found_files
-        else:
-            logger.warning(f"[No files found] {s_dir}")
+        suffix = file_path.suffix.lower()
+        if suffix in vid_extensions:
+            view_name = file_path.name.lower()
+            for v in REQUIRED_VIEWS:
+                if v in view_name:
+                    view_map[v] = file_path.resolve()
 
-    # ---------------------------------------------------------------------- #
-    # タスクの構築
-    # ---------------------------------------------------------------------- #
-    tasks: List[Tuple[str, str, Path]] = []
+    # 必要な視角が揃っているかチェック
+    missing_views = [v for v in REQUIRED_VIEWS if v not in view_map]
+    if missing_views:
+        logger.warning(f"[Skip] {person_id}: 視角が足りません。不足: {missing_views}")
+        handler.close()  # 終了前に閉じる
+        return
 
-    for subject_name, file_list in data_map.items():
-        frame_list = load_data(file_list)
-        tasks.append((subject_name, frame_list))
+    # --- 3. データロードと回転処理 ---
+    # view_frames: Dict[str, List[np.ndarray]]
+    view_frames = load_data(view_map)
 
-    logger.info(f"Total tasks found: {len(tasks)}")
-
-    # ---------------------------------------------------------------------- #
-    # 准备数据
-    # ---------------------------------------------------------------------- #
-    for subject_name, frame_list in tasks:
+    for view_label, frames in view_frames.items():
         logger.info(
-            f"Processing: [{infer_type.upper()}] {subject_name} | Number of frames: {len(frame_list)}"
+            f" 視角 {view_label} を処理中: {len(frames)} 枠。右回転を適用します。"
         )
 
-        # 保存先の階層を作成
-        current_out_dir = out_root / subject_name
-        current_infer_dir = inference_output_path / subject_name
+        # --- ここで各フレームを右に90度回転 ---
+        rotated_frames = [cv2.rotate(f, cv2.ROTATE_90_CLOCKWISE) for f in frames]
 
+        # 保存先の作成
+        _out_root = out_root / person_id / view_label
+        _out_root.mkdir(parents=True, exist_ok=True)
+        _infer_root = infer_root / person_id / view_label
+        _infer_root.mkdir(parents=True, exist_ok=True)
+
+        # 回転済みのリストを次の処理へ渡す
         process_frame_list(
-            frame_list=frame_list,
-            out_dir=current_out_dir,
-            inference_output_path=current_infer_dir,
+            frame_list=rotated_frames,
+            out_dir=_out_root,
+            inference_output_path=_infer_root,
             cfg=cfg,
         )
 
-    logger.info("==== ALL DONE ====")
+    logger.info(f"==== Finished Person: {person_id} ====")
+    handler.close()  # ログファイルを安全に閉じる
+
+
+# ---------------------------------------------------------------------
+# GPU Worker：进程执行函数
+# ---------------------------------------------------------------------
+def gpu_worker(
+    gpu_id: int,
+    person_dirs: List[Path],
+    source_root: Path,
+    out_root: Path,
+    infer_root: Path,
+    cfg_dict: dict,
+):
+    """
+    每个进程的入口：设置环境变量，并处理分配的任务列表
+    """
+    # 1. 隔离 GPU
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+
+    cfg_dict["infer"]["gpu"] = 0  # 因为上面已经隔离了 GPU，所以这里设为 0
+
+    # 2. 将字典转回 Hydra 配置（多进程传递对象时，转为字典更安全）
+    cfg = OmegaConf.create(cfg_dict)
+
+    logger.info(f"🟢 GPU {gpu_id} 进程启动，待处理人数: {len(person_dirs)}")
+
+    for p_dir in person_dirs:
+        try:
+            process_single_person(p_dir, source_root, out_root, infer_root, cfg)
+        except Exception as e:
+            logger.error(f"❌ GPU {gpu_id} 处理 {p_dir.name} 时出错: {e}")
+
+    logger.info(f"🏁 GPU {gpu_id} 所有任务处理完毕")
+
+
+# ---------------------------------------------------------------------
+# Main 入口
+# ---------------------------------------------------------------------
+@hydra.main(config_path="../configs", config_name="sam3d_body", version_base=None)
+def main(cfg: DictConfig) -> None:
+    # 1. 経路準備
+    out_root = Path(cfg.paths.log_path).resolve()
+    infer_root = Path(cfg.paths.result_output_path).resolve()
+    source_root = Path(cfg.paths.video_path).resolve()
+
+    # --- 設定の追加 ---
+    gpu_ids = cfg.infer.get("gpu", [0, 1])  # 使用するGPUのリスト
+    workers_per_gpu = cfg.infer.get("workers_per_gpu", 2)  # 1枚あたりのプロセス数
+
+    # 実際に起動するプロセスの数だけGPU IDを並べる (例: [0, 0, 1, 1])
+    expanded_gpu_ids = []
+    for gid in gpu_ids:
+        expanded_gpu_ids.extend([gid] * workers_per_gpu)
+
+    total_workers = len(expanded_gpu_ids)
+    # ------------------
+
+    # all_person_dirs = sorted([x for x in source_root.iterdir() if x.is_dir()])
+    all_person_dirs = []
+    for x in source_root.iterdir():
+        if x.is_dir() and (
+            int(x.name) in [int(pid) for pid in cfg.infer.person_list]
+            or -1 in cfg.infer.person_list
+        ):
+            all_person_dirs.append(x)
+
+    if not all_person_dirs:
+        logger.error(f"未找到数据目录: {source_root}")
+        return
+
+    # 2. 自動分组逻辑 (プロセスの総数で分割)
+    chunks = np.array_split(all_person_dirs, total_workers)
+
+    logger.info(f"使用 GPU: {gpu_ids} (各 {workers_per_gpu} ワーカー)")
+    logger.info(f"総プロセス数: {total_workers}")
+    logger.info(f"総処理人数: {len(all_person_dirs)}")
+
+    # 3. 启动并行进程
+    cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+    mp.set_start_method("spawn", force=True)
+
+    processes = []
+    for i, gpu_id in enumerate(expanded_gpu_ids):
+        person_list = chunks[i].tolist()
+        if not person_list:
+            continue
+
+        logger.info(f"  - Worker {i} (GPU {gpu_id}) 分配任务数: {len(person_list)}")
+
+        p = mp.Process(
+            target=gpu_worker,
+            args=(
+                gpu_id,
+                person_list,
+                source_root,
+                out_root,
+                infer_root,
+                cfg_dict,
+            ),
+        )
+        p.start()
+        processes.append(p)
+
+    # 4. 等待所有进程完成
+    for p in processes:
+        p.join()
+
+    logger.info("🎉 [SUCCESS] 所有 GPU 任务已圆满完成！")
 
 
 if __name__ == "__main__":

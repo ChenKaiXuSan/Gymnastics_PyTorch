@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding:utf-8 -*-
-'''
+"""
 File: /workspace/code/SAM3Dbody/load.py
 Project: /workspace/code/SAM3Dbody
 Created Date: Friday January 23rd 2026
@@ -18,66 +18,59 @@ Copyright (c) 2026 The University of Tsukuba
 HISTORY:
 Date      	By	Comments
 ----------	---	---------------------------------------------------------
-'''
+"""
 
+import logging
 import cv2
 import numpy as np
 from pathlib import Path
-from typing import Union, List
+from typing import List, Dict
 
-def load_data(input_data: Union[str, List[str], Path]) -> List[np.ndarray]:
+logger = logging.getLogger(__name__)
+
+
+def load_data(input_video_path: Dict[str, Path]) -> Dict[str, List[np.ndarray]]:
     """
-    根据输入加载所有帧。
-    
-    参数:
-        input_data: 
-            - 如果是视频: 视频文件的路径字符串 (str) 或 Path 对象
-            - 如果是图片: 包含图片路径的列表 (List[str])
-            
-    返回:
-        List[np.ndarray]: 包含所有读取到的帧的列表。每帧为 RGB 格式的数组。
+    動画ファイルからすべてのフレームを読み込み、RGB形式のリストとして返します。
+
+    引数:
+        input_video_path: 動画ファイルのパスの辞書 (キーは視点名、値は Path オブジェクト)
+
+    戻り値:
+        List[np.ndarray]: 全フレームのリスト。各フレームは RGB 形式の numpy 配列。
     """
-    frames_list = []
+    view_frames_list: Dict[str, List[np.ndarray]] = {}
 
-    # --- 情况 1: 输入是图片路径列表 ---
-    if isinstance(input_data, list):
-        print(f"检测到图片列表，正在读取 {len(input_data)} 张图片...")
-        for img_path in input_data:
-            path_str = str(img_path)
-            # 读取图片
-            img = cv2.imread(path_str)
-            if img is not None:
-                # 转换 BGR 到 RGB
-                img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                frames_list.append(img_rgb)
-            else:
-                print(f"警告: 无法读取图片 -> {path_str}")
+    for view, video_path in input_video_path.items():
 
-    # --- 情况 2: 输入是视频路径 (字符串或 Path) ---
-    else:
-        path_str = str(input_data)
-        # 检查是否为支持的视频格式
-        video_exts = {'.mp4', '.avi', '.mov', '.mkv', '.wmv', '.MP4', '.MOV'}
-        if Path(path_str).suffix.lower() not in video_exts:
-            print(f"错误: 不支持的视频格式或输入类型错误 -> {path_str}")
-            return []
+        # 2. 動画のキャプチャ開始
+        logger.info(f"動画ファイルからフレームを抽出中: {video_path}")
+        cap = cv2.VideoCapture(str(video_path))
 
-        print(f"检测到视频文件，正在提取帧: {path_str}")
-        cap = cv2.VideoCapture(path_str)
-        
         if not cap.isOpened():
-            print(f"错误: 无法打开视频 -> {path_str}")
+            logger.error(f"エラー: 動画を開くことができませんでした -> {video_path}")
             return []
 
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            # 转换 BGR 到 RGB
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frames_list.append(frame_rgb)
-        
-        cap.release()
-        print(f"视频读取完成，共提取 {len(frames_list)} 帧")
+        # 3. 全フレームをループで読み込み
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
 
-    return frames_list
+                # --- 回転処理を追加 ---
+                # cv2.ROTATE_90_CLOCKWISE: 時計回りに90度
+                # cv2.ROTATE_180: 180度
+                # cv2.ROTATE_90_COUNTERCLOCKWISE: 反時計回りに90度
+                # rotated_frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE) # 必要に応じて回転を選択
+
+                # OpenCVはBGR形式なのでRGBに変換
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                view_frames_list.setdefault(view, []).append(frame_rgb)
+        finally:
+            cap.release()
+
+        logger.info(
+            f"動画の読み込み完了。合計 {len(view_frames_list[view])} フレームを抽出しました。"
+        )
+    return view_frames_list

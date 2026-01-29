@@ -7,6 +7,7 @@ Created Date: Thursday December 4th 2025
 Author: Kaixu Chen
 -----
 Comment:
+先推理SAM-3D-Body模型，然后根据面积最大的 bbox 选出主要人物进行可视化和保存
 
 Have a good code time :)
 -----
@@ -23,6 +24,7 @@ Date      	By	Comments
 import logging
 import os
 from pathlib import Path
+import numpy as np
 
 import torch
 from omegaconf.omegaconf import DictConfig
@@ -31,12 +33,56 @@ from tqdm import tqdm
 from .sam_3d_body import SAM3DBodyEstimator, load_sam_3d_body
 from .sam_3d_body.metadata.mhr70 import pose_info as mhr70_pose_info
 from .sam_3d_body.visualization.skeleton_visualizer import SkeletonVisualizer
-from .save import save_results
+from .save import save_frame
 from .vis import (
     vis_results,
 )
 
 logger = logging.getLogger(__name__)
+
+
+# 定义一个计算面积的函数（基于 bbox: [x1, y1, x2, y2]）
+def select_best_person(outputs, verbose=True):
+    """
+    从多个检测结果中选出面积最大（置信度最高）的一个。
+
+    Args:
+        outputs (list): 模型输出的 dict 列表.
+        verbose (bool): 是否打印每个检测框的信息。
+
+    Returns:
+        tuple: (best_target, best_idx) 如果没有结果则返回 (None, None)
+    """
+    if not outputs:
+        if verbose:
+            print("⚠️ 未检测到任何目标。")
+        return None, None
+
+    areas = []
+    for i, obj in enumerate(outputs):
+        # 获取 bbox 坐标 [x1, y1, x2, y2]
+        bbox = obj.get("bbox", [0, 0, 0, 0])
+
+        # 计算面积
+        width = bbox[2] - bbox[0]
+        height = bbox[3] - bbox[1]
+        area = width * height
+        areas.append(area)
+
+        if verbose:
+            print(
+                f"检测到序号 [{i}]: 面积 = {area:10.2f} | BBox = [{int(bbox[0])}, {int(bbox[1])}, {int(bbox[2])}, {int(bbox[3])}]"
+            )
+
+    # 找到面积最大的索引
+    best_idx = np.argmax(areas)
+    best_target = outputs[best_idx]
+
+    if verbose:
+        print(f"🏆 最终选定: {best_idx} 号 (面积: {areas[best_idx]:.2f})")
+        print("-" * 50)
+
+    return best_target, best_idx
 
 
 def setup_visualizer():
@@ -144,8 +190,6 @@ def process_frame_list(
     estimator = setup_sam_3d_body(cfg)
     visualizer = setup_visualizer()
 
-    all_outputs = []
-
     for idx in tqdm(range(len(frame_list)), desc="Processing frames"):
         # if idx > 1:
         #     break
@@ -155,26 +199,34 @@ def process_frame_list(
             bboxes=None,
         )
 
+        # 在处理 outputs 时进行筛选， 选出面积最大的那个人
+        # 输出最大面积的信息
+        best_person, best_id = select_best_person(outputs)
+
+        if best_person is None:
+            logger.warning(f"[Skip] No person detected in frame {idx}.")
+            continue
+
         # 可视化并保存结果
         vis_results(
             img_cv2=frame_list[idx],
-            outputs=outputs,
-            faces=estimator.faces,
+            outputs=[best_person],
             save_dir=str(out_dir / "visualization" / f"frame_{idx:04d}"),
             image_name=f"frame_{idx:04d}",
+            faces=estimator.faces,
             visualizer=visualizer,
+            cfg=cfg.visualize,
         )
 
-        outputs = outputs[0]
+        outputs = best_person
         outputs["frame"] = frame_list[idx]
+        outputs["frame_idx"] = idx
 
-        all_outputs.append(outputs)
-
-    # save other results
-    save_results(
-        outputs=all_outputs,
-        save_dir=inference_output_path,
-    )
+        save_frame(
+            output=outputs,
+            save_dir=inference_output_path,
+            frame_idx=outputs["frame_idx"],
+        )
 
     # final
     torch.cuda.empty_cache()
