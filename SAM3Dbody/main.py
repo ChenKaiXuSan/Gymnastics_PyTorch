@@ -22,13 +22,14 @@ Date      	By	Comments
 """
 
 import logging
-import os
 import multiprocessing as mp
+import os
 from pathlib import Path
 from typing import Dict, List
-import numpy as np
 
+import cv2
 import hydra
+import numpy as np
 from omegaconf import DictConfig, OmegaConf
 
 # 假设这些是从你的其他模块导入的
@@ -44,11 +45,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------
 # 核心处理逻辑：处理单个人的数据
 # ---------------------------------------------------------------------
-import cv2
-import logging
-from pathlib import Path
-import numpy as np
-from typing import Dict, List
 
 
 def process_single_person(
