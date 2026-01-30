@@ -21,8 +21,6 @@ Date      	By	Comments
 """
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -34,7 +32,7 @@ def load_sam3d_body_sequence(
     person_id: str = "01",
     subdir: str = "face",
     pattern: str = "*_sam3d_body.npz",
-) -> Sam3DBodySequence:
+) -> Tuple[List[Dict], np.ndarray]:
     """
     Load per-frame SAM3D-Body npz outputs into a full sequence.
 
@@ -54,7 +52,7 @@ def load_sam3d_body_sequence(
         strict: if True, raise when cannot find keypoints in a frame.
 
     Returns:
-        Sam3DBodySequence with kpts3d (T,J,3), optional conf, and metadata.
+        Tuple[List[Dict], np.ndarray]: A tuple containing a list of dictionaries with frame information and a numpy array of keypoints.
     """
     root = Path(root)
 
