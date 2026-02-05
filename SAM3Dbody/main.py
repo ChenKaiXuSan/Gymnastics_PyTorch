@@ -103,12 +103,12 @@ def process_single_person(
     view_frames = load_data(view_map)
 
     for view_label, frames in view_frames.items():
-        logger.info(
-            f" 視角 {view_label} を処理中: {len(frames)} 枠。右回転を適用します。"
-        )
+        # logger.info(
+        #     f" 視角 {view_label} を処理中: {len(frames)} 枠。右回転を適用します。"
+        # )
 
-        # --- ここで各フレームを右に90度回転 ---
-        rotated_frames = [cv2.rotate(f, cv2.ROTATE_90_CLOCKWISE) for f in frames]
+        # # --- ここで各フレームを右に90度回転 ---
+        # rotated_frames = [cv2.rotate(f, cv2.ROTATE_90_CLOCKWISE) for f in frames]
 
         # 保存先の作成
         _out_root = out_root / person_id / view_label
@@ -118,7 +118,7 @@ def process_single_person(
 
         # 回転済みのリストを次の処理へ渡す
         process_frame_list(
-            frame_list=rotated_frames,
+            frame_list=frames,
             out_dir=_out_root,
             inference_output_path=_infer_root,
             cfg=cfg,
