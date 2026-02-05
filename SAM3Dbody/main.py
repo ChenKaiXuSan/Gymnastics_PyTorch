@@ -108,7 +108,7 @@ def process_single_person(
         # )
 
         # # --- ここで各フレームを右に90度回転 ---
-        # rotated_frames = [cv2.rotate(f, cv2.ROTATE_90_CLOCKWISE) for f in frames]
+        rotated_frames = [cv2.rotate(f, cv2.ROTATE_90_CLOCKWISE) for f in frames]
 
         # 保存先の作成
         _out_root = out_root / person_id / view_label
@@ -118,7 +118,7 @@ def process_single_person(
 
         # 回転済みのリストを次の処理へ渡す
         process_frame_list(
-            frame_list=frames,
+            frame_list=rotated_frames,
             out_dir=_out_root,
             inference_output_path=_infer_root,
             cfg=cfg,

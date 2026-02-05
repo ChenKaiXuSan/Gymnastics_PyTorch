@@ -9,7 +9,7 @@ hydra:
 paths:
   video_path: /workspace/data/raw/person
   # log_path: logs/sam3d-body/${now:%Y-%m-%d}/${now:%H-%M-%S}
-  log_path: /workspace/data/sam3d_body_results
+  log_path: /workspace/data/sam3d_body_results/logs
   result_output_path: /workspace/data/sam3d_body_results/person
 
 # Model
