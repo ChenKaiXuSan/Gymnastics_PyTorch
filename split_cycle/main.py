@@ -60,6 +60,8 @@ Date      	By	Comments
 from __future__ import annotations
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, List, Literal, Tuple, Union
 
@@ -385,134 +387,202 @@ def get_video_nframes(video_path: Union[str, Path]) -> int:
     return n
 
 
-# -------------------- main --------------------
-def main():
-    person_id = "01"
+# -------------------- process single person --------------------
+def process_person(person_id: str, raw_root: Path, kpt_root: Path, log_root: Path):
+    """
+    处理单个人物的对齐、融合和周期分割
+    """
+    try:
+        person_log_root = log_root / f"person_{person_id}"
 
-    raw_root = Path("/workspace/data/raw")
-    kpt_root = Path("/workspace/data/sam3d_body_results")
-    log_root = Path("logs/split_cycle") / f"person_{person_id}"
+        face_video = raw_root / f"person/{person_id}/ID{person_id}_face.MOV"
+        side_video = raw_root / f"person/{person_id}/ID{person_id}_side.MOV"
 
-    face_video = raw_root / f"person/{person_id}/test_face_full.MOV"
-    side_video = raw_root / f"person/{person_id}/test_side_full.MOV"
+        # 检查数据是否存在
+        if not face_video.exists() or not side_video.exists():
+            print(f"⚠ [skip] person_{person_id}: video files not found")
+            return False
 
-    # 1) load kpts (world coords)
-    face_seq = load_sam3d_body_sequence(kpt_root, person_id=person_id, subdir="face")
-    side_seq = load_sam3d_body_sequence(kpt_root, person_id=person_id, subdir="side")
+        # 1) load kpts (world coords)
+        try:
+            face_seq = load_sam3d_body_sequence(kpt_root, person_id=person_id, subdir="face")
+            side_seq = load_sam3d_body_sequence(kpt_root, person_id=person_id, subdir="side")
+        except Exception as e:
+            print(f"⚠ [skip] person_{person_id}: failed to load kpts - {e}")
+            return False
 
-    face_k = face_seq.kpts3d if hasattr(face_seq, "kpts3d") else face_seq[1]
-    side_k = side_seq.kpts3d if hasattr(side_seq, "kpts3d") else side_seq[1]
+        face_k = face_seq.kpts3d if hasattr(face_seq, "kpts3d") else face_seq[1]
+        side_k = side_seq.kpts3d if hasattr(side_seq, "kpts3d") else side_seq[1]
 
-    print("[load] face:", face_k.shape, "side:", side_k.shape)
+        print(f"✓ [load] person_{person_id}: face {face_k.shape}, side {side_k.shape}")
 
-    # 2) estimate offset using theta in body frame
-    theta_face = compute_theta_unwrap_from_world(face_k, IDX)
-    theta_side = compute_theta_unwrap_from_world(side_k, IDX)
+        # 2) estimate offset using theta in body frame
+        theta_face = compute_theta_unwrap_from_world(face_k, IDX)
+        theta_side = compute_theta_unwrap_from_world(side_k, IDX)
 
-    offset = estimate_offset_by_dtw(theta_face, theta_side)
-    print("[align] offset_side_to_face =", offset, "(>0 means side starts later)")
+        offset = estimate_offset_by_dtw(theta_face, theta_side)
+        print(f"✓ [align] person_{person_id}: offset_side_to_face = {offset}")
 
-    # 2-1) 先对齐到同一时间轴（union）
-    face_u, side_u, face_map_u, side_map_u = align_to_common_timeline(
-        face_k, side_k, offset, pad_value=np.nan
-    )
-    print(
-        "[align] union length:",
-        len(face_u),
-        "face_exist:",
-        np.sum(face_map_u >= 0),
-        "side_exist:",
-        np.sum(side_map_u >= 0),
-    )
-
-    # 2-2) 再裁剪：只保留两路都存在的最大连续区间（overlap）
-    face_k2, side_k2, face_map, side_map, t0, t1 = crop_to_overlap(
-        face_u, side_u, face_map_u, side_map_u
-    )
-    if len(face_k2) == 0:
-        raise RuntimeError(
-            "No overlap segment found after alignment. Check offset / data."
+        # 2-1) 先对齐到同一时间轴（union）
+        face_u, side_u, face_map_u, side_map_u = align_to_common_timeline(
+            face_k, side_k, offset, pad_value=np.nan
+        )
+        print(
+            f"✓ [union] person_{person_id}: length {len(face_u)}, "
+            f"face_exist {np.sum(face_map_u >= 0)}, side_exist {np.sum(side_map_u >= 0)}"
         )
 
-    print(f"[crop] overlap on union timeline: [{t0},{t1}) length={len(face_k2)}")
-    print("[crop] face frames:", int(face_map[0]), "->", int(face_map[-1]))
-    print("[crop] side frames:", int(side_map[0]), "->", int(side_map[-1]))
+        # 2-2) 再裁剪：只保留两路都存在的最大连续区间（overlap）
+        face_k2, side_k2, face_map, side_map, t0, t1 = crop_to_overlap(
+            face_u, side_u, face_map_u, side_map_u
+        )
+        if len(face_k2) == 0:
+            print(f"⚠ [skip] person_{person_id}: no overlap segment found")
+            return False
 
-    # 3) fuse in BODY coords
-    face_body = kpts_world_to_body(face_k2, IDX)
-    side_body = kpts_world_to_body(side_k2, IDX)
+        print(f"✓ [crop] person_{person_id}: overlap [{t0},{t1}) length={len(face_k2)}")
 
-    # weights: 1 when this frame exists in that view (map>=0)
-    wf = (face_map >= 0).astype(np.float32)[:, None]
-    ws = (side_map >= 0).astype(np.float32)[:, None]
-    # expand to (T,J)
-    T, J, _ = face_body.shape
-    wf = np.repeat(wf, J, axis=1)
-    ws = np.repeat(ws, J, axis=1)
+        # 3) fuse in BODY coords
+        face_body = kpts_world_to_body(face_k2, IDX)
+        side_body = kpts_world_to_body(side_k2, IDX)
 
-    fused_body = fuse_body_kpts(face_body, side_body, wf, ws)
-    print("[fuse] fused_body:", fused_body.shape)
+        # weights: 1 when this frame exists in that view (map>=0)
+        wf = (face_map >= 0).astype(np.float32)[:, None]
+        ws = (side_map >= 0).astype(np.float32)[:, None]
+        # expand to (T,J)
+        T, J, _ = face_body.shape
+        wf = np.repeat(wf, J, axis=1)
+        ws = np.repeat(ws, J, axis=1)
 
-    # 4) segment cycles on fused
-    fps_kpt = 60.0  # <- 你的kpt对应帧率（确认一下）
-    cycles_t = segment_cycles_from_fused_body(
-        fused_body, fps=fps_kpt, wrist_idx=IDX["rwrist"]
-    )
-    print("[cycle] n_cycles:", len(cycles_t), "first5:", cycles_t[:5])
+        fused_body = fuse_body_kpts(face_body, side_body, wf, ws)
+        print(f"✓ [fuse] person_{person_id}: fused shape {fused_body.shape}")
 
-    # 5) save videos (face/side) using mapping
-    face_cycles = cycles_t_to_video_cycles(cycles_t, frame_map=face_map)
-    side_cycles = cycles_t_to_video_cycles(cycles_t, frame_map=side_map)
+        # 4) segment cycles on fused
+        fps_kpt = 60.0
+        cycles_t = segment_cycles_from_fused_body(
+            fused_body, fps=fps_kpt, wrist_idx=IDX["rwrist"]
+        )
+        print(f"✓ [cycle] person_{person_id}: found {len(cycles_t)} cycles")
 
-    # clamp by actual video length
-    nF = get_video_nframes(face_video)
-    nS = get_video_nframes(side_video)
-    face_cycles = clamp_cycles(face_cycles, nF)
-    side_cycles = clamp_cycles(side_cycles, nS)
+        # 5) save videos (face/side) using mapping
+        face_cycles = cycles_t_to_video_cycles(cycles_t, frame_map=face_map)
+        side_cycles = cycles_t_to_video_cycles(cycles_t, frame_map=side_map)
 
-    out_face = log_root / "face"
-    out_side = log_root / "side"
-    out_face.mkdir(parents=True, exist_ok=True)
-    out_side.mkdir(parents=True, exist_ok=True)
+        # clamp by actual video length
+        nF = get_video_nframes(face_video)
+        nS = get_video_nframes(side_video)
+        face_cycles = clamp_cycles(face_cycles, nF)
+        side_cycles = clamp_cycles(side_cycles, nS)
 
-    # NOTE: pad>0 会导致重叠；如果你想 pad 但不重叠，用 save.py 里的 avoid_overlap=True
-    pad = 0
+        out_face = person_log_root / "face"
+        out_side = person_log_root / "side"
+        out_face.mkdir(parents=True, exist_ok=True)
+        out_side.mkdir(parents=True, exist_ok=True)
 
-    save_cycles_videos(
-        face_video, face_cycles, out_face, pad=pad, avoid_overlap=True, prefix="cycle"
-    )
-    save_cycles_videos(
-        side_video, side_cycles, out_side, pad=pad, avoid_overlap=True, prefix="cycle"
-    )
-    print("[save] done:", log_root)
+        pad = 0
+        save_cycles_videos(
+            face_video, face_cycles, out_face, pad=pad, avoid_overlap=True, prefix="cycle"
+        )
+        save_cycles_videos(
+            side_video, side_cycles, out_side, pad=pad, avoid_overlap=True, prefix="cycle"
+        )
+        print(f"✓ [save] person_{person_id}: videos saved")
 
-    # 6) 记录对齐与周期数据
-    alignment_data = {
-        "metadata": {
-            "person_id": person_id,
-            "offset_side_to_face": int(offset),
-            "fps": fps_kpt,
-            "overlap_union_range": [t0, t1],
-        },
-        "cycles": [],
-    }
-
-    # 遍历找到的周期，记录两个视角的对应帧
-    for i, (f_cyc, s_cyc) in enumerate(zip(face_cycles, side_cycles)):
-        cycle_info = {
-            "cycle_index": i,
-            "face_video_frames": {"start": f_cyc[0], "end": f_cyc[1]},
-            "side_video_frames": {"start": s_cyc[0], "end": s_cyc[1]},
+        # 6) 记录对齐与周期数据
+        alignment_data = {
+            "metadata": {
+                "person_id": person_id,
+                "offset_side_to_face": int(offset),
+                "fps": fps_kpt,
+                "overlap_union_range": [t0, t1],
+            },
+            "cycles": [],
         }
-        alignment_data["cycles"].append(cycle_info)
 
-    # 保存为 JSON 文件
-    record_path = log_root / f"alignment_record_{person_id}.json"
-    with open(record_path, "w", encoding="utf-8") as f:
-        json.dump(alignment_data, f, indent=4)
+        for i, (f_cyc, s_cyc) in enumerate(zip(face_cycles, side_cycles)):
+            cycle_info = {
+                "cycle_index": i,
+                "face_video_frames": {"start": f_cyc[0], "end": f_cyc[1]},
+                "side_video_frames": {"start": s_cyc[0], "end": s_cyc[1]},
+            }
+            alignment_data["cycles"].append(cycle_info)
 
-    print(f"[record] 对齐与周期数据已保存至: {record_path}")
+        record_path = person_log_root / f"alignment_record_{person_id}.json"
+        with open(record_path, "w", encoding="utf-8") as f:
+            json.dump(alignment_data, f, indent=4)
+
+        print(f"✓ [record] person_{person_id}: saved to {record_path}\n")
+        return True
+
+    except Exception as e:
+        print(f"✗ [error] person_{person_id}: {e}\n")
+        return False
+
+
+# -------------------- main --------------------
+def main(num_threads: int = 4):
+    """
+    主处理函数
+    
+    Args:
+        num_threads: 并发线程数，默认为 4
+    """
+    raw_root = Path("/workspace/data/raw")
+    kpt_root = Path("/workspace/data/sam3d_body_results")
+    log_root = Path("logs/split_cycle")
+
+    # 获取所有人物文件夹
+    person_root = kpt_root / "person"
+    if not person_root.exists():
+        print(f"✗ Error: person directory not found at {person_root}")
+        return
+
+    person_ids = sorted([d.name for d in person_root.iterdir() if d.is_dir()], key=int)
+    print(f"Found {len(person_ids)} persons: {person_ids}\n")
+    print(f"Using {num_threads} threads for processing\n")
+
+    # 线程安全计数器
+    lock = threading.Lock()
+    results = {"success": 0, "fail": 0}
+
+    def worker(person_id: str):
+        """处理单个人物的工作函数"""
+        success = process_person(person_id, raw_root, kpt_root, log_root)
+        with lock:
+            if success:
+                results["success"] += 1
+            else:
+                results["fail"] += 1
+
+    # 使用 ThreadPoolExecutor 管理线程池
+    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+        # 提交所有任务
+        futures = [executor.submit(worker, person_id) for person_id in person_ids]
+        
+        # 等待所有任务完成
+        for future in futures:
+            future.result()
+
+    # 输出统计
+    print(f"\n{'='*60}")
+    print(f"Summary: {results['success']}/{len(person_ids)} persons processed successfully")
+    print(f"         {results['fail']} persons failed")
+    print(f"{'='*60}")
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    
+    # 从命令行参数获取线程数，默认为 15
+    num_threads = 11
+    if len(sys.argv) > 1:
+        try:
+            num_threads = int(sys.argv[1])
+            if num_threads < 1:
+                print("Error: num_threads must be >= 1")
+                sys.exit(1)
+        except ValueError:
+            print(f"Error: invalid num_threads '{sys.argv[1]}', must be an integer")
+            sys.exit(1)
+    
+    main(num_threads=num_threads)
