@@ -68,6 +68,12 @@ from typing import Dict, List, Literal, Tuple, Union
 import cv2
 import librosa
 import numpy as np
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+except Exception:  # matplotlib is optional for visualization
+    plt = None
 
 from split_cycle.load import load_sam3d_body_sequence
 from split_cycle.save import save_cycles_videos
@@ -300,6 +306,7 @@ def find_crossings(
     theta_ref: float = -3 * np.pi / 4,
     min_period_sec: float = 0.8,
     direction: Literal["ccw", "cw"] = "ccw",
+    verbose: bool = False,
 ) -> List[int]:
     min_gap = int(round(min_period_sec * fps))
 
@@ -324,6 +331,15 @@ def find_crossings(
         if t - last >= min_gap:
             out.append(t)
             last = t
+    
+    if verbose:
+        print(f"    [{direction}] raw crossings: {len(crossing)}, filtered: {len(out)}", end="")
+        if len(out) > 0:
+            gaps = np.diff(out)
+            print(f", gaps(sec): {gaps/fps}")
+        else:
+            print()
+    
     return out
 
 
@@ -333,17 +349,103 @@ def segment_cycles_from_fused_body(
     *,
     wrist_idx: int = 41,
     theta_ref: float = -3 * np.pi / 4,
-) -> List[Tuple[int, int]]:
+    min_period_sec: float = 0.8,
+    both_directions: bool = False,
+    auto_theta_ref: bool = False,
+    verbose: bool = False,
+) -> Tuple[List[Tuple[int, int]], float]:
+    """
+    Returns:
+        cycles: List of (start, end) tuples
+        theta_ref_used: The actual theta_ref used (auto-detected or input)
+    """
     hand_b = fused_body[:, wrist_idx, :]
     x, z = hand_b[:, 0], hand_b[:, 2]
     theta = np.arctan2(z, x).astype(np.float32)
     theta = smooth_1d(theta, 11)
     theta_u = np.unwrap(theta)
 
-    bds = find_crossings(
-        theta_u, fps=fps, theta_ref=theta_ref, min_period_sec=0.8, direction="ccw"
+    # 自动检测 theta_ref
+    if auto_theta_ref:
+        # 使用第10百分位作为参考点（接近波谷）
+        theta_ref = float(np.percentile(theta_u, 10))
+        if verbose:
+            print(f"    [auto] theta_ref detected: {theta_ref:.3f}")
+
+    if verbose:
+        print(f"    θ range: [{theta_u.min():.2f}, {theta_u.max():.2f}], std: {np.std(theta_u):.4f}")
+        if not auto_theta_ref:
+            print(f"    θ_ref (manual): {theta_ref:.3f}")
+
+    # 首先尝试逆时针方向
+    bds_ccw = find_crossings(
+        theta_u, fps=fps, theta_ref=theta_ref, min_period_sec=min_period_sec, 
+        direction="ccw", verbose=verbose
     )
-    return [(bds[i], bds[i + 1]) for i in range(len(bds) - 1)]
+    
+    if both_directions and len(bds_ccw) < 2:
+        # 如果逆时针找不到足够的cycle，尝试顺时针
+        bds_cw = find_crossings(
+            theta_u, fps=fps, theta_ref=theta_ref, min_period_sec=min_period_sec, 
+            direction="cw", verbose=verbose
+        )
+        if len(bds_cw) >= 2:
+            bds = bds_cw
+        else:
+            bds = bds_ccw
+    else:
+        bds = bds_ccw
+    
+    cycles = [(bds[i], bds[i + 1]) for i in range(len(bds) - 1)]
+    return cycles, theta_ref
+
+
+def save_theta_plot(
+    fused_body: np.ndarray,
+    fps: float,
+    out_path: Path,
+    *,
+    wrist_idx: int = 41,
+    theta_ref: float = -3 * np.pi / 4,
+    crossing_points: List[int] = None,
+    auto_detected: bool = False,
+) -> bool:
+    if plt is None:
+        print("⚠ [warn] matplotlib not available, skip theta plot")
+        return False
+
+    hand_b = fused_body[:, wrist_idx, :]
+    x, z = hand_b[:, 0], hand_b[:, 2]
+    theta = np.arctan2(z, x).astype(np.float32)
+    theta = smooth_1d(theta, 11)
+    theta_u = np.unwrap(theta)
+
+    t = np.arange(len(theta_u), dtype=np.float32) / max(float(fps), 1e-6)
+
+    fig, ax = plt.subplots(figsize=(12, 5), dpi=120)
+    ax.plot(t, theta_u, linewidth=1.2, label="θ (unwrapped)")
+    
+    # 参考线
+    ref_label = f"θ_ref = {theta_ref:.3f}" + (" (auto)" if auto_detected else "")
+    ax.axhline(theta_ref, color="r", linestyle="--", linewidth=1.0, alpha=0.7, label=ref_label)
+    
+    # 标记检测到的crossing点
+    if crossing_points:
+        crossing_t = np.array(crossing_points) / max(float(fps), 1e-6)
+        crossing_theta = theta_u[crossing_points]
+        ax.scatter(crossing_t, crossing_theta, color="green", s=50, zorder=5, 
+                   marker="o", label=f"Crossings ({len(crossing_points)})")
+    
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Theta (rad)")
+    ax.set_title("Right hand theta (unwrapped)")
+    ax.legend(loc="upper right")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path)
+    plt.close(fig)
+    return True
 
 
 # -------------------- mapping cycles on common timeline -> original video cycles --------------------
@@ -440,7 +542,11 @@ def process_person(person_id: str, raw_root: Path, kpt_root: Path, log_root: Pat
             print(f"⚠ [skip] person_{person_id}: no overlap segment found")
             return False
 
-        print(f"✓ [crop] person_{person_id}: overlap [{t0},{t1}) length={len(face_k2)}")
+        # 检查overlap质量
+        overlap_ratio = len(face_k2) / max(len(face_k), len(side_k))
+        print(f"✓ [crop] person_{person_id}: overlap [{t0},{t1}) length={len(face_k2)}, ratio={overlap_ratio:.2%}")
+        if overlap_ratio < 0.3:
+            print(f"⚠ [warn] person_{person_id}: low overlap ratio, may have quality issues")
 
         # 3) fuse in BODY coords
         face_body = kpts_world_to_body(face_k2, IDX)
@@ -459,10 +565,31 @@ def process_person(person_id: str, raw_root: Path, kpt_root: Path, log_root: Pat
 
         # 4) segment cycles on fused
         fps_kpt = 60.0
-        cycles_t = segment_cycles_from_fused_body(
-            fused_body, fps=fps_kpt, wrist_idx=IDX["rwrist"]
+        print(f"  [cycle] person_{person_id}: segmenting cycles...")
+        
+        cycles_t, theta_ref_used = segment_cycles_from_fused_body(
+            fused_body, fps=fps_kpt, wrist_idx=IDX["rwrist"],
+            min_period_sec=0.8, both_directions=True, auto_theta_ref=True, verbose=True
         )
         print(f"✓ [cycle] person_{person_id}: found {len(cycles_t)} cycles")
+        if len(cycles_t) == 0:
+            print(f"⚠ [warn] person_{person_id}: no cycles found, check data quality")
+        
+        # 生成可视化（带检测点标记）
+        theta_plot_path = person_log_root / "theta_unwrap.png"
+        # 提取crossing点用于可视化
+        crossing_pts = [cycles_t[i][0] for i in range(len(cycles_t))]
+        if len(cycles_t) > 0:
+            crossing_pts.append(cycles_t[-1][1])  # 添加最后一个结束点
+        save_theta_plot(
+            fused_body,
+            fps=fps_kpt,
+            out_path=theta_plot_path,
+            wrist_idx=IDX["rwrist"],
+            theta_ref=theta_ref_used,
+            crossing_points=crossing_pts if crossing_pts else None,
+            auto_detected=True,
+        )
 
         # 5) save videos (face/side) using mapping
         face_cycles = cycles_t_to_video_cycles(cycles_t, frame_map=face_map)
@@ -538,6 +665,8 @@ def main(num_threads: int = 4):
         return
 
     person_ids = sorted([d.name for d in person_root.iterdir() if d.is_dir()], key=int)
+    # person_ids = ['5', '9', '14', '18', '29', '37', '40', '44']
+    # person_ids = ['9', '29', '37', '40', '44']
     print(f"Found {len(person_ids)} persons: {person_ids}\n")
     print(f"Using {num_threads} threads for processing\n")
 
