@@ -5,7 +5,7 @@ Visualization tools for gymnastics analysis results
 """
 
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -247,7 +247,10 @@ def plot_correlation_matrix(
     axes[0].grid(True, alpha=0.3)
     
     # Twist vs Lead Angle
-    axes[1].scatter(twist_deg, lead_angle_deg, alpha=0.5, s=20, c='forestgreen')
+    axes[1].scatter(
+        twist_deg, lead_angle_deg,
+        alpha=0.5, s=20, c='forestgreen'
+    )
     corr_tl = np.corrcoef(twist_deg, lead_angle_deg)[0, 1]
     axes[1].set_xlabel('Twist (°)', fontsize=11)
     axes[1].set_ylabel('Lead Angle (°)', fontsize=11)
@@ -311,3 +314,160 @@ def plot_all_visualizations(
     )
     
     print(f"\n✓ All visualizations saved to {output_dir}")
+
+
+def plot_derived_metrics_summary(
+    time: np.ndarray,
+    twist_deg: np.ndarray,
+    tilt_deg: np.ndarray,
+    wrist_y: np.ndarray,
+    shoulder_frontal_mask: np.ndarray,
+    twist_peak: Dict[str, Any],
+    tilt_abs_mean_deg: float,
+    lagging_hand: str,
+    output_path: Path,
+):
+    """绘制三项新增指标总结图（时序 + Box Plot）。"""
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+
+    peak_max = twist_peak.get("peak_max_mean_deg")
+    peak_min = twist_peak.get("peak_min_mean_deg")
+    cycle_amp = twist_peak.get("cycle_amp_mean_deg")
+
+    # -------------------- 第一行：时序 --------------------
+    axes[0, 0].plot(time, twist_deg, color='steelblue', linewidth=1.2)
+    if peak_max is not None:
+        axes[0, 0].axhline(
+            peak_max, color='crimson', linestyle='--', linewidth=1.6,
+            label=f"Max mean: {peak_max:.2f}°"
+        )
+    if peak_min is not None:
+        axes[0, 0].axhline(
+            peak_min, color='darkgreen', linestyle='--', linewidth=1.6,
+            label=f"Min mean: {peak_min:.2f}°"
+        )
+    axes[0, 0].set_title('Twist: Local Peak Gap',
+                         fontsize=12, fontweight='bold')
+    axes[0, 0].set_xlabel('Time (s)')
+    axes[0, 0].set_ylabel('Twist (°)')
+    axes[0, 0].grid(True, alpha=0.3)
+    if cycle_amp is not None:
+        axes[0, 0].text(
+            0.02, 0.96,
+            f"Cycle amp mean: {cycle_amp:.2f}°",
+            transform=axes[0, 0].transAxes,
+            fontsize=10,
+            verticalalignment='top',
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.7),
+        )
+    axes[0, 0].legend(fontsize=9)
+
+    tilt_abs = np.abs(tilt_deg)
+    axes[0, 1].plot(time, tilt_abs, color='forestgreen', linewidth=1.2)
+    axes[0, 1].axhline(
+        tilt_abs_mean_deg,
+        color='darkred', linestyle='--', linewidth=1.6,
+        label=f"|Deviation| mean: {tilt_abs_mean_deg:.2f}°"
+    )
+    axes[0, 1].set_title('Posture: Absolute Vertical Deviation',
+                         fontsize=12, fontweight='bold')
+    axes[0, 1].set_xlabel('Time (s)')
+    axes[0, 1].set_ylabel('|Tilt| (°)')
+    axes[0, 1].grid(True, alpha=0.3)
+    axes[0, 1].legend(fontsize=9)
+
+    axes[0, 2].plot(
+        time, wrist_y,
+        color='gray', alpha=0.5, linewidth=1.0,
+        label=f"{lagging_hand.capitalize()} wrist Y"
+    )
+    frontal_n = int(shoulder_frontal_mask.sum())
+    if frontal_n > 0:
+        frontal_y = wrist_y[shoulder_frontal_mask]
+        frontal_time = time[shoulder_frontal_mask]
+        frontal_mean_y = float(frontal_y.mean())
+        axes[0, 2].scatter(
+            frontal_time, frontal_y,
+            c='orange', s=28, alpha=0.7,
+            label='Shoulder frontal frames'
+        )
+        axes[0, 2].axhline(
+            frontal_mean_y,
+            color='darkblue', linestyle='--', linewidth=1.6,
+            label=f"Frontal mean Y: {frontal_mean_y:.3f}"
+        )
+    axes[0, 2].set_title('Relaxation: Wrist Position at Shoulder Frontal',
+                         fontsize=12, fontweight='bold')
+    axes[0, 2].set_xlabel('Time (s)')
+    axes[0, 2].set_ylabel('Wrist Y (world)')
+    axes[0, 2].grid(True, alpha=0.3)
+    axes[0, 2].legend(fontsize=9)
+    axes[0, 2].text(
+        0.02, 0.96,
+        f"Frontal frames: {frontal_n}",
+        transform=axes[0, 2].transAxes,
+        fontsize=10,
+        verticalalignment='top',
+        bbox=dict(boxstyle='round', facecolor='white', alpha=0.7),
+    )
+
+    # -------------------- 第二行：Box Plot --------------------
+    def _draw_box(ax, data: np.ndarray, label: str, color: str, unit: str):
+        bp = ax.boxplot(
+            [data], labels=[label], patch_artist=True,
+            showmeans=True, meanline=True
+        )
+        bp['boxes'][0].set_facecolor(color)
+        bp['boxes'][0].set_alpha(0.6)
+        bp['means'][0].set_color('darkred')
+        bp['means'][0].set_linewidth(1.6)
+        ax.set_ylabel(unit)
+        ax.grid(True, alpha=0.3, axis='y')
+        mean_v = float(np.mean(data))
+        std_v = float(np.std(data))
+        q1, med, q3 = np.percentile(data, [25, 50, 75])
+        ax.text(
+            0.98, 0.02,
+            (
+                f"Mean: {mean_v:.2f} {unit}\n"
+                f"Std: {std_v:.2f} {unit}\n"
+                f"Q1/Q2/Q3: {q1:.2f}/{med:.2f}/{q3:.2f}"
+            ),
+            transform=ax.transAxes,
+            fontsize=9,
+            verticalalignment='bottom',
+            horizontalalignment='right',
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.7),
+        )
+
+    _draw_box(axes[1, 0], twist_deg, 'Twist', 'steelblue', '°')
+    axes[1, 0].set_title('Twist Box Plot', fontsize=12, fontweight='bold')
+
+    _draw_box(axes[1, 1], tilt_abs, '|Tilt|', 'forestgreen', '°')
+    axes[1, 1].set_title('|Tilt| Box Plot', fontsize=12, fontweight='bold')
+
+    frontal_y = (
+        wrist_y[shoulder_frontal_mask]
+        if frontal_n > 0
+        else np.array([])
+    )
+    if len(frontal_y) > 0:
+        _draw_box(axes[1, 2], frontal_y, 'Wrist Y@Frontal', 'orange', 'm')
+    else:
+        _draw_box(axes[1, 2], wrist_y, 'Wrist Y (all)', 'gray', 'm')
+        axes[1, 2].text(
+            0.02, 0.92,
+            'No frontal frames -> show all frames',
+            transform=axes[1, 2].transAxes,
+            fontsize=9,
+            verticalalignment='top',
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.6),
+        )
+    axes[1, 2].set_title('Wrist Y Box Plot', fontsize=12, fontweight='bold')
+
+    fig.suptitle('Derived Metrics Summary (Time Series + Box Plot)',
+                 fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"✓ Derived metrics plot saved to {output_path}")
