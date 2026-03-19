@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+# -*- coding:utf-8 -*-
+"""
+File: /workspace/Skiing_Canonical_DualView_3D_Pose_PyTorch/project/map_config.py
+Project: /workspace/Skiing_Canonical_DualView_3D_Pose_PyTorch/project
+Created Date: Monday March 9th 2026
+Author: Kaixu Chen
+-----
+Comment:
+
+Have a good code time :)
+-----
+Last Modified: Monday March 9th 2026 11:22:51 am
+Modified By: the developer formerly known as Kaixu Chen at <chenkaixusan@gmail.com>
+-----
+Copyright (c) 2026 The University of Tsukuba
+-----
+HISTORY:
+Date      	By	Comments
+----------	---	---------------------------------------------------------
+"""
+
+import logging
+from dataclasses import dataclass
+
+# --- 設定 ---
+# * 这个文件定义了与 Unity MHR70 骨骼结构相关的映射和配置，供整个项目使用。
+UNITY_MHR70_MAPPING = {
+    1: "Bone_Eye_L",
+    2: "Bone_Eye_R",
+    5: "Upperarm_L",
+    6: "Upperarm_R",
+    7: "lowerarm_l",
+    8: "lowerarm_r",
+    9: "Thigh_L",
+    10: "Thigh_R",
+    11: "calf_l",
+    12: "calf_r",
+    13: "Foot_L",
+    14: "Foot_R",
+    41: "Hand_R",
+    62: "Hand_L",
+    69: "neck_01",
+}
+TARGET_IDS = list(UNITY_MHR70_MAPPING.keys())
+
+ID_TO_INDEX = {jid: idx for idx, jid in enumerate(TARGET_IDS)}
+
+ANGLE_DEFS = {
+    "knee_l": (9, 11, 13),
+    "knee_r": (10, 12, 14),
+    "elbow_l": (5, 7, 62),
+    "elbow_r": (6, 8, 41),
+    "shoulder_l": (69, 5, 7),
+    "shoulder_r": (69, 6, 8),
+    "hip_l": (69, 9, 11),
+    "hip_r": (69, 10, 12),
+}
+
+# Elbow joint IDs
+ELBOW_IDS = {
+    "elbow_l": 7,  # lowerarm_l
+    "elbow_r": 8,  # lowerarm_r
+}
+
+# Skeleton connections (bone pairs) for visualization
+# Each tuple is (parent_joint_id, child_joint_id)
+SKELETON_CONNECTIONS = [
+    # Left arm
+    (69, 5),  # neck -> shoulder_l
+    (5, 7),  # shoulder_l -> elbow_l
+    (7, 62),  # elbow_l -> hand_l
+    # Right arm
+    (69, 6),  # neck -> shoulder_r
+    (6, 8),  # shoulder_r -> elbow_r
+    (8, 41),  # elbow_r -> hand_r
+    # Spine
+    (69, 9),  # neck -> hip_l
+    (69, 10),  # neck -> hip_r
+    # Left leg
+    (9, 11),  # hip_l -> knee_l
+    (11, 13),  # knee_l -> foot_l
+    # Right leg
+    (10, 12),  # hip_r -> knee_r
+    (12, 14),  # knee_r -> foot_r
+]
+
+
+@dataclass
+class UnityDataConfig:
+    """全局映射配置类，包含与 Unity MHR70 骨骼结构相关的映射和配置。"""
+
+    person_id: str
+    action_id: str
+    cam1_id: str
+    cam2_id: str
+    cam1_path: str
+    cam2_path: str
+    label_path: str
+    cam1_frames_dir: str
+    cam2_frames_dir: str
+    cam1_kpt2d_dir: str
+    cam2_kpt2d_dir: str
+    kpt3d_dir: str
+    sam3d_cam1_kpt2d_dir: str
+    sam3d_cam2_kpt2d_dir: str
+    sam3d_cam1_kpt3d_dir: str
+    sam3d_cam2_kpt3d_dir: str
+    sequence_meta_path: str
+    joint_names_path: str
