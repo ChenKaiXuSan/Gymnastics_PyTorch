@@ -1,0 +1,62 @@
+# hydra config
+hydra:
+  run:
+    dir: ${log_path} # the log path, used for log and checkpoint
+  sweep:
+    dir: logs/
+    subdir: ${experiment}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+loss:
+  lr: 0.0001
+  beta1: 0.5 # decapture
+  beta2: 0.999 # decapture
+
+data:
+  root_path: /workspace/data
+
+  cross_validation:
+    # 生成 index mapping 的配置（用于 cross_validation/generate_cv_index.py）
+    num_persons: 45
+    num_cameras: 2
+    strategies: [by_person]
+    n_splits: 5
+
+  raw:
+    video_path: ${data.root_path}/raw_data/person # 暂时不使用kpt
+    sam_3d_body_results_path: ${data.root_path}/sam3d_body_results/person # 没有标签的训练数据
+    split_cycle: ${data.root_path}/split_cycle # 预先计算的 split cycle 文件路径
+    fused_kpt_path: ${data.root_path}/fused_kpt # 预先计算的融合后的关键点文件路径
+
+  annotation_path: ${data.root_path}/suwabe_label.xlsx
+    
+  index_mapping: ${data.root_path}/index_mapping # precomputed index mapping directory
+  # index_mapping_file: camera_pairs_by_action.json # precomputed index mapping json file name
+  index_mapping_path: ${data.index_mapping}/camera_pairs_by_action_folds # precomputed index mapping json file path
+
+  num_workers: 32
+  img_size: 224
+  load_frames: false # whether to load video frames
+  load_2d_kpt: false # whether to load 2d keypoints
+  load_3d_kpt: true
+
+  batch_size: 2048
+
+model:
+  backbone: 3dcnn # choices=[3dcnn, 2dcnn, cnn_lstm, two_stream], help='the backbone of the model'
+  model_class_num: 9 # the class num, left, right, up, down, left_up, left_down, right_up, right_down, front
+
+  fuse_method: mamba_ssm # add, mul, concat, none, late, avg, cross_atn, se_atn, pose_atn
+  fusion_layers: 5 # the fuse layer number of the model, used for cross attention, se attention, etc.
+  ablation_study: single # choices=[single, multi], help='the ablation study of the model, single means only one layer is used for fusion, multi means multiple layers are used for fusion'
+
+train:
+  # Training config
+  max_epochs: 100 # numer of epochs of training
+
+  view: multi # single or multi
+
+  gpu: 0 # choices=[0, 1], help='the gpu number whicht to train'
+  fold: 0 # the fold number for cross validation
+
+experiment: ${model.backbone}_fuse_method_${model.fuse_method} # the experiment name, used for log path
+log_path: logs/train/${experiment}/${now:%Y-%m-%d}/fold_${train.fold}

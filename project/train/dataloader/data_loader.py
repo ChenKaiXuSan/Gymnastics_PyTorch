@@ -103,6 +103,10 @@ class UnityDataModule(LightningDataModule):
         gt3d: List[torch.Tensor] = []
         frame_indices: List[torch.Tensor] = []
         meta_rows: List[Dict[str, Any]] = []
+        label_total_list: List[int] = []
+        label_twist_list: List[int] = []
+        label_posture_list: List[int] = []
+        label_relax_list: List[int] = []
 
         for sample in batch:
             if has_frames:
@@ -141,6 +145,11 @@ class UnityDataModule(LightningDataModule):
                 frame_indices.append(idx.view(-1))
 
             sample_meta = sample.get("meta", {})
+            sample_label_total = int(sample.get("label", -1))
+            sample_labels = sample.get("labels", {}) if isinstance(sample.get("labels", {}), dict) else {}
+            sample_label_twist = int(sample_labels.get("twist", -1))
+            sample_label_posture = int(sample_labels.get("posture", -1))
+            sample_label_relax = int(sample_labels.get("relax", -1))
             if isinstance(idx, torch.Tensor):
                 num_frames = int(idx.numel())
             elif has_3d:
@@ -157,12 +166,23 @@ class UnityDataModule(LightningDataModule):
                 )
                 row["time_index_in_sample"] = t
                 meta_rows.append(row)
+                label_total_list.append(sample_label_total)
+                label_twist_list.append(sample_label_twist)
+                label_posture_list.append(sample_label_posture)
+                label_relax_list.append(sample_label_relax)
 
         out: Dict[str, Any] = {
             "frame_indices": torch.cat(frame_indices, dim=0)
             if frame_indices
             else torch.empty(0, dtype=torch.long),
             "meta": meta_rows,
+            "label": torch.tensor(label_total_list, dtype=torch.long),
+            "labels": {
+                "twist": torch.tensor(label_twist_list, dtype=torch.long),
+                "posture": torch.tensor(label_posture_list, dtype=torch.long),
+                "relax": torch.tensor(label_relax_list, dtype=torch.long),
+                "total": torch.tensor(label_total_list, dtype=torch.long),
+            },
         }
 
         if has_frames:

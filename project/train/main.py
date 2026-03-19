@@ -159,6 +159,19 @@ def load_fold_dataset_idx_from_fold_json(
                     sam3d_cam2_kpt3d_dir=str(item["sam3d_cam2_kpt3d_dir"]),
                     sequence_meta_path=Path(item["sequence_meta_path"]),
                     joint_names_path=Path(item["joint_names_path"]),
+                    annotation_path=str(item.get("annotation_path", "")) or None,
+                    label_twist_3class=(
+                        int(item["label_twist_3class"]) if item.get("label_twist_3class") is not None else None
+                    ),
+                    label_posture_3class=(
+                        int(item["label_posture_3class"]) if item.get("label_posture_3class") is not None else None
+                    ),
+                    label_relax_3class=(
+                        int(item["label_relax_3class"]) if item.get("label_relax_3class") is not None else None
+                    ),
+                    label_total_3class=(
+                        int(item["label_total_3class"]) if item.get("label_total_3class") is not None else None
+                    ),
                 )
             )
 
@@ -284,6 +297,19 @@ def load_fold_dataset_idx_from_index_mapping(config: DictConfig):
                             sam3d_cam2_kpt3d_dir=str(item["sam3d_cam2_kpt3d_dir"]),
                             sequence_meta_path=str(item["sequence_meta_path"]),
                             joint_names_path=str(item["joint_names_path"]),
+                            annotation_path=str(item.get("annotation_path", "")) or None,
+                            label_twist_3class=(
+                                int(item["label_twist_3class"]) if item.get("label_twist_3class") is not None else None
+                            ),
+                            label_posture_3class=(
+                                int(item["label_posture_3class"]) if item.get("label_posture_3class") is not None else None
+                            ),
+                            label_relax_3class=(
+                                int(item["label_relax_3class"]) if item.get("label_relax_3class") is not None else None
+                            ),
+                            label_total_3class=(
+                                int(item["label_total_3class"]) if item.get("label_total_3class") is not None else None
+                            ),
                         )
                     )
                     continue

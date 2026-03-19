@@ -120,6 +120,15 @@ class LabeledUnityDataset(Dataset):
         return getattr(item, key, default)
 
     @staticmethod
+    def _safe_int_label(value: Any, default: int = -1) -> int:
+        if value is None:
+            return default
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
     def _normalize_item_dict(item: Any) -> Dict[str, Any]:
         if isinstance(item, dict):
             return item
@@ -700,7 +709,18 @@ class LabeledUnityDataset(Dataset):
                 "cam1_id": item.get("cam1_id", "unknown"),
                 "cam2_id": item.get("cam2_id", "unknown"),
                 "num_aligned_frames": int(frame_indices_t.numel()),
+                "label_twist_3class": self._safe_int_label(item.get("label_twist_3class"), -1),
+                "label_posture_3class": self._safe_int_label(item.get("label_posture_3class"), -1),
+                "label_relax_3class": self._safe_int_label(item.get("label_relax_3class"), -1),
+                "label_total_3class": self._safe_int_label(item.get("label_total_3class"), -1),
             },
+            "labels": {
+                "twist": self._safe_int_label(item.get("label_twist_3class"), -1),
+                "posture": self._safe_int_label(item.get("label_posture_3class"), -1),
+                "relax": self._safe_int_label(item.get("label_relax_3class"), -1),
+                "total": self._safe_int_label(item.get("label_total_3class"), -1),
+            },
+            "label": self._safe_int_label(item.get("label_total_3class"), -1),
         }
 
         if self._load_frames and cam1_frames_t is not None and cam2_frames_t is not None:

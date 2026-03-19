@@ -22,6 +22,7 @@ Date      	By	Comments
 
 import logging
 from dataclasses import dataclass
+from typing import Optional
 
 # --- 設定 ---
 # * 这个文件定义了与 Unity MHR70 骨骼结构相关的映射和配置，供整个项目使用。
@@ -108,3 +109,8 @@ class UnityDataConfig:
     sam3d_cam2_kpt3d_dir: str
     sequence_meta_path: str
     joint_names_path: str
+    annotation_path: Optional[str] = None
+    label_twist_3class: Optional[int] = None
+    label_posture_3class: Optional[int] = None
+    label_relax_3class: Optional[int] = None
+    label_total_3class: Optional[int] = None
