@@ -34,7 +34,7 @@ from project.dataloader.whole_video_dataset import whole_video_dataset
 from project.dataloader.utils import Div255
 
 
-class UnityDataModule(LightningDataModule):
+class PersonDataModule(LightningDataModule):
     def __init__(self, opt, dataset_idx: Dict = None):
         super().__init__()
 

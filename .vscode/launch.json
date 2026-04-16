@@ -7,14 +7,6 @@
       "module": "enter-your-module-name"
     },
     {
-      "name": "inference_d2",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "videopose3d.infer_video_d2",
-      "cwd": "/workspace/code",
-      "console": "integratedTerminal",
-    },
-    {
       "name": "prepare_data",
       "type": "debugpy",
       "request": "launch",
@@ -24,22 +16,6 @@
       "args": [
         "task=detectron2"
       ]
-    },
-    {
-      "name": "run_custom",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "videopose3d.run",
-      "cwd": "/workspace/code",
-      "console": "integratedTerminal",
-    },
-    {
-      "name": "triangulate",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "triangulation.main",
-      "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal"
     },
     {
       "name": "calibration",
@@ -84,5 +60,17 @@
         // "infer.gpu=[0]",
       ]
     },
+    {
+      "name": "train_stgcn",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "project.train.main",
+      "cwd": "/workspace/code",
+      "python": "/opt/conda/envs/sam_3d_body/bin/python",
+      "console": "integratedTerminal",
+      "args": [
+        "model.backbone=st_gcn",
+      ]
+    }
   ]
 }

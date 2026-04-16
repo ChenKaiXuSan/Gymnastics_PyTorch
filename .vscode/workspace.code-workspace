@@ -8,9 +8,5 @@
 			"name": "data",
 			"path": "/workspace/data"
 		},
-		{
-			"name": "Skiing_Canonical_DualView_3D_Pose_PyTorch",
-			"path": "/workspace/Skiing_Canonical_DualView_3D_Pose_PyTorch"
-		}
 	]
 }

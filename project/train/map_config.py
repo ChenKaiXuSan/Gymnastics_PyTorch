@@ -88,29 +88,21 @@ SKELETON_CONNECTIONS = [
 
 
 @dataclass
-class UnityDataConfig:
+class PersonInfo:
     """全局映射配置类，包含与 Unity MHR70 骨骼结构相关的映射和配置。"""
 
     person_id: str
-    action_id: str
-    cam1_id: str
-    cam2_id: str
-    cam1_path: str
-    cam2_path: str
-    label_path: str
-    cam1_frames_dir: str
-    cam2_frames_dir: str
-    cam1_kpt2d_dir: str
-    cam2_kpt2d_dir: str
-    kpt3d_dir: str
-    sam3d_cam1_kpt2d_dir: str
-    sam3d_cam2_kpt2d_dir: str
-    sam3d_cam1_kpt3d_dir: str
-    sam3d_cam2_kpt3d_dir: str
-    sequence_meta_path: str
-    joint_names_path: str
-    annotation_path: Optional[str] = None
-    label_twist_3class: Optional[int] = None
-    label_posture_3class: Optional[int] = None
-    label_relax_3class: Optional[int] = None
-    label_total_3class: Optional[int] = None
+    turn_id: str
+    cam1_video_path: str
+    cam2_video_path: str
+    sam3d_cam1_results_path: str
+    sam3d_cam2_results_path: str
+    cam1_turn_frame_start: int
+    cam1_turn_frame_end: int
+    cam2_turn_frame_start: int
+    cam2_turn_frame_end: int
+    label_twist_3class: int 
+    label_posture_3class: int
+    label_relax_3class: int
+    label_total_3class: int
+    fused_kpt_path: str

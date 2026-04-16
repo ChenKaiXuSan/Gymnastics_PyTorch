@@ -38,17 +38,16 @@ from pytorch_lightning.callbacks import (
 )
 from pytorch_lightning.loggers import TensorBoardLogger
 
-from project.dataloader.data_loader import UnityDataModule
-from project.map_config import UnityDataConfig
+from project.train.dataloader.data_loader import PersonDataModule
+from project.train.map_config import PersonInfo
+
 
 #####################################
 # select different experiment trainer
 #####################################
-# baseline
-from project.trainer.baseline.train_3dcnn import Res3DCNNTrainer
-from project.trainer.early.train_early_fusion import EarlyFusion3DCNNTrainer
-from project.trainer.late.train_late_fusion import LateFusion3DCNNTrainer
-from project.trainer.train_fusion_SSM import FusionSSMTrainer
+
+from project.train.trainer.train_STGCN import STGCNTrainer
+from project.train.trainer.train_fusion_SSM import FusionSSMTrainer
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +65,13 @@ def _resolve_trainer_requirements(hparams: DictConfig) -> Dict[str, object]:
                 "requires_2d_kpt": False,
                 "requires_3d_kpt": True,
             }
+    elif backbone == "stgcn":
+        return {
+            "trainer_name": "STGCNTrainer",
+            "requires_frames": False,
+            "requires_2d_kpt": True,
+            "requires_3d_kpt": False,
+        }
 
     raise ValueError(
         "Cannot infer trainer input requirements for "
@@ -112,7 +118,7 @@ def _validate_input_loading_config(hparams: DictConfig) -> Dict[str, object]:
 
 def load_fold_dataset_idx_from_fold_json(
     config: DictConfig, fold: int
-) -> Dict[str, List[UnityDataConfig]]:
+) -> Dict[str, List[PersonInfo]]:
     """加载指定fold的JSON文件
 
     Args:
@@ -132,7 +138,7 @@ def load_fold_dataset_idx_from_fold_json(
 
     fold_data.pop("_metadata", None)
 
-    dataset_idx: Dict[str, List[UnityDataConfig]] = {"train": [], "val": [], "test": []}
+    dataset_idx: Dict[str, List[PersonInfo]] = {"train": [], "val": [], "test": []}
 
     # 处理三种split
     for split in ["train", "val", "test"]:
@@ -140,38 +146,17 @@ def load_fold_dataset_idx_from_fold_json(
 
         for item in src_list:
             dataset_idx[split].append(
-                UnityDataConfig(
+                PersonInfo(
                     person_id=item["person_id"],
-                    action_id=item["action_id"],
-                    cam1_id=item["cam1_id"],
-                    cam2_id=item["cam2_id"],
-                    cam1_path=Path(item["cam1_path"]),
-                    cam2_path=Path(item["cam2_path"]),
-                    label_path=Path(item["label_path"]),
-                    cam1_frames_dir=Path(item["cam1_frames_dir"]),
-                    cam2_frames_dir=Path(item["cam2_frames_dir"]),
-                    cam1_kpt2d_dir=Path(item["cam1_kpt2d_dir"]),
-                    cam2_kpt2d_dir=Path(item["cam2_kpt2d_dir"]),
-                    kpt3d_dir=Path(item["kpt3d_dir"]),
-                    sam3d_cam1_kpt2d_dir=str(item["sam3d_cam1_kpt2d_dir"]),
-                    sam3d_cam2_kpt2d_dir=str(item["sam3d_cam2_kpt2d_dir"]),
-                    sam3d_cam1_kpt3d_dir=str(item["sam3d_cam1_kpt3d_dir"]),
-                    sam3d_cam2_kpt3d_dir=str(item["sam3d_cam2_kpt3d_dir"]),
-                    sequence_meta_path=Path(item["sequence_meta_path"]),
-                    joint_names_path=Path(item["joint_names_path"]),
-                    annotation_path=str(item.get("annotation_path", "")) or None,
-                    label_twist_3class=(
-                        int(item["label_twist_3class"]) if item.get("label_twist_3class") is not None else None
-                    ),
-                    label_posture_3class=(
-                        int(item["label_posture_3class"]) if item.get("label_posture_3class") is not None else None
-                    ),
-                    label_relax_3class=(
-                        int(item["label_relax_3class"]) if item.get("label_relax_3class") is not None else None
-                    ),
-                    label_total_3class=(
-                        int(item["label_total_3class"]) if item.get("label_total_3class") is not None else None
-                    ),
+                    turn_id=item["action_id"],
+                    cam1_video_path=item["cam1_path"],
+                    cam2_video_path=item["cam2_path"],
+                    sam3d_cam1_results_path=item["sam3d_cam1_kpt3d_dir"],
+                    sam3d_cam2_results_path=item["sam3d_cam2_kpt3d_dir"],
+                    cam1_turn_frame_start=item["cam1_turn_frame_start"],
+                    cam1_turn_frame_end=item["cam1_turn_frame_end"],
+                    cam2_turn_frame_start=item["cam2_turn_frame_start"],
+                    cam2_turn_frame_end=item["cam2_turn_frame_end"],
                 )
             )
 
@@ -297,18 +282,27 @@ def load_fold_dataset_idx_from_index_mapping(config: DictConfig):
                             sam3d_cam2_kpt3d_dir=str(item["sam3d_cam2_kpt3d_dir"]),
                             sequence_meta_path=str(item["sequence_meta_path"]),
                             joint_names_path=str(item["joint_names_path"]),
-                            annotation_path=str(item.get("annotation_path", "")) or None,
+                            annotation_path=str(item.get("annotation_path", ""))
+                            or None,
                             label_twist_3class=(
-                                int(item["label_twist_3class"]) if item.get("label_twist_3class") is not None else None
+                                int(item["label_twist_3class"])
+                                if item.get("label_twist_3class") is not None
+                                else None
                             ),
                             label_posture_3class=(
-                                int(item["label_posture_3class"]) if item.get("label_posture_3class") is not None else None
+                                int(item["label_posture_3class"])
+                                if item.get("label_posture_3class") is not None
+                                else None
                             ),
                             label_relax_3class=(
-                                int(item["label_relax_3class"]) if item.get("label_relax_3class") is not None else None
+                                int(item["label_relax_3class"])
+                                if item.get("label_relax_3class") is not None
+                                else None
                             ),
                             label_total_3class=(
-                                int(item["label_total_3class"]) if item.get("label_total_3class") is not None else None
+                                int(item["label_total_3class"])
+                                if item.get("label_total_3class") is not None
+                                else None
                             ),
                         )
                     )
@@ -343,28 +337,15 @@ def train(hparams: DictConfig, dataset_idx, fold: int):
     monitor_mode = "max"
     ckpt_filename = "{epoch}-{val/loss:.2f}-{val/video_acc:.4f}"
 
-    if hparams.train.view == "multi":
-        if hparams.model.backbone == "3dcnn":
-            if hparams.model.fuse_method in ["add", "mul", "concat", "avg"]:
-                classification_module = EarlyFusion3DCNNTrainer(hparams)
-            elif hparams.model.fuse_method == "late":
-                classification_module = LateFusion3DCNNTrainer(hparams)
-            elif hparams.model.fuse_method in ["ssm", "mamba", "mamba_ssm"]:
-                classification_module = FusionSSMTrainer(hparams)
-                monitor_metric = "val/loss"
-                monitor_mode = "min"
-                ckpt_filename = "{epoch}-{val/loss:.4f}"
-            else:
-                raise ValueError("the experiment fuse method is not supported.")
-        else:
-            raise ValueError("the experiment backbone is not supported.")
-    elif hparams.train.view == "single":
-        classification_module = Res3DCNNTrainer(hparams)
-    else:
-        raise ValueError("the experiment view is not supported.")
+    if hparams.model.backbone == "st_gcn":
+
+        classification_module = STGCNTrainer(hparams)
+        monitor_metric = "val/loss"
+        monitor_mode = "min"
+        ckpt_filename = "{epoch}-{val/loss:.4f}"
 
     # * prepare data module
-    data_module = UnityDataModule(hparams, dataset_idx)
+    data_module = PersonDataModule(hparams, dataset_idx=dataset_idx)
 
     # for the tensorboard
     tb_logger = TensorBoardLogger(
@@ -434,38 +415,12 @@ def train(hparams: DictConfig, dataset_idx, fold: int):
 def init_params(config):
     # Load precomputed fold mapping only; do not prepare CV splits here.
     # 使用预生成的单fold JSON文件（每个fold文件必须存在）
-
-    requested_fold = int(config.train.fold)
-
-    # 检测可用的fold数量
-    available_folds = _detect_available_folds(config)
-
-    # train.fold >= 0: run only the specified fold (recommended for multi-node jobs)
-    # train.fold < 0: run all folds sequentially (backward compatible mode)
-    if requested_fold >= 0:
-        if requested_fold not in available_folds:
-            raise KeyError(
-                f"Requested fold {requested_fold} is not available. "
-                f"Available folds: {available_folds}"
-            )
-        target_folds = [requested_fold]
-    else:
-        target_folds = available_folds
-
-    logger.info("#" * 50)
-    logger.info(
-        "Start training folds: %s (requested train.fold=%s)",
-        target_folds,
-        requested_fold,
-    )
-    logger.info("#" * 50)
-
     #########
     # K fold
     #########
     # * for one fold, we first train/val model, then save the best ckpt preds/label into .pt file.
 
-    for fold in target_folds:
+    for fold in range(config.data.n_splits):
         # 加载单个fold的JSON文件
         dataset_value = load_fold_dataset_idx_from_fold_json(config, fold)
         logger.info("#" * 50)
@@ -479,25 +434,8 @@ def init_params(config):
         logger.info("#" * 50)
 
     logger.info("#" * 50)
-    logger.info("finish train folds: %s", target_folds)
+    logger.info("finish train folds: %s", fold)
     logger.info("#" * 50)
-
-
-def _detect_available_folds(config: DictConfig) -> List[int]:
-    """检测可用的fold文件数量"""
-    index_file_path = Path(str(config.data.index_mapping_path))
-
-    # 查找所有fold_XX.json文件
-    fold_files = sorted(index_file_path.glob("fold_*.json"))
-
-    available_folds = []
-    for fold_file in fold_files:
-        # 从fold_00.json提取00并转为int
-        match = fold_file.stem.replace("fold_", "")
-        fold_num = int(match)
-        available_folds.append(fold_num)
-
-    return sorted(available_folds)
 
 
 if __name__ == "__main__":
