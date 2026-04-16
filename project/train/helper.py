@@ -171,7 +171,7 @@ def save_CM(
 
     confusion_matrix_data = _confusion_matrix(all_pred, all_label).cpu().numpy() * 100
 
-    axis_labels = ["ASD", "DHS", "LCS_HipOA"]
+    axis_labels = [i for i in list(range(num_class))]
 
     plt.figure(figsize=(8, 6))
     sns.heatmap(
@@ -184,7 +184,7 @@ def save_CM(
         vmin=0,
         vmax=100,
     )
-    plt.title(f"Fold {fold} (%)", fontsize=30)
+    plt.title(f"{fold} (%)", fontsize=30)
     plt.ylabel("Actual Label", fontsize=30)
     plt.xlabel("Predicted Label", fontsize=30)
 

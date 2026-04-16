@@ -134,6 +134,53 @@ class PersonDataModule(LightningDataModule):
             temporal_subsample_num_samples=self._temporal_subsample_num_samples,
         )
 
+    def colln_fn(self, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """将不同的batch重新合成一个batch"""
+
+        person_id = []
+        turn_id = []
+        labels = {
+            "twist": [],
+            "posture": [],
+            "relax": [],
+            "total": [],
+        }
+        fused_kpt3d_list = []
+
+        for b in batch:
+            fused_kpt3d = b.get("fused_kpt3d", None)
+            twist_label = b["labels"]["twist"]
+            posture_label = b["labels"]["posture"]
+            relax_label = b["labels"]["relax"]
+            total_label = b["labels"]["total"]
+
+            bth, *_ = fused_kpt3d.shape
+
+            for _ in range(bth):
+                person_id.append(b["person_id"])
+                turn_id.append(b["turn_id"])
+                labels["twist"].append(twist_label)
+                labels["posture"].append(posture_label)
+                labels["relax"].append(relax_label)
+                labels["total"].append(total_label)
+
+            fused_kpt3d_list.append(fused_kpt3d)
+
+        collated = {
+            "person_id": person_id,
+            "turn_id": turn_id,
+            "labels": {
+                "twist": torch.tensor(labels["twist"], dtype=torch.long),
+                "posture": torch.tensor(labels["posture"], dtype=torch.long),
+                "relax": torch.tensor(labels["relax"], dtype=torch.long),
+                "total": torch.tensor(labels["total"], dtype=torch.long),
+            },
+            "fused_kpt3d": (
+                torch.cat(fused_kpt3d_list, dim=0) if fused_kpt3d_list else None
+            ),
+        }
+        return collated
+
     def train_dataloader(self) -> DataLoader:
         """
         create the Walk train partition from the list of video labels
@@ -148,6 +195,7 @@ class PersonDataModule(LightningDataModule):
             pin_memory=True,
             shuffle=True,
             drop_last=True,
+            collate_fn=self.colln_fn,
         )
 
         return train_data_loader
@@ -166,6 +214,7 @@ class PersonDataModule(LightningDataModule):
             pin_memory=True,  # 🚀 GPU内存传输加速（改自False）
             shuffle=False,
             drop_last=True,
+            collate_fn=self.colln_fn,
         )
 
         return val_data_loader
@@ -184,6 +233,7 @@ class PersonDataModule(LightningDataModule):
             pin_memory=True,  # 🚀 GPU内存传输加速（改自False）
             shuffle=False,
             drop_last=True,
+            collate_fn=self.colln_fn,
         )
 
         return test_data_loader

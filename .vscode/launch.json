@@ -70,6 +70,7 @@
       "console": "integratedTerminal",
       "args": [
         "model.backbone=st_gcn",
+        "data.batch_size=2",
         "data.num_workers=0"
       ]
     }

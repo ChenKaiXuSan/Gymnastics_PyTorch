@@ -116,9 +116,25 @@ class LabeledPersonDataset(Dataset):
             sample["fused_turn_frame_end"] = fused_turn_end
 
             # 抽帧
-            transformed_fused_3d_kpt = uniform_temporal_subsample(
-                fused_3d_kpt, num_samples=self._temporal_subsample_num_samples, dim=0
-            )
+            # transformed_fused_3d_kpt = uniform_temporal_subsample(
+            #     fused_3d_kpt, num_samples=self._temporal_subsample_num_samples, dim=0
+            # )
+
+            T, J, C = fused_3d_kpt.shape
+
+            # 不抽帧，把dim 0 的t 按照temporal_subsample_num_samples 切开，然后把每段切开后再堆成一个新的dim 0，变成 (num_segments, segment_length, J, 3)，segment_length = ceil(T / num_segments)
+
+            segments = []
+            for i in range(0, T - self._temporal_subsample_num_samples, self._temporal_subsample_num_samples):
+                segment = fused_3d_kpt[
+                    i : i + self._temporal_subsample_num_samples, ...
+                ]  # (segment_length, J, 3)
+                segments.append(segment)
+
+            transformed_fused_3d_kpt = torch.stack(
+                segments, dim=0
+            )  # (num_segments, segment_length, J, 3)
+
             sample["fused_kpt3d"] = transformed_fused_3d_kpt
 
         return sample
