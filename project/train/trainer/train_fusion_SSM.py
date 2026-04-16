@@ -10,7 +10,8 @@ import torch
 from pytorch_lightning import LightningModule
 
 from project.map_config import ID_TO_INDEX, SKELETON_CONNECTIONS
-from project.models import FusionSSM, PoseLossWeights, PoseRefineLoss
+from project.train.map_config import PersonInfo
+
 
 logger = logging.getLogger(__name__)
 

@@ -46,7 +46,8 @@ from project.train.map_config import PersonInfo
 #####################################
 
 from project.train.trainer.train_STGCN import STGCNTrainer
-from project.train.trainer.train_fusion_SSM import FusionSSMTrainer
+
+# from project.train.trainer.train_fusion_SSM import FusionSSMTrainer
 
 logger = logging.getLogger(__name__)
 
@@ -140,11 +141,11 @@ def load_fold_dataset_idx_from_fold_json(
             dataset_idx[split].append(
                 PersonInfo(
                     person_id=item["person_id"],
-                    turn_id=item["action_id"],
-                    cam1_video_path=item["cam1_path"],
-                    cam2_video_path=item["cam2_path"],
-                    sam3d_cam1_results_path=item["sam3d_cam1_kpt3d_dir"],
-                    sam3d_cam2_results_path=item["sam3d_cam2_kpt3d_dir"],
+                    turn_id=item["turn_id"],
+                    cam1_video_path=item["cam1_video_path"],
+                    cam2_video_path=item["cam2_video_path"],
+                    sam3d_cam1_results_path=item["sam3d_cam1_results_path"],
+                    sam3d_cam2_results_path=item["sam3d_cam2_results_path"],
                     cam1_turn_frame_start=item["cam1_turn_frame_start"],
                     cam1_turn_frame_end=item["cam1_turn_frame_end"],
                     cam2_turn_frame_start=item["cam2_turn_frame_start"],
@@ -189,13 +190,8 @@ def train(hparams: DictConfig, dataset_idx, fold: int):
     monitor_mode = "max"
     ckpt_filename = "{epoch}-{val/loss:.2f}-{val/video_acc:.4f}"
 
-    if trainer_name == "STGCNTrainer":
+    if trainer_name == "st_gcn":
         classification_module = STGCNTrainer(hparams)
-        monitor_metric = "val/loss"
-        monitor_mode = "min"
-        ckpt_filename = "{epoch}-{val/loss:.4f}"
-    elif trainer_name == "FusionSSMTrainer":
-        classification_module = FusionSSMTrainer(hparams)
         monitor_metric = "val/loss"
         monitor_mode = "min"
         ckpt_filename = "{epoch}-{val/loss:.4f}"
@@ -259,7 +255,7 @@ def train(hparams: DictConfig, dataset_idx, fold: int):
 
 @hydra.main(
     version_base=None,
-    config_path="../configs",  # * the config_path is relative to location of the python script
+    config_path="../../configs",  # * the config_path is relative to location of the python script
     config_name="train.yaml",
 )
 def init_params(config):
@@ -268,7 +264,7 @@ def init_params(config):
     #########
     # 使用预生成的单fold JSON文件（每个fold文件必须存在）
 
-    n_splits = int(config.data.n_splits)
+    n_splits = int(config.data.cross_validation.n_splits)
     for fold in range(n_splits):
         # 加载单个fold的JSON文件
         dataset_value = load_fold_dataset_idx_from_fold_json(config, fold)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding:utf-8 -*-
-'''
+"""
 File: /workspace/code/project/train/models/st_gcn.py
 Project: /workspace/code/project/train/models
 Created Date: Thursday April 16th 2026
@@ -10,7 +10,7 @@ Comment:
 
 Have a good code time :)
 -----
-Last Modified: Thursday April 16th 2026 11:15:40 am
+Last Modified: Thursday April 16th 2026 11:18:55 am
 Modified By: the developer formerly known as Kaixu Chen at <chenkaixusan@gmail.com>
 -----
 Copyright (c) 2026 The University of Tsukuba
@@ -18,18 +18,17 @@ Copyright (c) 2026 The University of Tsukuba
 HISTORY:
 Date      	By	Comments
 ----------	---	---------------------------------------------------------
-'''
+"""
 
 from __future__ import annotations
 
-from typing import Iterable, List, Optional, Sequence, Tuple, cast
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 import torch
 import torch.nn as nn
-
 try:
     from project.train.map_config import ID_TO_INDEX, SKELETON_CONNECTIONS
-except Exception:
+except ImportError:
     ID_TO_INDEX = {}
     SKELETON_CONNECTIONS = []
 
@@ -80,46 +79,67 @@ def _normalize_adjacency(
     return d_inv_sqrt @ a @ d_inv_sqrt
 
 
-class GraphConv(nn.Module):
-    """Spatial graph conv with fixed normalized adjacency."""
+def _build_stgcn_adjacency(
+    num_nodes: int,
+    edges: Optional[Sequence[Tuple[int, int]]] = None,
+    device: Optional[torch.device] = None,
+) -> torch.Tensor:
+    """Build ST-GCN adjacency tensor A with shape (K, V, V)."""
+    edge_index = _build_edge_index(num_nodes=num_nodes, edges=edges)
+    a = _normalize_adjacency(num_nodes=num_nodes, edge_index=edge_index, device=device)
+    # Use a single partition (K=1) while keeping the standard ST-GCN tensor shape.
+    return a.unsqueeze(0)
+
+
+class ConvTemporalGraphical(nn.Module):
+    """The basic module for applying a graph convolution."""
 
     def __init__(
         self,
         in_channels: int,
         out_channels: int,
-        adjacency: torch.Tensor,
+        kernel_size: int,
     ) -> None:
         super().__init__()
-        if adjacency.ndim != 2 or adjacency.shape[0] != adjacency.shape[1]:
-            raise ValueError("adjacency must be square matrix with shape (V,V)")
+        self.kernel_size = kernel_size
+        self.conv = nn.Conv2d(in_channels, out_channels * kernel_size, kernel_size=1)
 
-        self.register_buffer("adjacency", adjacency)
-        self.proj = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+    def forward(self, x: torch.Tensor, a: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        if a.ndim != 3:
+            raise ValueError(f"adjacency must be (K,V,V), got shape {tuple(a.shape)}")
+        if a.shape[0] != self.kernel_size:
+            raise ValueError(
+                f"adjacency K mismatch, expected {self.kernel_size}, got {a.shape[0]}"
+            )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (N, C, T, V)
-        x = self.proj(x)
-        return torch.einsum("nctv,vw->nctw", x, self.adjacency)
+        x = self.conv(x)  # (N, out_channels*K, T, V)
+        n, kc, t, v = x.size()
+        x = x.view(n, self.kernel_size, kc // self.kernel_size, t, v)
+        # Aggregate graph partitions.
+        x = torch.einsum("nkctv,kvw->nctw", x, a)
+        return x.contiguous(), a
 
 
-class STGCNBlock(nn.Module):
-    """One ST-GCN block: spatial graph conv + temporal conv + residual."""
+class STGCNUnit(nn.Module):
+    """One ST-GCN unit: graph conv + temporal conv + residual."""
 
     def __init__(
         self,
         in_channels: int,
         out_channels: int,
-        adjacency: torch.Tensor,
-        temporal_kernel_size: int = 9,
+        kernel_size: Tuple[int, int],
         stride: int = 1,
         dropout: float = 0.0,
+        residual: bool = True,
     ) -> None:
         super().__init__()
-        if temporal_kernel_size % 2 == 0:
-            raise ValueError("temporal_kernel_size must be odd to keep center alignment")
+        if len(kernel_size) != 2:
+            raise ValueError("kernel_size must be (temporal_kernel_size, spatial_kernel_size)")
+        if kernel_size[0] % 2 == 0:
+            raise ValueError("temporal kernel size must be odd")
 
-        padding = (temporal_kernel_size - 1) // 2
-        self.gcn = GraphConv(in_channels, out_channels, adjacency)
+        padding = ((kernel_size[0] - 1) // 2, 0)
+        self.gcn = ConvTemporalGraphical(in_channels, out_channels, kernel_size[1])
 
         self.tcn = nn.Sequential(
             nn.BatchNorm2d(out_channels),
@@ -127,42 +147,38 @@ class STGCNBlock(nn.Module):
             nn.Conv2d(
                 out_channels,
                 out_channels,
-                kernel_size=(temporal_kernel_size, 1),
+                kernel_size=(kernel_size[0], 1),
                 stride=(stride, 1),
-                padding=(padding, 0),
+                padding=padding,
             ),
             nn.BatchNorm2d(out_channels),
-            nn.Dropout(dropout, inplace=False),
+            nn.Dropout(dropout, inplace=True),
         )
 
-        if stride != 1 or in_channels != out_channels:
+        if not residual:
+            self.residual = None
+        elif in_channels == out_channels and stride == 1:
+            self.residual = nn.Identity()
+        else:
             self.residual = nn.Sequential(
-                nn.Conv2d(
-                    in_channels,
-                    out_channels,
-                    kernel_size=1,
-                    stride=(stride, 1),
-                ),
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=(stride, 1)),
                 nn.BatchNorm2d(out_channels),
             )
-        else:
-            self.residual = nn.Identity()
 
         self.relu = nn.ReLU(inplace=True)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        res = self.residual(x)
-        x = self.gcn(x)
-        x = self.tcn(x)
-        return self.relu(x + res)
+    def forward(self, x: torch.Tensor, a: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        res = 0 if self.residual is None else self.residual(x)
+        x, a = self.gcn(x, a)
+        x = self.tcn(x) + res
+        return self.relu(x), a
 
 
 class STGCN(nn.Module):
     """ST-GCN classifier for skeleton sequences.
 
     Supported input formats:
-    - x: (N, T, V, C) or (N, C, T, V)
-    - p_left/p_right: each (N, T, V, C), fused by average
+    - x: (N, T, V, C), (N, C, T, V), or (N, C, T, V, M)
     """
 
     def __init__(
@@ -173,6 +189,7 @@ class STGCN(nn.Module):
         graph_edges: Optional[Sequence[Tuple[int, int]]] = None,
         temporal_kernel_size: int = 9,
         dropout: float = 0.2,
+        edge_importance_weighting: bool = True,
     ) -> None:
         super().__init__()
         if num_class <= 0:
@@ -183,129 +200,125 @@ class STGCN(nn.Module):
         if graph_edges is None:
             graph_edges = _edge_from_map_config()
 
-        edge_index = _build_edge_index(num_nodes=num_point, edges=graph_edges)
-        adjacency = _normalize_adjacency(num_nodes=num_point, edge_index=edge_index)
+        adjacency = _build_stgcn_adjacency(num_nodes=num_point, edges=graph_edges)
+        self.register_buffer("_adjacency_tensor", adjacency)
 
         self.num_point = num_point
         self.in_channels = in_channels
         self.data_bn = nn.BatchNorm1d(in_channels * num_point)
 
-        self.backbone = nn.ModuleList(
-            [
-                STGCNBlock(
-                    in_channels,
-                    64,
-                    adjacency,
-                    temporal_kernel_size=temporal_kernel_size,
-                    stride=1,
-                    dropout=dropout,
-                ),
-                STGCNBlock(
-                    64,
-                    64,
-                    adjacency,
-                    temporal_kernel_size=temporal_kernel_size,
-                    stride=1,
-                    dropout=dropout,
-                ),
-                STGCNBlock(
-                    64,
-                    64,
-                    adjacency,
-                    temporal_kernel_size=temporal_kernel_size,
-                    stride=1,
-                    dropout=dropout,
-                ),
-                STGCNBlock(
-                    64,
-                    128,
-                    adjacency,
-                    temporal_kernel_size=temporal_kernel_size,
-                    stride=2,
-                    dropout=dropout,
-                ),
-                STGCNBlock(
-                    128,
-                    128,
-                    adjacency,
-                    temporal_kernel_size=temporal_kernel_size,
-                    stride=1,
-                    dropout=dropout,
-                ),
-                STGCNBlock(
-                    128,
-                    256,
-                    adjacency,
-                    temporal_kernel_size=temporal_kernel_size,
-                    stride=2,
-                    dropout=dropout,
-                ),
-                STGCNBlock(
-                    256,
-                    256,
-                    adjacency,
-                    temporal_kernel_size=temporal_kernel_size,
-                    stride=1,
-                    dropout=dropout,
-                ),
-            ]
+        adjacency_tensor = self._get_adjacency()
+        spatial_kernel_size = int(adjacency_tensor.shape[0])
+        kernel_size = (temporal_kernel_size, spatial_kernel_size)
+        kwargs0 = {"dropout": 0.0}
+
+        self.st_gcn_networks = nn.ModuleList(
+            (
+                STGCNUnit(in_channels, 64, kernel_size, 1, residual=False, **kwargs0),
+                STGCNUnit(64, 64, kernel_size, 1, dropout=dropout),
+                STGCNUnit(64, 64, kernel_size, 1, dropout=dropout),
+                STGCNUnit(64, 64, kernel_size, 1, dropout=dropout),
+                STGCNUnit(64, 128, kernel_size, 2, dropout=dropout),
+                STGCNUnit(128, 128, kernel_size, 1, dropout=dropout),
+                STGCNUnit(128, 128, kernel_size, 1, dropout=dropout),
+                STGCNUnit(128, 256, kernel_size, 2, dropout=dropout),
+                STGCNUnit(256, 256, kernel_size, 1, dropout=dropout),
+                STGCNUnit(256, 256, kernel_size, 1, dropout=dropout),
+            )
         )
 
-        self.cls_head = nn.Conv2d(256, num_class, kernel_size=1)
-
-    def _to_nctv(self, x: torch.Tensor) -> torch.Tensor:
-        if x.ndim != 4:
-            raise ValueError(f"Expected 4D input tensor, got shape {tuple(x.shape)}")
-
-        # Prefer (N,T,V,C) from dataloader outputs.
-        if x.shape[-1] == self.in_channels and x.shape[-2] == self.num_point:
-            x = x.permute(0, 3, 1, 2).contiguous()
-        elif x.shape[1] == self.in_channels and x.shape[-1] == self.num_point:
-            # Already (N,C,T,V)
-            pass
-        else:
-            raise ValueError(
-                "Input shape is not supported. Expected (N,T,V,C) or (N,C,T,V) "
-                f"with V={self.num_point}, C={self.in_channels}, got {tuple(x.shape)}"
+        if edge_importance_weighting:
+            self.edge_importance = nn.ParameterList(
+                [
+                    nn.Parameter(torch.ones_like(adjacency_tensor))
+                    for _ in self.st_gcn_networks
+                ]
             )
+        else:
+            self.edge_importance = [1.0] * len(self.st_gcn_networks)
 
-        n, c, t, v = x.shape
-        x = x.permute(0, 2, 3, 1).reshape(n, t, v * c)
-        x = x.transpose(1, 2)  # (N, V*C, T)
-        x = self.data_bn(x)
-        x = x.transpose(1, 2).reshape(n, t, v, c).permute(0, 3, 1, 2).contiguous()
+        self.cls_head_twist = nn.Conv2d(256, num_class, kernel_size=1)
+        self.cls_head_posture = nn.Conv2d(256, num_class, kernel_size=1)
+        self.cls_head_relax = nn.Conv2d(256, num_class, kernel_size=1)
+        self.cls_head_total = nn.Conv2d(256, num_class, kernel_size=1)
+
+    def _to_nctvm(self, x: torch.Tensor) -> torch.Tensor:
+        """Convert input into ST-GCN standard shape (N,C,T,V,M)."""
+        if x.ndim == 4:
+            # (N,T,V,C)
+            if x.shape[-1] == self.in_channels and x.shape[-2] == self.num_point:
+                x = x.permute(0, 3, 1, 2).contiguous()
+            # (N,C,T,V)
+            elif x.shape[1] == self.in_channels and x.shape[-1] == self.num_point:
+                pass
+            else:
+                raise ValueError(
+                    "Input shape is not supported. Expected (N,T,V,C) or (N,C,T,V) "
+                    f"with V={self.num_point}, C={self.in_channels}, got {tuple(x.shape)}"
+                )
+            x = x.unsqueeze(-1)  # M=1
+        elif x.ndim == 5:
+            # Already (N,C,T,V,M)
+            if x.shape[1] != self.in_channels or x.shape[3] != self.num_point:
+                raise ValueError(
+                    "5D input must be (N,C,T,V,M) "
+                    f"with V={self.num_point}, C={self.in_channels}, got {tuple(x.shape)}"
+                )
+        else:
+            raise ValueError(f"Expected 4D or 5D input, got shape {tuple(x.shape)}")
         return x
+
+    def _get_adjacency(self) -> torch.Tensor:
+        adjacency = getattr(self, "_adjacency_tensor")
+        if not isinstance(adjacency, torch.Tensor):
+            raise TypeError("_adjacency_tensor is not a torch.Tensor")
+        return adjacency
 
     def forward(
         self,
         x: Optional[torch.Tensor] = None,
-        p_left: Optional[torch.Tensor] = None,
-        p_right: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+    ) -> dict:
+        """
+        Args:
+            x: (N, T, V, C), (N, C, T, V), or (N, C, T, V, M)
+        Returns:
+            dict of logits for each task, each of shape (N, num_class)
+        """
         if x is None:
-            if p_left is None or p_right is None:
-                raise ValueError("Provide either x, or both p_left and p_right")
-            if p_left.shape != p_right.shape:
-                raise ValueError(
-                    f"p_left and p_right shape mismatch: {tuple(p_left.shape)} vs {tuple(p_right.shape)}"
-                )
-            x = 0.5 * (p_left + p_right)
+            raise ValueError("x cannot be None")
 
-        feat = self._to_nctv(cast(torch.Tensor, x))
+        x_tensor = self._to_nctvm(x)
+        n, c, t, v, m = x_tensor.size()
 
-        for block in self.backbone:
-            feat = block(feat)
+        # data normalization (same pattern as original ST-GCN)
+        x_tensor = x_tensor.permute(0, 4, 3, 1, 2).contiguous()  # (N,M,V,C,T)
+        x_tensor = x_tensor.view(n * m, v * c, t)
+        x_tensor = self.data_bn(x_tensor)
+        x_tensor = x_tensor.view(n, m, v, c, t)
+        x_tensor = x_tensor.permute(0, 1, 3, 4, 2).contiguous()  # (N,M,C,T,V)
+        x_tensor = x_tensor.view(n * m, c, t, v)
 
-        # Global average pooling over temporal and joint dims.
-        feat = feat.mean(dim=-1, keepdim=True).mean(dim=-2, keepdim=True)
-        feat = self.cls_head(feat)
-        return feat.flatten(1)
+        adjacency_tensor = self._get_adjacency()
 
+        for gcn, importance in zip(self.st_gcn_networks, self.edge_importance):
+            x_tensor, _ = gcn(x_tensor, adjacency_tensor * importance)
 
-class STGCNFusion(STGCN):
-    """Alias for dual-view usage, keeping naming compatibility in configs."""
+        # Global pooling + instance average
+        x_tensor = x_tensor.mean(dim=(2, 3), keepdim=True)
+        x_tensor = x_tensor.view(n, m, -1, 1, 1).mean(dim=1)
 
-    pass
+        # Four classification heads for multi-task learning
+        logits_twist = self.cls_head_twist(x_tensor).flatten(1)
+        logits_posture = self.cls_head_posture(x_tensor).flatten(1)
+        logits_relax = self.cls_head_relax(x_tensor).flatten(1)
+        logits_total = self.cls_head_total(x_tensor).flatten(1)
+
+        return {
+            "twist": logits_twist,
+            "posture": logits_posture,
+            "relax": logits_relax,
+            "total": logits_total,
+        }
 
 
 def build_stgcn_from_hparams(hparams) -> STGCN:
@@ -316,6 +329,9 @@ def build_stgcn_from_hparams(hparams) -> STGCN:
     in_channels = int(getattr(model_cfg, "in_channels", 3))
     temporal_kernel_size = int(getattr(model_cfg, "temporal_kernel_size", 9))
     dropout = float(getattr(model_cfg, "dropout", 0.2))
+    edge_importance_weighting = bool(
+        getattr(model_cfg, "edge_importance_weighting", True)
+    )
 
     return STGCN(
         num_class=num_class,
@@ -324,4 +340,5 @@ def build_stgcn_from_hparams(hparams) -> STGCN:
         graph_edges=_edge_from_map_config(),
         temporal_kernel_size=temporal_kernel_size,
         dropout=dropout,
+        edge_importance_weighting=edge_importance_weighting,
     )

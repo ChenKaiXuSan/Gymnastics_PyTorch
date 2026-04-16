@@ -31,7 +31,7 @@ data:
 
   index_mapping: ${data.root_path}/index_mapping # precomputed index mapping directory
   # index_mapping_file: camera_pairs_by_action.json # precomputed index mapping json file name
-  index_mapping_path: ${data.index_mapping}/camera_pairs_by_action_folds # precomputed index mapping json file path
+  index_mapping_path: ${data.index_mapping}/camera_pairs_by_person_folds # precomputed index mapping json file path
 
   num_workers: 32
   img_size: 224
@@ -44,6 +44,10 @@ data:
 model:
   backbone: st_gcn # choices=[st_gcn, st_gcn_fusion], help='the backbone of the model'
   model_class_num: 3 # score number of the model, used for classification
+  temporal_kernel_size: 9 # temporal kernel size for st-gcn
+  num_points: 17 # number of keypoints, used for st-gcn input
+  num_persons: 2 # number of persons, used for st-gcn input
+  dropout: 0.5 # dropout rate for st-gcn
 
 train:
   # Training config

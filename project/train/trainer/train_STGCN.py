@@ -8,9 +8,12 @@ Author: Kaixu Chen
 -----
 Comment:
 
+ST-GCN Multi-Task Classification Trainer for gymnastics action analysis.
+Trains four classification heads: twist, posture, relax, total.
+
 Have a good code time :)
 -----
-Last Modified: Thursday April 16th 2026 10:51:54 am
+Last Modified: Thursday April 16th 2026 11:20:00 am
 Modified By: the developer formerly known as Kaixu Chen at <chenkaixusan@gmail.com>
 -----
 Copyright (c) 2026 The University of Tsukuba
@@ -19,24 +22,29 @@ HISTORY:
 Date      	By	Comments
 ----------	---	---------------------------------------------------------
 """
-#!/usr/bin/env python3
-# -*- coding:utf-8 -*-
+
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict
 
 import torch
+import torch.nn.functional as F
 from pytorch_lightning import LightningModule
+from torchmetrics.classification import (
+    MulticlassAccuracy,
+    MulticlassPrecision,
+    MulticlassRecall,
+    MulticlassF1Score,
+)
 
-from project.train.models.st_gcn import STGCN
+from project.train.models.st_gcn import STGCN, build_stgcn_from_hparams
 
 logger = logging.getLogger(__name__)
 
 
 class STGCNTrainer(LightningModule):
-    """Pose fusion trainer using uncertainty-aware gating + SSM refinement."""
+    """Multi-task skeleton-based action classifier using ST-GCN."""
 
     def __init__(self, hparams) -> None:
         super().__init__()
@@ -45,236 +53,141 @@ class STGCNTrainer(LightningModule):
         self.lr = float(getattr(hparams.loss, "lr", 1e-4))
         self.weight_decay = float(getattr(hparams.loss, "weight_decay", 1e-4))
 
-        model_cfg = getattr(hparams, "model", None)
-        d_model = int(getattr(model_cfg, "d_model", 256))
-        n_layers = int(getattr(model_cfg, "n_layers", 4))
-        use_conf = bool(getattr(model_cfg, "use_conf", True))
-        predict_logvar = bool(getattr(model_cfg, "predict_logvar", False))
+        # Build ST-GCN model
+        self.model: STGCN = build_stgcn_from_hparams(hparams)
 
-        self.model = STGCN(
-            num_joints=len(ID_TO_INDEX),
-            d_model=d_model,
-            n_layers=n_layers,
-            use_conf=use_conf,
-            predict_logvar=predict_logvar,
-        )
+        # Task names
+        self.tasks = ["twist", "posture", "relax", "total"]
+        self.num_classes = int(getattr(hparams.model, "model_class_num", 3))
 
-        weights = PoseLossWeights(
-            mpjpe=float(getattr(hparams.loss, "lambda_mpjpe", 1.0)),
-            bone=float(getattr(hparams.loss, "lambda_bone", 0.2)),
-            vel=float(getattr(hparams.loss, "lambda_vel", 0.05)),
-            acc=float(getattr(hparams.loss, "lambda_acc", 0.02)),
-            agree=float(getattr(hparams.loss, "lambda_agree", 0.1)),
-            bone_stab=float(getattr(hparams.loss, "lambda_bone_stab", 0.05)),
-        )
-        self.loss_fn = PoseRefineLoss(
-            bone_edges=_build_target_bone_edges(),
-            weights=weights,
-        )
-        self.save_root = str(getattr(hparams, "log_path", "./logs"))
-        self.test_outputs: List[Dict[str, Any]] = []
-        self.test_save_dir: Path = Path(self.save_root) / "pose_analysis"
+        # Metrics for each task
+        self.metrics = {}
+        for task in self.tasks:
+            self.metrics[task] = {
+                "accuracy": MulticlassAccuracy(num_classes=self.num_classes),
+                "precision": MulticlassPrecision(num_classes=self.num_classes),
+                "recall": MulticlassRecall(num_classes=self.num_classes),
+                "f1": MulticlassF1Score(num_classes=self.num_classes),
+            }
 
-    @staticmethod
-    def _require_pose(batch: Dict[str, Any], path: Sequence[str]) -> torch.Tensor:
-        cur: Any = batch
-        for key in path:
-            if not isinstance(cur, dict) or key not in cur:
-                raise KeyError(f"Missing batch key path: {'/'.join(path)}")
-            cur = cur[key]
-
-        if not isinstance(cur, torch.Tensor):
-            raise TypeError(f"Expected tensor at {'/'.join(path)}, got {type(cur)}")
-        if cur.ndim != 4 or cur.shape[-1] != 3:
-            raise ValueError(
-                f"Expected pose tensor shape (B,T,J,3) at {'/'.join(path)}, got {tuple(cur.shape)}"
-            )
-        return cur.float()
+    def forward(self, *args, **kwargs) -> Dict[str, torch.Tensor]:
+        """Forward pass returns dict of logits for each task."""
+        return self.model(*args, **kwargs)
 
     def _shared_step(self, batch: Dict[str, Any], stage: str) -> torch.Tensor:
-        p_left = self._require_pose(batch, ("kpt3d_sam", "cam1"))
-        p_right = self._require_pose(batch, ("kpt3d_sam", "cam2"))
+        """Shared step for train/val/test."""
+        # Extract fused 3D keypoints (N, T, V, C) or (N, C, T, V)
+        if "kpt3d_sam" not in batch:
+            raise KeyError("batch must contain 'kpt3d_sam' key")
 
-        out = self.model(p_left=p_left, p_right=p_right)
-        p_hat = out["p_hat"]
-        alpha = out["alpha"]
-        logvar = out.get("logvar", None)
-
-        has_gt = isinstance(batch.get("kpt3d_gt", None), torch.Tensor)
-        if has_gt:
-            p_gt = batch["kpt3d_gt"].float()
-            if p_gt.ndim != 4 or p_gt.shape[-1] != 3:
-                raise ValueError(
-                    f"Expected kpt3d_gt shape (B,T,J,3), got {tuple(p_gt.shape)}"
-                )
-            loss_dict = self.loss_fn(p_hat=p_hat, p_gt=p_gt, logvar=logvar)
-            mpjpe = torch.norm(p_hat - p_gt, dim=-1).mean()
-            self.log(
-                f"{stage}/mpjpe",
-                mpjpe,
-                on_step=True,
-                on_epoch=True,
-                prog_bar=True,
-                batch_size=p_hat.shape[0],
-            )
+        kpt_dict = batch["kpt3d_sam"]
+        if isinstance(kpt_dict, dict):
+            # Dict input must provide fused keypoints.
+            kpt_tensor = kpt_dict.get("fused")
+            if kpt_tensor is None:
+                raise KeyError("kpt3d_sam dict must contain 'fused'")
         else:
-            loss_dict = self.loss_fn(
-                p_hat=p_hat,
-                p_left=p_left,
-                p_right=p_right,
-                alpha=alpha,
+            kpt_tensor = kpt_dict
+
+        logits = self.model(x=kpt_tensor.float())
+
+        # Extract labels
+        labels = batch.get("labels", {})
+        batch_size = logits["twist"].shape[0]
+        
+        if isinstance(labels, dict):
+            label_dict = {
+                "twist": labels.get("twist", torch.full((batch_size,), -1, dtype=torch.long)),
+                "posture": labels.get("posture", torch.full((batch_size,), -1, dtype=torch.long)),
+                "relax": labels.get("relax", torch.full((batch_size,), -1, dtype=torch.long)),
+                "total": labels.get("total", torch.full((batch_size,), -1, dtype=torch.long)),
+            }
+        else:
+            # Fallback if labels is not dict
+            label_dict = {task: labels for task in self.tasks}
+
+        # Move labels to device
+        for task in self.tasks:
+            label_dict[task] = label_dict[task].to(self.device)
+
+        # Compute loss
+        total_loss = 0.0
+        valid_tasks = 0
+        
+        for task in self.tasks:
+            if task not in logits:
+                logger.warning("Model output missing task '%s'", task)
+                continue
+
+            task_label = label_dict[task]
+            # Filter out invalid labels (-1)
+            mask = task_label >= 0
+            if mask.sum() == 0:
+                logger.debug("No valid labels for task %s in this batch", task)
+                continue
+
+            task_logits = logits[task][mask]
+            task_label_valid = task_label[mask]
+
+            task_loss = F.cross_entropy(task_logits, task_label_valid)
+            total_loss = total_loss + task_loss
+            valid_tasks += 1
+
+            # Log per-task loss
+            self.log(
+                f"{stage}/loss_{task}",
+                task_loss.item(),
+                on_step=False,
+                on_epoch=True,
+                batch_size=batch_size,
             )
 
-        loss = loss_dict["loss"]
+            # Log per-task accuracy
+            task_preds = torch.softmax(task_logits, dim=1)
+            acc = self.metrics[task]["accuracy"](task_preds, task_label_valid)
+            self.log(
+                f"{stage}/acc_{task}",
+                acc,
+                on_step=False,
+                on_epoch=True,
+                batch_size=task_logits.shape[0],
+            )
+
+        if valid_tasks == 0:
+            logger.warning("No valid tasks in %s batch", stage)
+            total_loss = torch.tensor(0.0, device=self.device, dtype=torch.float32)
+        else:
+            total_loss = total_loss / valid_tasks  # Average over tasks
+            if not isinstance(total_loss, torch.Tensor):
+                total_loss = torch.tensor(total_loss, device=self.device, dtype=torch.float32)
+
+        # Log loss
         self.log(
             f"{stage}/loss",
-            loss,
+            total_loss,
             on_step=True,
             on_epoch=True,
-            prog_bar=(stage != "train"),
-            batch_size=p_hat.shape[0],
+            prog_bar=True,
+            batch_size=batch_size,
         )
 
-        for k, v in loss_dict.items():
-            if k == "loss":
-                continue
-            self.log(
-                f"{stage}/{k}",
-                v,
-                on_step=True,
-                on_epoch=True,
-                batch_size=p_hat.shape[0],
-            )
-
-        self.log(
-            f"{stage}/alpha_mean",
-            alpha.mean(),
-            on_step=True,
-            on_epoch=True,
-            batch_size=p_hat.shape[0],
-        )
-        self.log(
-            f"{stage}/alpha_std",
-            alpha.std(),
-            on_step=True,
-            on_epoch=True,
-            batch_size=p_hat.shape[0],
-        )
-        return loss
+        return total_loss
 
     def training_step(self, batch: Dict[str, Any], _batch_idx: int) -> torch.Tensor:
-        return self._shared_step(batch, stage="train")
+        loss = self._shared_step(batch, stage="train")
+        return loss
 
     @torch.no_grad()
     def validation_step(self, batch: Dict[str, Any], _batch_idx: int) -> torch.Tensor:
-        return self._shared_step(batch, stage="val")
-
-    def on_test_start(self) -> None:
-        self.test_outputs: List[Dict[str, Any]] = []
-        self.test_save_dir.mkdir(parents=True, exist_ok=True)
-        logger.info("FusionSSM test start")
+        loss = self._shared_step(batch, stage="val")
+        return loss
 
     @torch.no_grad()
     def test_step(self, batch: Dict[str, Any], _batch_idx: int) -> torch.Tensor:
-        p_left = self._require_pose(batch, ("kpt3d_sam", "cam1"))
-        p_right = self._require_pose(batch, ("kpt3d_sam", "cam2"))
-
-        out = self.model(p_left=p_left, p_right=p_right)
-        p_hat = out["p_hat"]
-        p0 = out["p0"]
-        alpha = out["alpha"]
-        logvar = out.get("logvar", None)
-
-        has_gt = isinstance(batch.get("kpt3d_gt", None), torch.Tensor)
-        if has_gt:
-            p_gt = batch["kpt3d_gt"].float()
-            loss_dict = self.loss_fn(p_hat=p_hat, p_gt=p_gt, logvar=logvar)
-            mpjpe = torch.norm(p_hat - p_gt, dim=-1).mean()
-            self.log(
-                "test/mpjpe",
-                mpjpe,
-                on_step=False,
-                on_epoch=True,
-                batch_size=p_hat.shape[0],
-            )
-        else:
-            p_gt = None
-            loss_dict = self.loss_fn(
-                p_hat=p_hat,
-                p_left=p_left,
-                p_right=p_right,
-                alpha=alpha,
-            )
-
-        loss = loss_dict["loss"]
-        self.log(
-            "test/loss", loss, on_step=False, on_epoch=True, batch_size=p_hat.shape[0]
-        )
-        self.log(
-            "test/alpha_mean",
-            alpha.mean(),
-            on_step=False,
-            on_epoch=True,
-            batch_size=p_hat.shape[0],
-        )
-        self.log(
-            "test/alpha_std",
-            alpha.std(),
-            on_step=False,
-            on_epoch=True,
-            batch_size=p_hat.shape[0],
-        )
-
-        pack: Dict[str, Any] = {
-            "p_hat": p_hat.detach().cpu(),
-            "p0": p0.detach().cpu(),
-            "alpha": alpha.detach().cpu(),
-            "p_left": p_left.detach().cpu(),
-            "p_right": p_right.detach().cpu(),
-        }
-        if p_gt is not None:
-            pack["label"] = p_gt.detach().cpu()
-        if logvar is not None:
-            pack["logvar"] = logvar.detach().cpu()
-        if "meta" in batch:
-            pack["meta"] = batch["meta"]
-        self.test_outputs.append(pack)
+        loss = self._shared_step(batch, stage="test")
         return loss
 
-    def on_test_epoch_end(self) -> None:
-        if not hasattr(self, "test_outputs") or len(self.test_outputs) == 0:
-            logger.warning("No test outputs to save.")
-            return
-
-        fold = (
-            getattr(self.logger, "root_dir", "fold").split("/")[-1]
-            if self.logger is not None
-            else "fold"
-        )
-        save_dir = self.test_save_dir
-
-        payload: Dict[str, Any] = {
-            "p_hat": torch.cat([x["p_hat"] for x in self.test_outputs], dim=0),
-            "p0": torch.cat([x["p0"] for x in self.test_outputs], dim=0),
-            "alpha": torch.cat([x["alpha"] for x in self.test_outputs], dim=0),
-            "p_left": torch.cat([x["p_left"] for x in self.test_outputs], dim=0),
-            "p_right": torch.cat([x["p_right"] for x in self.test_outputs], dim=0),
-        }
-
-        if all("label" in x for x in self.test_outputs):
-            payload["label"] = torch.cat([x["label"] for x in self.test_outputs], dim=0)
-        if all("logvar" in x for x in self.test_outputs):
-            payload["logvar"] = torch.cat(
-                [x["logvar"] for x in self.test_outputs], dim=0
-            )
-        if any("meta" in x for x in self.test_outputs):
-            payload["meta"] = [x.get("meta", None) for x in self.test_outputs]
-
-        save_file = save_dir / f"{fold}_pose_outputs.pt"
-        torch.save(payload, save_file)
-        logger.info("Saved pose predictions/labels to %s", save_file)
-
-    def configure_optimizers(self):
+    def configure_optimizers(self) -> dict:
         optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.lr,

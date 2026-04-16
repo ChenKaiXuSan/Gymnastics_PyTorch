@@ -2,23 +2,22 @@
 # -*- coding:utf-8 -*-
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
 import logging
 import re
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, cast
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from project.map_config import ID_TO_INDEX, TARGET_IDS, UnityDataConfig
+from project.train.map_config import PersonInfo
 
 logger = logging.getLogger(__name__)
 
 
-class LabeledUnityDataset(Dataset):
+class LabeledPersonDataset(Dataset):
     """
     Multi-view labeled video dataset.
     """
@@ -26,7 +25,7 @@ class LabeledUnityDataset(Dataset):
     def __init__(
         self,
         experiment: str,
-        index_mapping: UnityDataConfig,
+        index_mapping: PersonInfo,
         transform: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
         load_frames: bool = True,
         load_2d_kpt: bool = True,
@@ -34,7 +33,7 @@ class LabeledUnityDataset(Dataset):
     ) -> None:
         super().__init__()
         self._experiment = experiment
-        self._index_mapping = index_mapping
+        self._index_mapping = self._prepare_index_mapping(index_mapping)
         self._transform = transform
         self._load_frames = bool(load_frames)
         self._load_2d_kpt = bool(load_2d_kpt)
@@ -49,94 +48,18 @@ class LabeledUnityDataset(Dataset):
         return len(self._index_mapping)
 
     @staticmethod
-    def _ordered_target_ids() -> List[int]:
-        # Keep target joint order consistent with ID_TO_INDEX.
-        return [jid for jid, _ in sorted(ID_TO_INDEX.items(), key=lambda kv: kv[1])]
-
-    @classmethod
-    def _select_source_joint_indices(cls, num_joints: int) -> List[int]:
-        """Map configured target ids to source array indices.
-
-        Priority:
-          1) one-based id -> zero-based index (jid - 1)
-          2) direct index (jid)
-          3) compact target index from ID_TO_INDEX
-        """
-        selected: List[int] = []
-        for jid in cls._ordered_target_ids():
-            candidates = (jid - 1, jid, ID_TO_INDEX[jid])
-            src_idx = next((c for c in candidates if 0 <= c < num_joints), None)
-            if src_idx is None:
-                raise IndexError(
-                    f"Target joint id {jid} cannot be mapped for source joint count {num_joints}."
-                )
-            selected.append(int(src_idx))
-        return selected
-
-    def _get_or_build_source_joint_indices(self, num_joints: int) -> List[int]:
-        cached = self._source_index_cache.get(num_joints)
-        if cached is not None:
-            return cached
-        selected = self._select_source_joint_indices(num_joints)
-        self._source_index_cache[num_joints] = selected
-        return selected
-
-    @staticmethod
-    def _filter_keypoints_with_indices(
-        arr: np.ndarray, source_indices: List[int]
-    ) -> np.ndarray:
-        """Fast-path keypoint filtering using precomputed source indices."""
-        kpt = np.asarray(arr, dtype=np.float32)
-        if kpt.ndim == 3 and kpt.shape[0] == 1:
-            kpt = kpt[0]
-        if kpt.ndim != 2:
-            raise ValueError(f"Expected keypoints shape (J,C), got {kpt.shape}")
-        if max(source_indices) >= kpt.shape[0]:
-            raise IndexError(
-                f"Source index out of range for shape {kpt.shape} and indices up to {max(source_indices)}"
+    def _prepare_index_mapping(index_mapping: PersonInfo) -> List[PersonInfo]:
+        """Convert dict-based index mapping to list for indexing."""
+        if isinstance(index_mapping, dict):
+            # Sort by key to ensure consistent order
+            sorted_items = sorted(index_mapping.items(), key=lambda x: x[0])
+            return [item[1] for item in sorted_items]
+        elif isinstance(index_mapping, list):
+            return index_mapping
+        else:
+            raise TypeError(
+                f"Expected index_mapping to be dict or list, got {type(index_mapping)}"
             )
-        return kpt[source_indices]
-
-    @classmethod
-    def _filter_keypoints_by_target_ids(cls, arr: np.ndarray) -> np.ndarray:
-        """Filter keypoints to configured TARGET_IDS in a fixed order."""
-        kpt = np.asarray(arr, dtype=np.float32)
-        if kpt.ndim == 3 and kpt.shape[0] == 1:
-            kpt = kpt[0]
-        if kpt.ndim != 2:
-            raise ValueError(f"Expected keypoints shape (J,C), got {kpt.shape}")
-
-        # Ensure mapping uses the configured target ids.
-        if len(TARGET_IDS) != len(ID_TO_INDEX):
-            raise ValueError("TARGET_IDS and ID_TO_INDEX are inconsistent in size.")
-
-        source_indices = cls._select_source_joint_indices(kpt.shape[0])
-        return cls._filter_keypoints_with_indices(kpt, source_indices)
-
-    @staticmethod
-    def _item_get(item: Any, key: str, default: Any = None) -> Any:
-        if isinstance(item, dict):
-            return item.get(key, default)
-        return getattr(item, key, default)
-
-    @staticmethod
-    def _safe_int_label(value: Any, default: int = -1) -> int:
-        if value is None:
-            return default
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return default
-
-    @staticmethod
-    def _normalize_item_dict(item: Any) -> Dict[str, Any]:
-        if isinstance(item, dict):
-            return item
-        if is_dataclass(item) and not isinstance(item, type):
-            return asdict(cast(Any, item))
-        if hasattr(item, "__dict__"):
-            return dict(item.__dict__)
-        raise TypeError(f"Unsupported index item type: {type(item)}")
 
     @staticmethod
     def _load_frames_dir(path: Path) -> torch.Tensor:
@@ -160,30 +83,6 @@ class LabeledUnityDataset(Dataset):
                 torch.from_numpy(np.ascontiguousarray(img_rgb)).permute(2, 0, 1)
             )
         return torch.stack(frames, dim=0)
-
-    @staticmethod
-    def _extract_last_int(name: str) -> int:
-        nums = re.findall(r"(\d+)", name)
-        if not nums:
-            raise ValueError(f"No frame index found in filename: {name}")
-
-        # Prefer 6-digit frame indices (e.g. frame_000012, kpt2d_000012, 000012_sam3d_body).
-        six_digits = [x for x in nums if len(x) >= 6]
-        if six_digits:
-            return int(six_digits[0])
-
-        # Fallback for uncommon naming.
-        return int(nums[-1])
-
-    @classmethod
-    def _build_idx_file_map(cls, root: Path, pattern: str) -> Dict[int, Path]:
-        if not root.exists() or not root.is_dir():
-            return {}
-        out: Dict[int, Path] = {}
-        for p in sorted(root.glob(pattern)):
-            idx = cls._extract_last_int(p.stem)
-            out[idx] = p
-        return out
 
     @staticmethod
     def _load_sam3d_file(npz_path: Path) -> Tuple[np.ndarray, np.ndarray]:
@@ -221,533 +120,6 @@ class LabeledUnityDataset(Dataset):
             arr_3d, dtype=np.float32
         )
 
-    @staticmethod
-    def _is_empty_keypoint_array(arr: np.ndarray) -> bool:
-        """Return True when keypoint array has no valid joint entries."""
-        kpt = np.asarray(arr)
-        if kpt.size == 0:
-            return True
-        if kpt.ndim == 3 and kpt.shape[0] == 1:
-            kpt = kpt[0]
-        if kpt.ndim < 2:
-            return True
-        return int(kpt.shape[0]) == 0
-
-    @staticmethod
-    def _pick_fallback_frame_index(target_idx: int, valid_indices: List[int]) -> Optional[int]:
-        """Pick fallback index: prefer nearest previous, otherwise nearest next."""
-        if not valid_indices:
-            return None
-
-        prev = [x for x in valid_indices if x < target_idx]
-        if prev:
-            return prev[-1]
-
-        nxt = [x for x in valid_indices if x > target_idx]
-        if nxt:
-            return nxt[0]
-
-        return None
-
-    @staticmethod
-    def _read_none_detected_indices(output_dir: Path) -> Tuple[bool, List[int], List[str]]:
-        """Read none_detected_frames.txt under one SAM output directory.
-
-        Returns:
-            (exists, sorted unique indices, invalid_lines)
-        """
-        none_file = output_dir / "none_detected_frames.txt"
-        if not none_file.exists() or not none_file.is_file():
-            return False, [], []
-
-        indices: List[int] = []
-        invalid_lines: List[str] = []
-        for raw in none_file.read_text(encoding="utf-8").splitlines():
-            line = raw.strip()
-            if not line:
-                continue
-            try:
-                idx = int(line)
-            except ValueError:
-                invalid_lines.append(line)
-                continue
-            if idx < 0:
-                invalid_lines.append(line)
-                continue
-            indices.append(idx)
-
-        return True, sorted(set(indices)), invalid_lines
-
-    def _resolve_sam_sequence_with_fallback(
-        self,
-        frame_indices: List[int],
-        sam_file_map: Dict[int, Path],
-        camera_id: Any,
-        none_detected_indices: Optional[set[int]] = None,
-    ) -> Dict[int, Tuple[np.ndarray, np.ndarray]]:
-        """Resolve SAM2D/SAM3D per frame index, filling empty entries from nearby frames."""
-        loaded: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
-        valid_indices: List[int] = []
-        none_detected = none_detected_indices or set()
-
-        for idx in frame_indices:
-            if idx not in sam_file_map:
-                if idx in none_detected:
-                    continue
-                logger.warning(
-                    "Missing SAM file at frame idx=%s for camera %s; will try nearby-frame fallback",
-                    idx,
-                    camera_id,
-                )
-                continue
-
-            sam2d, sam3d = self._load_sam3d_file(sam_file_map[idx])
-            loaded[idx] = (sam2d, sam3d)
-            if not self._is_empty_keypoint_array(sam2d) and not self._is_empty_keypoint_array(sam3d):
-                valid_indices.append(idx)
-
-        if not valid_indices:
-            raise RuntimeError(
-                f"All SAM keypoint results are empty for camera {camera_id}. "
-                "Cannot apply nearby-frame fallback."
-            )
-
-        resolved: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
-        for idx in frame_indices:
-            if idx in loaded:
-                sam2d, sam3d = loaded[idx]
-            else:
-                sam2d, sam3d = np.empty((0, 0), dtype=np.float32), np.empty((0, 0), dtype=np.float32)
-
-            if idx in loaded and not self._is_empty_keypoint_array(sam2d) and not self._is_empty_keypoint_array(sam3d):
-                resolved[idx] = (sam2d, sam3d)
-                continue
-
-            fallback_idx = self._pick_fallback_frame_index(idx, valid_indices)
-            if fallback_idx is None:
-                raise RuntimeError(
-                    f"SAM keypoint result at idx={idx} for camera {camera_id} is empty, "
-                    "and no fallback frame exists."
-                )
-
-            logger.warning(
-                "SAM result empty at frame idx=%s for camera %s; using fallback idx=%s",
-                idx,
-                camera_id,
-                fallback_idx,
-            )
-            resolved[idx] = loaded[fallback_idx]
-
-        return resolved
-
-    @staticmethod
-    def _log_missing_sam_paths(
-        camera_id: Any,
-        sam_dir: Path,
-        missing_indices: List[int],
-    ) -> None:
-        """Log all expected SAM file paths for missing frame indices."""
-        if not missing_indices:
-            return
-
-        expected_paths = [
-            str((sam_dir / f"{idx:06d}_sam3d_body.npz").resolve()) for idx in missing_indices
-        ]
-        logger.warning(
-            "Missing SAM files for camera %s (count=%s). Full expected paths:\n%s",
-            camera_id,
-            len(missing_indices),
-            "\n".join(expected_paths),
-        )
-
-    @staticmethod
-    def _temporal_resample_indices(src_len: int, dst_len: int) -> torch.Tensor:
-        if src_len <= 0:
-            raise ValueError("src_len must be > 0")
-        if dst_len <= 0:
-            raise ValueError("dst_len must be > 0")
-        if src_len == dst_len:
-            return torch.arange(src_len, dtype=torch.long)
-        # Same strategy as uniform temporal sampling: evenly spaced indices.
-        return torch.linspace(0, src_len - 1, steps=dst_len).long()
-
-    @staticmethod
-    def _extract_cam_ide_token(cam_id: Any) -> str:
-        """Extract comparable IDE token from camera id (e.g. L2_A001 -> A001)."""
-        cam_str = str(cam_id)
-        if "_" in cam_str:
-            return cam_str.split("_")[-1]
-        return cam_str
-
-    @staticmethod
-    def _extract_cam_layer_token(cam_id: Any) -> str:
-        """Extract layer/group token from camera id (e.g. L2_A001 -> L2)."""
-        cam_str = str(cam_id)
-        if "_" in cam_str:
-            return cam_str.split("_")[1]
-        return ""
-
-    def _validate_stereo_pair_consistency(
-        self,
-        item: Dict[str, Any],
-        cam1_frames_t: Optional[torch.Tensor],
-        cam2_frames_t: Optional[torch.Tensor],
-        cam1_kpt2d_t: Optional[torch.Tensor],
-        cam2_kpt2d_t: Optional[torch.Tensor],
-        sam2d_cam1_t: Optional[torch.Tensor],
-        sam2d_cam2_t: Optional[torch.Tensor],
-        sam3d_cam1_t: Optional[torch.Tensor],
-        sam3d_cam2_t: Optional[torch.Tensor],
-        frame_indices_t: torch.Tensor,
-    ) -> None:
-        """Validate left/right camera shape alignment and camera IDE consistency."""
-        if cam1_frames_t is not None and cam2_frames_t is not None and cam1_frames_t.shape != cam2_frames_t.shape:
-            raise ValueError(
-                f"Left/right frame shape mismatch: {tuple(cam1_frames_t.shape)} vs {tuple(cam2_frames_t.shape)}"
-            )
-
-        if cam1_kpt2d_t is not None and cam2_kpt2d_t is not None and cam1_kpt2d_t.shape != cam2_kpt2d_t.shape:
-            raise ValueError(
-                f"Left/right GT 2D shape mismatch: {tuple(cam1_kpt2d_t.shape)} vs {tuple(cam2_kpt2d_t.shape)}"
-            )
-
-        if sam2d_cam1_t is not None and sam2d_cam2_t is not None and sam2d_cam1_t.shape != sam2d_cam2_t.shape:
-            raise ValueError(
-                f"Left/right SAM 2D shape mismatch: {tuple(sam2d_cam1_t.shape)} vs {tuple(sam2d_cam2_t.shape)}"
-            )
-
-        if sam3d_cam1_t is not None and sam3d_cam2_t is not None and sam3d_cam1_t.shape != sam3d_cam2_t.shape:
-            raise ValueError(
-                f"Left/right SAM 3D shape mismatch: {tuple(sam3d_cam1_t.shape)} vs {tuple(sam3d_cam2_t.shape)}"
-            )
-
-        t_ref = int(frame_indices_t.numel())
-        if cam1_frames_t is not None:
-            t_frames = int(cam1_frames_t.shape[2])
-            if frame_indices_t.numel() != t_frames:
-                raise ValueError(
-                    f"frame_indices length {int(frame_indices_t.numel())} != frame T {t_frames}"
-                )
-            t_ref = t_frames
-
-        if cam1_kpt2d_t is not None and int(cam1_kpt2d_t.shape[0]) != t_ref:
-            raise ValueError(
-                f"GT 2D T {int(cam1_kpt2d_t.shape[0])} != ref T {t_ref}"
-            )
-        if sam2d_cam1_t is not None and int(sam2d_cam1_t.shape[0]) != t_ref:
-            raise ValueError(
-                f"SAM 2D T {int(sam2d_cam1_t.shape[0])} != ref T {t_ref}"
-            )
-        if sam3d_cam1_t is not None and int(sam3d_cam1_t.shape[0]) != t_ref:
-            raise ValueError(
-                f"SAM 3D T {int(sam3d_cam1_t.shape[0])} != ref T {t_ref}"
-            )
-
-        cam1_id = item.get("cam1_id", "")
-        cam2_id = item.get("cam2_id", "")
-        if not cam1_id or not cam2_id:
-            raise ValueError(
-                f"Missing camera id(s): cam1_id={cam1_id!r}, cam2_id={cam2_id!r}"
-            )
-        if str(cam1_id) == str(cam2_id):
-            raise ValueError(f"cam1_id and cam2_id must be different, got {cam1_id}")
-
-        cam1_ide = self._extract_cam_ide_token(cam1_id)
-        cam2_ide = self._extract_cam_ide_token(cam2_id)
-        cam1_layer = self._extract_cam_layer_token(cam1_id)
-        cam2_layer = self._extract_cam_layer_token(cam2_id)
-        if cam1_ide == cam2_ide and cam1_layer == cam2_layer:
-            raise ValueError(
-                "Invalid camera pair: same layer and IDE token are not allowed, got "
-                f"{cam1_id} ({cam1_layer}, {cam1_ide}) vs {cam2_id} ({cam2_layer}, {cam2_ide})"
-            )
-
-    def _load_pair_modalities(self, item: Dict[str, Any]) -> Dict[str, Any]:
-        """Load aligned modalities for one camera-pair sample.
-
-        Modalities:
-          - cam1/cam2 frames
-          - cam1/cam2 2D kpt
-          - GT 3D kpt
-          - SAM3D pred 3D kpt for cam1/cam2
-        """
-        cam1_frames_dir = Path(item["cam1_frames_dir"])
-        cam2_frames_dir = Path(item["cam2_frames_dir"])
-        cam1_kpt2d_dir = Path(item["cam1_kpt2d_dir"])
-        cam2_kpt2d_dir = Path(item["cam2_kpt2d_dir"])
-        kpt3d_dir = Path(item["kpt3d_dir"])
-        sam3d_cam1_kpt2d_dir = Path(item["sam3d_cam1_kpt2d_dir"])
-        sam3d_cam2_kpt2d_dir = Path(item["sam3d_cam2_kpt2d_dir"])
-        sam3d_cam1_kpt3d_dir = Path(item["sam3d_cam1_kpt3d_dir"])
-        sam3d_cam2_kpt3d_dir = Path(item["sam3d_cam2_kpt3d_dir"])
-
-        cam1_frames_map = self._build_idx_file_map(cam1_frames_dir, "frame_*.png") if self._load_frames else {}
-        cam2_frames_map = self._build_idx_file_map(cam2_frames_dir, "frame_*.png") if self._load_frames else {}
-        cam1_kpt2d_map = self._build_idx_file_map(cam1_kpt2d_dir, "kpt2d_*.npy") if self._load_2d_kpt else {}
-        cam2_kpt2d_map = self._build_idx_file_map(cam2_kpt2d_dir, "kpt2d_*.npy") if self._load_2d_kpt else {}
-        kpt3d_map = self._build_idx_file_map(kpt3d_dir, "frame_*.npy") if self._load_3d_kpt else {}
-        sam3d_cam1_kpt2d_map = self._build_idx_file_map(sam3d_cam1_kpt2d_dir, "kpt2d_*.npy") if self._load_2d_kpt else {}
-        sam3d_cam2_kpt2d_map = self._build_idx_file_map(sam3d_cam2_kpt2d_dir, "kpt2d_*.npy") if self._load_2d_kpt else {}
-        sam3d_cam1_kpt3d_map = self._build_idx_file_map(sam3d_cam1_kpt3d_dir, "kpt3d_*.npy") if self._load_3d_kpt else {}
-        sam3d_cam2_kpt3d_map = self._build_idx_file_map(sam3d_cam2_kpt3d_dir, "kpt3d_*.npy") if self._load_3d_kpt else {}
-
-        # none_detected_frames.txt is copied to both kpt2d and kpt3d dirs by the export script
-        cam1_none_dir = sam3d_cam1_kpt2d_dir if self._load_2d_kpt else sam3d_cam1_kpt3d_dir
-        cam2_none_dir = sam3d_cam2_kpt2d_dir if self._load_2d_kpt else sam3d_cam2_kpt3d_dir
-        cam1_none_exists, cam1_none_idx, cam1_none_invalid = self._read_none_detected_indices(
-            cam1_none_dir
-        )
-        cam2_none_exists, cam2_none_idx, cam2_none_invalid = self._read_none_detected_indices(
-            cam2_none_dir
-        )
-        if cam1_none_exists and cam1_none_invalid:
-            logger.warning(
-                "Invalid lines in none_detected_frames.txt for camera %s: %s",
-                item.get("cam1_id", "unknown"),
-                cam1_none_invalid[:5],
-            )
-        if cam2_none_exists and cam2_none_invalid:
-            logger.warning(
-                "Invalid lines in none_detected_frames.txt for camera %s: %s",
-                item.get("cam2_id", "unknown"),
-                cam2_none_invalid[:5],
-            )
-
-        # 跳过两摄像头中任意一个没有 SAM 检测结果的帧
-        cam1_none_set = set(cam1_none_idx)
-        cam2_none_set = set(cam2_none_idx)
-        all_common_set: Optional[set[int]] = None
-        if self._load_frames:
-            all_common_set = set(cam1_frames_map) & set(cam2_frames_map)
-        if self._load_2d_kpt:
-            cur = set(cam1_kpt2d_map) & set(cam2_kpt2d_map)
-            all_common_set = cur if all_common_set is None else all_common_set & cur
-        if self._load_3d_kpt:
-            cur = set(kpt3d_map)
-            all_common_set = cur if all_common_set is None else all_common_set & cur
-        if all_common_set is None:
-            raise RuntimeError("No modality selected for aligned frame discovery.")
-        all_common = sorted(all_common_set)
-        sam_valid_set: Optional[set[int]] = None
-        if self._load_2d_kpt:
-            both_2d = set(sam3d_cam1_kpt2d_map) & set(sam3d_cam2_kpt2d_map)
-            sam_valid_set = both_2d if sam_valid_set is None else sam_valid_set & both_2d
-        if self._load_3d_kpt:
-            both_3d = set(sam3d_cam1_kpt3d_map) & set(sam3d_cam2_kpt3d_map)
-            sam_valid_set = both_3d if sam_valid_set is None else sam_valid_set & both_3d
-        sam_valid_set = sam_valid_set or set()
-        common_idx = [
-            idx for idx in all_common
-            if idx in sam_valid_set
-            and idx not in cam1_none_set
-            and idx not in cam2_none_set
-        ]
-        skipped = len(all_common) - len(common_idx)
-        if skipped:
-            logger.debug(
-                "Skipped %d/%d frames with missing SAM data for %s/%s/%s-%s",
-                skipped, len(all_common),
-                item.get('person_id', '?'), item.get('action_id', '?'),
-                item.get('cam1_id', '?'), item.get('cam2_id', '?'),
-            )
-        if not common_idx:
-            raise RuntimeError(
-                "No valid frames with SAM data for sample: "
-                f"{item.get('person_id', 'unknown')} / {item.get('action_id', 'unknown')} / "
-                f"{item.get('cam1_id', 'unknown')} - {item.get('cam2_id', 'unknown')}"
-            )
-
-        cam1_frames: List[torch.Tensor] = []
-        cam2_frames: List[torch.Tensor] = []
-        cam1_kpt2d: List[torch.Tensor] = []
-        cam2_kpt2d: List[torch.Tensor] = []
-        gt_kpt3d: List[torch.Tensor] = []
-        sam2d_cam1: List[torch.Tensor] = []
-        sam2d_cam2: List[torch.Tensor] = []
-        sam3d_cam1: List[torch.Tensor] = []
-        sam3d_cam2: List[torch.Tensor] = []
-
-        cam1_2d_sel: Optional[List[int]] = None
-        cam2_2d_sel: Optional[List[int]] = None
-        gt_3d_sel: Optional[List[int]] = None
-        sam1_2d_sel: Optional[List[int]] = None
-        sam2_2d_sel: Optional[List[int]] = None
-        sam1_3d_sel: Optional[List[int]] = None
-        sam2_3d_sel: Optional[List[int]] = None
-
-        for idx in common_idx:
-            if self._load_frames:
-                img1 = cv2.imread(str(cam1_frames_map[idx]), cv2.IMREAD_COLOR)
-                img2 = cv2.imread(str(cam2_frames_map[idx]), cv2.IMREAD_COLOR)
-                if img1 is None or img2 is None:
-                    raise RuntimeError(f"Failed to read aligned frame at idx={idx}")
-
-                img1 = cv2.cvtColor(img1, cv2.COLOR_BGR2RGB)
-                img2 = cv2.cvtColor(img2, cv2.COLOR_BGR2RGB)
-                cam1_frames.append(
-                    torch.from_numpy(np.ascontiguousarray(img1)).permute(2, 0, 1)
-                )
-                cam2_frames.append(
-                    torch.from_numpy(np.ascontiguousarray(img2)).permute(2, 0, 1)
-                )
-
-            if self._load_2d_kpt:
-                cam1_raw = np.load(cam1_kpt2d_map[idx])
-                cam2_raw = np.load(cam2_kpt2d_map[idx])
-
-                if cam1_2d_sel is None:
-                    cam1_arr = np.asarray(cam1_raw, dtype=np.float32)
-                    if cam1_arr.ndim == 3 and cam1_arr.shape[0] == 1:
-                        cam1_arr = cam1_arr[0]
-                    cam1_2d_sel = self._get_or_build_source_joint_indices(cam1_arr.shape[0])
-                if cam2_2d_sel is None:
-                    cam2_arr = np.asarray(cam2_raw, dtype=np.float32)
-                    if cam2_arr.ndim == 3 and cam2_arr.shape[0] == 1:
-                        cam2_arr = cam2_arr[0]
-                    cam2_2d_sel = self._get_or_build_source_joint_indices(cam2_arr.shape[0])
-
-                cam1_kpt2d_np = self._filter_keypoints_with_indices(cam1_raw, cam1_2d_sel)
-                cam2_kpt2d_np = self._filter_keypoints_with_indices(cam2_raw, cam2_2d_sel)
-                cam1_kpt2d.append(torch.from_numpy(cam1_kpt2d_np))
-                cam2_kpt2d.append(torch.from_numpy(cam2_kpt2d_np))
-
-            if self._load_3d_kpt:
-                gt3d_raw = np.load(kpt3d_map[idx])
-                if gt_3d_sel is None:
-                    gt3d_arr = np.asarray(gt3d_raw, dtype=np.float32)
-                    if gt3d_arr.ndim == 3 and gt3d_arr.shape[0] == 1:
-                        gt3d_arr = gt3d_arr[0]
-                    gt_3d_sel = self._get_or_build_source_joint_indices(gt3d_arr.shape[0])
-
-                gt_kpt3d_np = self._filter_keypoints_with_indices(gt3d_raw, gt_3d_sel)
-                gt_kpt3d.append(torch.from_numpy(gt_kpt3d_np))
-
-            if self._load_2d_kpt:
-                sam1_2d = np.asarray(np.load(sam3d_cam1_kpt2d_map[idx]), dtype=np.float32)
-                sam2_2d = np.asarray(np.load(sam3d_cam2_kpt2d_map[idx]), dtype=np.float32)
-                if sam1_2d_sel is None:
-                    sam1_2d_sel = self._get_or_build_source_joint_indices(sam1_2d.shape[0])
-                if sam2_2d_sel is None:
-                    sam2_2d_sel = self._get_or_build_source_joint_indices(sam2_2d.shape[0])
-                sam2d_cam1.append(
-                    torch.from_numpy(
-                        self._filter_keypoints_with_indices(sam1_2d, sam1_2d_sel)
-                    )
-                )
-                sam2d_cam2.append(
-                    torch.from_numpy(
-                        self._filter_keypoints_with_indices(sam2_2d, sam2_2d_sel)
-                    )
-                )
-
-            if self._load_3d_kpt:
-                sam1_3d = np.asarray(np.load(sam3d_cam1_kpt3d_map[idx]), dtype=np.float32)
-                sam2_3d = np.asarray(np.load(sam3d_cam2_kpt3d_map[idx]), dtype=np.float32)
-                if sam1_3d_sel is None:
-                    sam1_3d_sel = self._get_or_build_source_joint_indices(sam1_3d.shape[0])
-                if sam2_3d_sel is None:
-                    sam2_3d_sel = self._get_or_build_source_joint_indices(sam2_3d.shape[0])
-                sam3d_cam1.append(
-                    torch.from_numpy(
-                        self._filter_keypoints_with_indices(sam1_3d, sam1_3d_sel)
-                    )
-                )
-                sam3d_cam2.append(
-                    torch.from_numpy(
-                        self._filter_keypoints_with_indices(sam2_3d, sam2_3d_sel)
-                    )
-                )
-
-        cam1_frames_t: Optional[torch.Tensor] = None
-        cam2_frames_t: Optional[torch.Tensor] = None
-        if self._load_frames:
-            cam1_frames_t = torch.stack(cam1_frames, dim=0)
-            cam2_frames_t = torch.stack(cam2_frames, dim=0)
-
-            # apply same image transform to both views
-            cam1_frames_t = self._apply_transform(cam1_frames_t)
-            cam2_frames_t = self._apply_transform(cam2_frames_t)
-
-            # trainer-compatible views: (B,C,T,H,W)
-            cam1_frames_t = cam1_frames_t.permute(1, 0, 2, 3).unsqueeze(0)
-            cam2_frames_t = cam2_frames_t.permute(1, 0, 2, 3).unsqueeze(0)
-            t_after = int(cam1_frames_t.shape[2])
-        else:
-            t_after = len(common_idx)
-
-        src_t = len(common_idx)
-        sel = self._temporal_resample_indices(src_t, t_after)
-
-        cam1_kpt2d_t = torch.stack(cam1_kpt2d, dim=0)[sel] if self._load_2d_kpt else None
-        cam2_kpt2d_t = torch.stack(cam2_kpt2d, dim=0)[sel] if self._load_2d_kpt else None
-        gt_kpt3d_t = torch.stack(gt_kpt3d, dim=0)[sel] if self._load_3d_kpt else None
-        sam2d_cam1_t = torch.stack(sam2d_cam1, dim=0)[sel] if self._load_2d_kpt else None
-        sam2d_cam2_t = torch.stack(sam2d_cam2, dim=0)[sel] if self._load_2d_kpt else None
-        sam3d_cam1_t = torch.stack(sam3d_cam1, dim=0)[sel] if self._load_3d_kpt else None
-        sam3d_cam2_t = torch.stack(sam3d_cam2, dim=0)[sel] if self._load_3d_kpt else None
-        frame_indices_t = torch.tensor(common_idx, dtype=torch.long)[sel]
-
-        self._validate_stereo_pair_consistency(
-            item=item,
-            cam1_frames_t=cam1_frames_t,
-            cam2_frames_t=cam2_frames_t,
-            cam1_kpt2d_t=cam1_kpt2d_t,
-            cam2_kpt2d_t=cam2_kpt2d_t,
-            sam2d_cam1_t=sam2d_cam1_t,
-            sam2d_cam2_t=sam2d_cam2_t,
-            sam3d_cam1_t=sam3d_cam1_t,
-            sam3d_cam2_t=sam3d_cam2_t,
-            frame_indices_t=frame_indices_t,
-        )
-
-        out: Dict[str, Any] = {
-            "frame_indices": frame_indices_t,
-            "meta": {
-                "experiment": self._experiment,
-                "person_id": item.get("person_id", "unknown"),
-                "action_id": item.get("action_id", "unknown"),
-                "cam1_id": item.get("cam1_id", "unknown"),
-                "cam2_id": item.get("cam2_id", "unknown"),
-                "num_aligned_frames": int(frame_indices_t.numel()),
-                "label_twist_3class": self._safe_int_label(item.get("label_twist_3class"), -1),
-                "label_posture_3class": self._safe_int_label(item.get("label_posture_3class"), -1),
-                "label_relax_3class": self._safe_int_label(item.get("label_relax_3class"), -1),
-                "label_total_3class": self._safe_int_label(item.get("label_total_3class"), -1),
-            },
-            "labels": {
-                "twist": self._safe_int_label(item.get("label_twist_3class"), -1),
-                "posture": self._safe_int_label(item.get("label_posture_3class"), -1),
-                "relax": self._safe_int_label(item.get("label_relax_3class"), -1),
-                "total": self._safe_int_label(item.get("label_total_3class"), -1),
-            },
-            "label": self._safe_int_label(item.get("label_total_3class"), -1),
-        }
-
-        if self._load_frames and cam1_frames_t is not None and cam2_frames_t is not None:
-            out["frames"] = {
-                "cam1": cam1_frames_t,
-                "cam2": cam2_frames_t,
-            }
-
-        if self._load_2d_kpt and cam1_kpt2d_t is not None and cam2_kpt2d_t is not None and sam2d_cam1_t is not None and sam2d_cam2_t is not None:
-            out["kpt2d_gt"] = {
-                "cam1": cam1_kpt2d_t,
-                "cam2": cam2_kpt2d_t,
-            }
-            out["kpt2d_sam"] = {
-                "cam1": sam2d_cam1_t,
-                "cam2": sam2d_cam2_t,
-            }
-
-        if self._load_3d_kpt and gt_kpt3d_t is not None and sam3d_cam1_t is not None and sam3d_cam2_t is not None:
-            out["kpt3d_gt"] = gt_kpt3d_t
-            out["kpt3d_sam"] = {
-                "cam1": sam3d_cam1_t,
-                "cam2": sam3d_cam2_t,
-            }
-
-        return out
-
     def _apply_transform(self, video_tchw: torch.Tensor) -> torch.Tensor:
         """
         Apply transform on a segment.
@@ -759,19 +131,11 @@ class LabeledUnityDataset(Dataset):
         return self._transform(video_tchw)
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
+        # index with index from index_mapping dict
         raw_item = self._index_mapping[index]
-        item = self._normalize_item_dict(raw_item)
 
-        # ---------------- camera-pair frame-dir format ----------------
-        if "cam1_frames_dir" in item and "cam2_frames_dir" in item:
-            out = self._load_pair_modalities(item)
-            out["meta"]["index"] = index
-            return out
-
-        raise ValueError(
-            "This dataset currently expects camera-pair index items with "
-            "cam1_frames_dir/cam2_frames_dir and corresponding kpt/sam paths."
-        )
+        # load 3d kpt from given path
+        return self._load_item(raw_item)
 
 
 def whole_video_dataset(
@@ -781,8 +145,8 @@ def whole_video_dataset(
     load_frames: bool = True,
     load_2d_kpt: bool = True,
     load_3d_kpt: bool = True,
-) -> LabeledUnityDataset:
-    return LabeledUnityDataset(
+) -> LabeledPersonDataset:
+    return LabeledPersonDataset(
         experiment=experiment,
         transform=transform,
         index_mapping=dataset_idx,
