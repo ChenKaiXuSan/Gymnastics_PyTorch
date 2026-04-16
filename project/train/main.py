@@ -30,7 +30,6 @@ import hydra
 from omegaconf import DictConfig
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import (
-    EarlyStopping,
     LearningRateMonitor,
     ModelCheckpoint,
     RichModelSummary,
@@ -55,22 +54,15 @@ logger = logging.getLogger(__name__)
 def _resolve_trainer_requirements(hparams: DictConfig) -> Dict[str, object]:
     """Infer required input modalities from current trainer selection."""
     backbone = str(hparams.model.backbone)
+    backbone_key = backbone.lower()
     fuse_method = str(hparams.model.fuse_method)
 
-    if backbone == "3dcnn":
-        if fuse_method in ["ssm", "mamba", "mamba_ssm"]:
-            return {
-                "trainer_name": "FusionSSMTrainer",
-                "requires_frames": False,
-                "requires_2d_kpt": False,
-                "requires_3d_kpt": True,
-            }
-    elif backbone == "stgcn":
+    if backbone_key in {"st_gcn"}:
         return {
             "trainer_name": "STGCNTrainer",
             "requires_frames": False,
-            "requires_2d_kpt": True,
-            "requires_3d_kpt": False,
+            "requires_2d_kpt": False,
+            "requires_3d_kpt": True,
         }
 
     raise ValueError(
@@ -157,163 +149,22 @@ def load_fold_dataset_idx_from_fold_json(
                     cam1_turn_frame_end=item["cam1_turn_frame_end"],
                     cam2_turn_frame_start=item["cam2_turn_frame_start"],
                     cam2_turn_frame_end=item["cam2_turn_frame_end"],
+                    label_twist_3class=int(item.get("label_twist_3class", -1)),
+                    label_posture_3class=int(item.get("label_posture_3class", -1)),
+                    label_relax_3class=int(item.get("label_relax_3class", -1)),
+                    label_total_3class=int(item.get("label_total_3class", -1)),
+                    fused_kpt_path=str(item.get("fused_kpt_path", "")),
                 )
             )
 
     logger.info(
-        f"✓ Loaded fold {fold}: train={len(dataset_idx['train'])}, val={len(dataset_idx['val'])}, test={len(dataset_idx['test'])}"
+        "Loaded fold %s: train=%s, val=%s, test=%s",
+        fold,
+        len(dataset_idx["train"]),
+        len(dataset_idx["val"]),
+        len(dataset_idx["test"]),
     )
     return dataset_idx
-
-
-def load_fold_dataset_idx_from_index_mapping(config: DictConfig):
-    """Load precomputed fold mapping from index json file.
-
-    This removes CV split preparation from training entry.
-    """
-    index_mapping_cfg = Path(str(config.data.index_mapping))
-    index_file_name = str(config.data.index_mapping_file)
-
-    # Backward/forward compatible:
-    # 1) data.index_mapping points to directory + data.index_mapping_file
-    # 2) data.index_mapping points directly to a json file
-    if index_mapping_cfg.suffix == ".json":
-        index_file = index_mapping_cfg
-    else:
-        index_file = index_mapping_cfg / index_file_name
-
-    if not index_file.exists():
-        raise FileNotFoundError(
-            f"Index mapping file not found: {index_file}. "
-            f"Please generate it first (e.g. cross_validation/generate_cv_index.py)."
-        )
-
-    with open(index_file, "r", encoding="utf-8") as f:
-        serial = json.load(f)
-
-    # Skip metadata entry if exists.
-    serial.pop("_metadata", None)
-
-    fold_dataset_idx: Dict[int, Dict[str, List[UnityDataConfig]]] = {}
-    for kfold, d in serial.items():
-        if not isinstance(d, dict):
-            raise ValueError(f"Fold {kfold} must be a dict, got {type(d)}")
-
-        fold = int(kfold)
-        fold_dataset_idx[fold] = {"train": [], "val": [], "test": []}
-
-        # Accept both val/valid and test aliases from different generators.
-        split_aliases = {
-            "train": ["train"],
-            "val": ["val", "valid"],
-            "test": ["test", "eval", "holdout"],
-        }
-
-        for split, aliases in split_aliases.items():
-            src_list = None
-            for alias in aliases:
-                if alias in d:
-                    src_list = d[alias]
-                    break
-            if src_list is None:
-                # Backward compatibility: old index files may not have test split.
-                if split == "test" and "val" in d:
-                    src_list = d["val"]
-                else:
-                    raise KeyError(
-                        f"Fold {kfold} missing split '{split}' (aliases: {aliases})"
-                    )
-            if not isinstance(src_list, list):
-                raise TypeError(
-                    f"Fold {kfold} split '{split}' must be a list, got {type(src_list)}"
-                )
-
-            for item in src_list:
-                if not isinstance(item, dict):
-                    raise TypeError(
-                        f"Index item in fold {kfold}/{split} must be dict, got {type(item)}"
-                    )
-
-                # camera-pair index format: build UnityDataConfig directly.
-                if "cam1_frames_dir" in item and "cam2_frames_dir" in item:
-                    required_fields = [
-                        "person_id",
-                        "action_id",
-                        "cam1_id",
-                        "cam2_id",
-                        "cam1_path",
-                        "cam2_path",
-                        "label_path",
-                        "cam1_frames_dir",
-                        "cam2_frames_dir",
-                        "cam1_kpt2d_dir",
-                        "cam2_kpt2d_dir",
-                        "kpt3d_dir",
-                        "sam3d_cam1_kpt2d_dir",
-                        "sam3d_cam2_kpt2d_dir",
-                        "sam3d_cam1_kpt3d_dir",
-                        "sam3d_cam2_kpt3d_dir",
-                        "sequence_meta_path",
-                        "joint_names_path",
-                    ]
-                    missing = [k for k in required_fields if k not in item]
-                    if missing:
-                        raise KeyError(
-                            f"Fold {kfold}/{split} missing required UnityDataConfig keys: {missing}"
-                        )
-
-                    fold_dataset_idx[fold][split].append(
-                        UnityDataConfig(
-                            person_id=str(item["person_id"]),
-                            action_id=str(item["action_id"]),
-                            cam1_id=str(item["cam1_id"]),
-                            cam2_id=str(item["cam2_id"]),
-                            cam1_path=str(item["cam1_path"]),
-                            cam2_path=str(item["cam2_path"]),
-                            label_path=str(item["label_path"]),
-                            cam1_frames_dir=str(item["cam1_frames_dir"]),
-                            cam2_frames_dir=str(item["cam2_frames_dir"]),
-                            cam1_kpt2d_dir=str(item["cam1_kpt2d_dir"]),
-                            cam2_kpt2d_dir=str(item["cam2_kpt2d_dir"]),
-                            kpt3d_dir=str(item["kpt3d_dir"]),
-                            sam3d_cam1_kpt2d_dir=str(item["sam3d_cam1_kpt2d_dir"]),
-                            sam3d_cam2_kpt2d_dir=str(item["sam3d_cam2_kpt2d_dir"]),
-                            sam3d_cam1_kpt3d_dir=str(item["sam3d_cam1_kpt3d_dir"]),
-                            sam3d_cam2_kpt3d_dir=str(item["sam3d_cam2_kpt3d_dir"]),
-                            sequence_meta_path=str(item["sequence_meta_path"]),
-                            joint_names_path=str(item["joint_names_path"]),
-                            annotation_path=str(item.get("annotation_path", ""))
-                            or None,
-                            label_twist_3class=(
-                                int(item["label_twist_3class"])
-                                if item.get("label_twist_3class") is not None
-                                else None
-                            ),
-                            label_posture_3class=(
-                                int(item["label_posture_3class"])
-                                if item.get("label_posture_3class") is not None
-                                else None
-                            ),
-                            label_relax_3class=(
-                                int(item["label_relax_3class"])
-                                if item.get("label_relax_3class") is not None
-                                else None
-                            ),
-                            label_total_3class=(
-                                int(item["label_total_3class"])
-                                if item.get("label_total_3class") is not None
-                                else None
-                            ),
-                        )
-                    )
-                    continue
-
-                raise ValueError(
-                    "Unsupported index item format. "
-                    f"Expected camera-pair fields, got keys: {list(item.keys())}"
-                )
-
-    return fold_dataset_idx
 
 
 def train(hparams: DictConfig, dataset_idx, fold: int):
@@ -329,20 +180,27 @@ def train(hparams: DictConfig, dataset_idx, fold: int):
     """
 
     seed_everything(42, workers=True)
-    req = _validate_input_loading_config(hparams)
-    logger.info("Using trainer %s for fold %s", req["trainer_name"], fold)
+
+    logger.info("Using trainer %s for fold %s", hparams.model.backbone, fold)
 
     # * select experiment
+    trainer_name = hparams.model.backbone
     monitor_metric = "val/video_acc"
     monitor_mode = "max"
     ckpt_filename = "{epoch}-{val/loss:.2f}-{val/video_acc:.4f}"
 
-    if hparams.model.backbone == "st_gcn":
-
+    if trainer_name == "STGCNTrainer":
         classification_module = STGCNTrainer(hparams)
         monitor_metric = "val/loss"
         monitor_mode = "min"
         ckpt_filename = "{epoch}-{val/loss:.4f}"
+    elif trainer_name == "FusionSSMTrainer":
+        classification_module = FusionSSMTrainer(hparams)
+        monitor_metric = "val/loss"
+        monitor_mode = "min"
+        ckpt_filename = "{epoch}-{val/loss:.4f}"
+    else:
+        raise ValueError(f"Unsupported trainer name: {trainer_name}")
 
     # * prepare data module
     data_module = PersonDataModule(hparams, dataset_idx=dataset_idx)
@@ -368,13 +226,6 @@ def train(hparams: DictConfig, dataset_idx, fold: int):
         save_top_k=2,
     )
 
-    # define the early stop.
-    early_stopping = EarlyStopping(
-        monitor=monitor_metric,
-        patience=5,
-        mode=monitor_mode,
-    )
-
     lr_monitor = LearningRateMonitor(logging_interval="step")
 
     trainer = Trainer(
@@ -389,7 +240,6 @@ def train(hparams: DictConfig, dataset_idx, fold: int):
             progress_bar,
             rich_model_summary,
             model_check_point,
-            # early_stopping,
             lr_monitor,
         ],
         # limit_train_batches=10,
@@ -413,28 +263,27 @@ def train(hparams: DictConfig, dataset_idx, fold: int):
     config_name="train.yaml",
 )
 def init_params(config):
-    # Load precomputed fold mapping only; do not prepare CV splits here.
-    # 使用预生成的单fold JSON文件（每个fold文件必须存在）
     #########
     # K fold
     #########
-    # * for one fold, we first train/val model, then save the best ckpt preds/label into .pt file.
+    # 使用预生成的单fold JSON文件（每个fold文件必须存在）
 
-    for fold in range(config.data.n_splits):
+    n_splits = int(config.data.n_splits)
+    for fold in range(n_splits):
         # 加载单个fold的JSON文件
         dataset_value = load_fold_dataset_idx_from_fold_json(config, fold)
         logger.info("#" * 50)
-        logger.info(f"Start train fold: {fold}")
+        logger.info("Start train fold: %s", fold)
         logger.info("#" * 50)
 
         train(config, dataset_value, fold)
 
         logger.info("#" * 50)
-        logger.info(f"finish train fold: {fold}")
+        logger.info("finish train fold: %s", fold)
         logger.info("#" * 50)
 
     logger.info("#" * 50)
-    logger.info("finish train folds: %s", fold)
+    logger.info("finish train folds: total=%s", n_splits)
     logger.info("#" * 50)
 
 
