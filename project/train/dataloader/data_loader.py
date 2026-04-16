@@ -45,6 +45,9 @@ class PersonDataModule(LightningDataModule):
         self._load_frames = bool(getattr(opt.data, "load_frames", True))
         self._load_2d_kpt = bool(getattr(opt.data, "load_2d_kpt", True))
         self._load_3d_kpt = bool(getattr(opt.data, "load_3d_kpt", True))
+        self._temporal_subsample_num_samples = int(
+            getattr(opt.model, "temporal_kernel_size", 32)
+        )
         if not self._load_frames and not self._load_2d_kpt and not self._load_3d_kpt:
             raise ValueError(
                 "At least one of data.load_frames/data.load_2d_kpt/data.load_3d_kpt must be true."
@@ -106,6 +109,7 @@ class PersonDataModule(LightningDataModule):
             load_frames=self._load_frames,
             load_2d_kpt=self._load_2d_kpt,
             load_3d_kpt=self._load_3d_kpt,
+            temporal_subsample_num_samples=self._temporal_subsample_num_samples,
         )
 
         # val dataset
@@ -116,6 +120,7 @@ class PersonDataModule(LightningDataModule):
             load_frames=self._load_frames,
             load_2d_kpt=self._load_2d_kpt,
             load_3d_kpt=self._load_3d_kpt,
+            temporal_subsample_num_samples=self._temporal_subsample_num_samples,
         )
 
         # test dataset
@@ -126,6 +131,7 @@ class PersonDataModule(LightningDataModule):
             load_frames=self._load_frames,
             load_2d_kpt=self._load_2d_kpt,
             load_3d_kpt=self._load_3d_kpt,
+            temporal_subsample_num_samples=self._temporal_subsample_num_samples,
         )
 
     def train_dataloader(self) -> DataLoader:

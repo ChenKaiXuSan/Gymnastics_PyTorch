@@ -70,28 +70,40 @@ class UniformTemporalSubsample:
         return torch.index_select(video, -4, idx)
 
 
-class ApplyTransformToKey:
-    """
-    Applies transform to key of dictionary input.
+def uniform_temporal_subsample(video: Tensor, num_samples: int, dim: int) -> Tensor:
+    """Uniformly sample ``num_samples`` values along an arbitrary dimension.
 
     Args:
-        key (str): the dictionary key the transform is applied to
-        transform (callable): the transform that is applied
+        video: Input tensor.
+        num_samples: Number of samples to keep.
+        dim: Dimension along which to sample. Negative dimensions are supported.
 
-    Example:
-        >>>   transforms.ApplyTransformToKey(
-        >>>       key='video',
-        >>>       transform=UniformTemporalSubsample(num_video_samples),
-        >>>   )
+    Returns:
+        Tensor with the same rank as input, but with size ``num_samples`` on ``dim``.
     """
+    if num_samples <= 0:
+        raise ValueError("num_samples must be > 0")
+    if not isinstance(video, torch.Tensor):
+        raise TypeError(f"Expected Tensor, got {type(video)}")
+    if video.ndim == 0:
+        raise ValueError("Input tensor must have at least 1 dimension")
 
-    def __init__(self, key: str, transform: Callable):
-        self._key = key
-        self._transform = transform
+    dim = int(dim)
+    if dim < 0:
+        dim += video.ndim
+    if dim < 0 or dim >= video.ndim:
+        raise ValueError(f"dim out of range for tensor with {video.ndim} dims: {dim}")
 
-    def __call__(self, x: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        x[self._key] = self._transform(x[self._key])
-        return x
+    size = int(video.shape[dim])
+    idx_float = torch.linspace(
+        0,
+        max(size - 1, 0),
+        num_samples,
+        dtype=torch.float32,
+        device=video.device,
+    )
+    idx = torch.round(idx_float).long()
+    return torch.index_select(video, dim, idx)
 
 
 class Div255(torch.nn.Module):

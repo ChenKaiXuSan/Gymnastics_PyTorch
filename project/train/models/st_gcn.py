@@ -26,6 +26,7 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 
 import torch
 import torch.nn as nn
+
 try:
     from project.train.map_config import ID_TO_INDEX, SKELETON_CONNECTIONS
 except ImportError:
@@ -104,7 +105,9 @@ class ConvTemporalGraphical(nn.Module):
         self.kernel_size = kernel_size
         self.conv = nn.Conv2d(in_channels, out_channels * kernel_size, kernel_size=1)
 
-    def forward(self, x: torch.Tensor, a: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self, x: torch.Tensor, a: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         if a.ndim != 3:
             raise ValueError(f"adjacency must be (K,V,V), got shape {tuple(a.shape)}")
         if a.shape[0] != self.kernel_size:
@@ -134,7 +137,9 @@ class STGCNUnit(nn.Module):
     ) -> None:
         super().__init__()
         if len(kernel_size) != 2:
-            raise ValueError("kernel_size must be (temporal_kernel_size, spatial_kernel_size)")
+            raise ValueError(
+                "kernel_size must be (temporal_kernel_size, spatial_kernel_size)"
+            )
         if kernel_size[0] % 2 == 0:
             raise ValueError("temporal kernel size must be odd")
 
@@ -167,7 +172,9 @@ class STGCNUnit(nn.Module):
 
         self.relu = nn.ReLU(inplace=True)
 
-    def forward(self, x: torch.Tensor, a: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self, x: torch.Tensor, a: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         res = 0 if self.residual is None else self.residual(x)
         x, a = self.gcn(x, a)
         x = self.tcn(x) + res
@@ -284,8 +291,6 @@ class STGCN(nn.Module):
         Returns:
             dict of logits for each task, each of shape (N, num_class)
         """
-        if x is None:
-            raise ValueError("x cannot be None")
 
         x_tensor = self._to_nctvm(x)
         n, c, t, v, m = x_tensor.size()

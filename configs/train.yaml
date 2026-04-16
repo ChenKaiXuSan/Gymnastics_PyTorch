@@ -39,14 +39,14 @@ data:
   load_2d_kpt: false # whether to load 2d keypoints
   load_3d_kpt: true
 
-  batch_size: 2048
+  batch_size: 32
 
 model:
   backbone: st_gcn # choices=[st_gcn, st_gcn_fusion], help='the backbone of the model'
   model_class_num: 3 # score number of the model, used for classification
-  temporal_kernel_size: 9 # temporal kernel size for st-gcn
-  num_points: 17 # number of keypoints, used for st-gcn input
-  num_persons: 2 # number of persons, used for st-gcn input
+  temporal_kernel_size: 31 # temporal kernel size for st-gcn
+  num_point: 70 # number of keypoints, used for st-gcn input
+  num_persons: 1 # number of persons, used for st-gcn input
   dropout: 0.5 # dropout rate for st-gcn
 
 train:

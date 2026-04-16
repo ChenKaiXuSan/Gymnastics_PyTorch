@@ -53,6 +53,9 @@ class CameraPairSample:
     cam2_turn_frame_start: Optional[int] = None
     cam2_turn_frame_end: Optional[int] = None
 
+    fused_turn_frame_start: Optional[int] = None
+    fused_turn_frame_end: Optional[int] = None
+
     label_twist_3class: Optional[int] = None
     label_posture_3class: Optional[int] = None
     label_relax_3class: Optional[int] = None
@@ -297,6 +300,44 @@ class CameraPairCrossValidation:
             return generic_matches[cycle_index]
         return None
 
+    @staticmethod
+    def _load_fused_frame_maps(fused_kpt_path: Path) -> Tuple[np.ndarray, np.ndarray]:
+        metadata_files = sorted(fused_kpt_path.parent.glob("fused_kpts_metadata_*.json"))
+        if not metadata_files:
+            raise FileNotFoundError(f"fused metadata not found under {fused_kpt_path.parent}")
+
+        metadata_path = metadata_files[0]
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+
+        if "face_map" not in metadata or "side_map" not in metadata:
+            raise KeyError(f"face_map/side_map missing in {metadata_path}")
+
+        face_map = np.asarray(metadata["face_map"], dtype=np.int32)
+        side_map = np.asarray(metadata["side_map"], dtype=np.int32)
+        return face_map, side_map
+
+    @staticmethod
+    def _calc_fused_turn_range(
+        face_map: np.ndarray,
+        side_map: np.ndarray,
+        cam1_turn_frame_start: int,
+        cam1_turn_frame_end: int,
+        cam2_turn_frame_start: int,
+        cam2_turn_frame_end: int,
+    ) -> Tuple[Optional[int], Optional[int]]:
+        valid = (
+            (face_map >= cam1_turn_frame_start)
+            & (face_map < cam1_turn_frame_end)
+            & (side_map >= cam2_turn_frame_start)
+            & (side_map < cam2_turn_frame_end)
+        )
+        if not np.any(valid):
+            return None, None
+
+        idx = np.flatnonzero(valid)
+        return int(idx[0]), int(idx[-1] + 1)
+
     def _discover_turn_samples(self) -> List[CameraPairSample]:
         raw_person_root = self.data_root / "raw" / "person"
         split_cycle_root = self.data_root / "split_cycle"
@@ -335,6 +376,12 @@ class CameraPairCrossValidation:
             person_label = self._person_label_map[person_id]
             fused_kpt_path = self.fused_kpt_root / f"person_{person_id}" / "frames"
 
+            try:
+                face_map, side_map = self._load_fused_frame_maps(fused_kpt_path)
+            except Exception as e:
+                print(f"⚠ [skip] person_{person_id}: failed to load fused maps - {e}")
+                continue
+
             for cycle in cycles:
                 if not isinstance(cycle, dict):
                     continue
@@ -351,6 +398,14 @@ class CameraPairCrossValidation:
 
                 face_frames = cycle.get("face_video_frames", {})
                 side_frames = cycle.get("side_video_frames", {})
+                fused_turn_start, fused_turn_end = self._calc_fused_turn_range(
+                    face_map=face_map,
+                    side_map=side_map,
+                    cam1_turn_frame_start=int(face_frames.get("start", 0)),
+                    cam1_turn_frame_end=int(face_frames.get("end", 0)),
+                    cam2_turn_frame_start=int(side_frames.get("start", 0)),
+                    cam2_turn_frame_end=int(side_frames.get("end", 0)),
+                )
 
                 sample = CameraPairSample(
                     person_id=person_id,
@@ -363,6 +418,8 @@ class CameraPairCrossValidation:
                     cam1_turn_frame_end=int(face_frames.get("end", 0)),
                     cam2_turn_frame_start=int(side_frames.get("start", 0)),
                     cam2_turn_frame_end=int(side_frames.get("end", 0)),
+                    fused_turn_frame_start=fused_turn_start,
+                    fused_turn_frame_end=fused_turn_end,
                     label_twist_3class=int(person_label["label_twist_3class"]),
                     label_posture_3class=int(person_label["label_posture_3class"]),
                     label_relax_3class=int(person_label["label_relax_3class"]),

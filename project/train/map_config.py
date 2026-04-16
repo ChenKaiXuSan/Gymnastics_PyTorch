@@ -101,8 +101,10 @@ class PersonInfo:
     cam1_turn_frame_end: int
     cam2_turn_frame_start: int
     cam2_turn_frame_end: int
-    label_twist_3class: int 
+    label_twist_3class: int
     label_posture_3class: int
     label_relax_3class: int
     label_total_3class: int
     fused_kpt_path: str
+    fused_kpt_turn_frame_start: int
+    fused_kpt_turn_frame_end: int
