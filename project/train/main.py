@@ -46,6 +46,8 @@ from project.train.map_config import PersonInfo
 #####################################
 
 from project.train.trainer.train_STGCN import STGCNTrainer
+from project.train.trainer.train_SSM import SSMTrainer
+from project.train.trainer.train_TCN import TCNTrainer
 
 # from project.train.trainer.train_fusion_SSM import FusionSSMTrainer
 
@@ -190,12 +192,19 @@ def train(hparams: DictConfig, dataset_idx, fold: int):
 
     # * select experiment
     trainer_name = hparams.model.backbone
-    monitor_metric = "val/video_acc"
-    monitor_mode = "max"
-    ckpt_filename = "{epoch}-{val/loss:.2f}-{val/video_acc:.4f}"
 
     if trainer_name == "st_gcn":
         classification_module = STGCNTrainer(hparams)
+        monitor_metric = "val/loss"
+        monitor_mode = "min"
+        ckpt_filename = "{epoch}-{val/loss:.4f}"
+    elif trainer_name == "ssm":
+        classification_module = SSMTrainer(hparams)
+        monitor_metric = "val/loss"
+        monitor_mode = "min"
+        ckpt_filename = "{epoch}-{val/loss:.4f}"
+    elif trainer_name == "tcn":
+        classification_module = TCNTrainer(hparams)
         monitor_metric = "val/loss"
         monitor_mode = "min"
         ckpt_filename = "{epoch}-{val/loss:.4f}"

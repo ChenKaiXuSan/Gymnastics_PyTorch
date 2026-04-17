@@ -73,6 +73,34 @@
         "data.batch_size=2",
         "data.num_workers=0"
       ]
+    },
+    {
+      "name": "train_ssm",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "project.train.main",
+      "cwd": "/workspace/code",
+      "python": "/opt/conda/envs/sam_3d_body/bin/python",
+      "console": "integratedTerminal",
+      "args": [
+        "model.backbone=ssm",
+        "data.batch_size=2",
+        "data.num_workers=0"
+      ]
+    },
+    {
+      "name": "train_tcn",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "project.train.main",
+      "cwd": "/workspace/code",
+      "python": "/opt/conda/envs/sam_3d_body/bin/python",
+      "console": "integratedTerminal",
+      "args": [
+        "model.backbone=tcn",
+        "data.batch_size=2",
+        "data.num_workers=0"
+      ]
     }
   ]
 }

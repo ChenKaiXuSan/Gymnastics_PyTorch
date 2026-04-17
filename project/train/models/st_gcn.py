@@ -27,11 +27,7 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 import torch
 import torch.nn as nn
 
-try:
-    from project.train.map_config import ID_TO_INDEX, SKELETON_CONNECTIONS
-except ImportError:
-    ID_TO_INDEX = {}
-    SKELETON_CONNECTIONS = []
+from project.train.map_config import INDICES, FILTERED_SKELETON_CONNECTIONS
 
 
 def _build_edge_index(
@@ -54,13 +50,13 @@ def _build_edge_index(
 
 def _edge_from_map_config() -> List[Tuple[int, int]]:
     """Convert global joint ids to contiguous indices when map config is available."""
-    if not ID_TO_INDEX or not SKELETON_CONNECTIONS:
+    if not FILTERED_SKELETON_CONNECTIONS or not INDICES:
         return []
 
     converted: List[Tuple[int, int]] = []
-    for src_id, dst_id in SKELETON_CONNECTIONS:
-        if src_id in ID_TO_INDEX and dst_id in ID_TO_INDEX:
-            converted.append((ID_TO_INDEX[src_id], ID_TO_INDEX[dst_id]))
+    for src_id, dst_id in FILTERED_SKELETON_CONNECTIONS:
+        if src_id in INDICES and dst_id in INDICES:
+            converted.append((INDICES.index(src_id), INDICES.index(dst_id)))
     return converted
 
 
@@ -330,7 +326,7 @@ def build_stgcn_from_hparams(hparams) -> STGCN:
     """Build ST-GCN from hydra-style hparams."""
     model_cfg = getattr(hparams, "model", hparams)
     num_class = int(getattr(model_cfg, "model_class_num", 3))
-    num_point = int(getattr(model_cfg, "num_point", len(ID_TO_INDEX) or 17))
+    num_point = int(len(INDICES))  # Override with actual indices length if available
     in_channels = int(getattr(model_cfg, "in_channels", 3))
     temporal_kernel_size = int(getattr(model_cfg, "temporal_kernel_size", 9))
     dropout = float(getattr(model_cfg, "dropout", 0.2))

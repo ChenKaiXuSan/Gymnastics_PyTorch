@@ -4,28 +4,99 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Sequence
 
 import torch
 from pytorch_lightning import LightningModule
 
-from project.map_config import ID_TO_INDEX, SKELETON_CONNECTIONS
-from project.train.map_config import PersonInfo
-
+from project.train.map_config import INDICES
 
 logger = logging.getLogger(__name__)
 
 
-def _build_target_bone_edges() -> List[Tuple[int, int]]:
-    """Convert global skeleton ids to contiguous target-joint indices."""
-    edges: List[Tuple[int, int]] = []
-    for src_id, dst_id in SKELETON_CONNECTIONS:
-        if src_id in ID_TO_INDEX and dst_id in ID_TO_INDEX:
-            edges.append((ID_TO_INDEX[src_id], ID_TO_INDEX[dst_id]))
-    return edges
+# === 你需要实现的 SSM 分类多头版本 ===
+class SSM(torch.nn.Module):
+    def __init__(
+        self,
+        num_joints,
+        d_model,
+        n_layers,
+        num_class=3,
+        use_conf=True,
+        predict_logvar=False,
+    ):
+        super().__init__()
+        self.backbone = torch.nn.Sequential(
+            torch.nn.Linear(num_joints * 3 * 2, d_model),
+            torch.nn.ReLU(),
+            *[torch.nn.Linear(d_model, d_model) for _ in range(n_layers)],
+            torch.nn.ReLU(),
+        )
+        self.head_twist = torch.nn.Linear(d_model, num_class)
+        self.head_posture = torch.nn.Linear(d_model, num_class)
+        self.head_relax = torch.nn.Linear(d_model, num_class)
+        self.head_total = torch.nn.Linear(d_model, num_class)
+        self.use_conf = use_conf
+        self.predict_logvar = predict_logvar
+        if use_conf:
+            self.alpha_head = torch.nn.Linear(d_model, 1)
+        if predict_logvar:
+            self.logvar_head = torch.nn.Linear(d_model, num_joints * 3)
+
+    def forward(self, p_left, p_right):
+        # p_left, p_right: (B,T,J,3)
+        B, T, J, C = p_left.shape
+        x = torch.cat([p_left, p_right], dim=-1)  # (B,T,J,6)
+        x = x.reshape(B, T, -1)  # (B,T,J*6)
+        x = x.mean(dim=1)  # (B, J*6)
+        feat = self.backbone(x)  # (B, d_model)
+        out = {
+            "twist": self.head_twist(feat),
+            "posture": self.head_posture(feat),
+            "relax": self.head_relax(feat),
+            "total": self.head_total(feat),
+        }
+        if self.use_conf:
+            out["alpha"] = torch.sigmoid(self.alpha_head(feat))
+        if self.predict_logvar:
+            out["logvar"] = self.logvar_head(feat)
+        return out
 
 
-class FusionSSMTrainer(LightningModule):
+class PoseLossWeights:
+    def __init__(
+        self, mpjpe=1.0, bone=0.2, vel=0.05, acc=0.02, agree=0.1, bone_stab=0.05
+    ):
+        self.mpjpe = mpjpe
+        self.bone = bone
+        self.vel = vel
+        self.acc = acc
+        self.agree = agree
+        self.bone_stab = bone_stab
+
+
+class PoseRefineLoss(torch.nn.Module):
+    def __init__(self, bone_edges, weights: PoseLossWeights):
+        super().__init__()
+        self.bone_edges = bone_edges
+        self.weights = weights
+
+    def forward(
+        self, p_hat, p_gt=None, logvar=None, p_left=None, p_right=None, alpha=None
+    ):
+        # 这里只实现mpjpe损失，其他损失项可按需补充
+        loss = 0.0
+        loss_dict = {}
+        if p_gt is not None:
+            mpjpe = torch.norm(p_hat - p_gt, dim=-1).mean()
+            loss += self.weights.mpjpe * mpjpe
+            loss_dict["mpjpe"] = mpjpe
+        # 其他损失项（骨长、速度、加速度等）可在此补充
+        loss_dict["loss"] = loss
+        return loss_dict
+
+
+class SSMTrainer(LightningModule):
     """Pose fusion trainer using uncertainty-aware gating + SSM refinement."""
 
     def __init__(self, hparams) -> None:
@@ -41,8 +112,8 @@ class FusionSSMTrainer(LightningModule):
         use_conf = bool(getattr(model_cfg, "use_conf", True))
         predict_logvar = bool(getattr(model_cfg, "predict_logvar", False))
 
-        self.model = FusionSSM(
-            num_joints=len(ID_TO_INDEX),
+        self.model = SSM(
+            num_joints=len(INDICES),
             d_model=d_model,
             n_layers=n_layers,
             use_conf=use_conf,
@@ -58,7 +129,7 @@ class FusionSSMTrainer(LightningModule):
             bone_stab=float(getattr(hparams.loss, "lambda_bone_stab", 0.05)),
         )
         self.loss_fn = PoseRefineLoss(
-            bone_edges=_build_target_bone_edges(),
+            bone_edges=None,  # 可根据需要构建骨骼边列表传入
             weights=weights,
         )
         self.save_root = str(getattr(hparams, "log_path", "./logs"))

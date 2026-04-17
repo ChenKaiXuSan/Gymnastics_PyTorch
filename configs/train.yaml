@@ -45,7 +45,7 @@ model:
   backbone: st_gcn # choices=[st_gcn, st_gcn_fusion], help='the backbone of the model'
   model_class_num: 3 # score number of the model, used for classification
   temporal_kernel_size: 31 # temporal kernel size for st-gcn
-  num_point: 70 # number of keypoints, used for st-gcn input
+  num_point: 20 # number of keypoints, used for st-gcn input
   num_persons: 1 # number of persons, used for st-gcn input
   dropout: 0.5 # dropout rate for st-gcn
 
@@ -57,4 +57,4 @@ train:
   fold: 0 # the fold number for cross validation
 
 experiment: ${model.backbone} # the experiment name, used for log path
-log_path: logs/train/${experiment}/${now:%Y-%m-%d}/fold_${train.fold}
+log_path: logs/train/${experiment}/${now:%Y-%m-%d}/${now:%H-%M-%S}/fold_${train.fold}

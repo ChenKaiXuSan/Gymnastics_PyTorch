@@ -12,6 +12,7 @@ from torch.utils.data import Dataset
 
 from project.train.map_config import PersonInfo
 from project.train.dataloader.utils import uniform_temporal_subsample
+from project.train.map_config import INDICES
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +126,11 @@ class LabeledPersonDataset(Dataset):
             # 不抽帧，把dim 0 的t 按照temporal_subsample_num_samples 切开，然后把每段切开后再堆成一个新的dim 0，变成 (num_segments, segment_length, J, 3)，segment_length = ceil(T / num_segments)
 
             segments = []
-            for i in range(0, T - self._temporal_subsample_num_samples, self._temporal_subsample_num_samples):
+            for i in range(
+                0,
+                T - self._temporal_subsample_num_samples,
+                self._temporal_subsample_num_samples,
+            ):
                 segment = fused_3d_kpt[
                     i : i + self._temporal_subsample_num_samples, ...
                 ]  # (segment_length, J, 3)
@@ -135,6 +140,10 @@ class LabeledPersonDataset(Dataset):
                 segments, dim=0
             )  # (num_segments, segment_length, J, 3)
 
+            # 只保留目标关节，按照INDICES重新排序
+            transformed_fused_3d_kpt = transformed_fused_3d_kpt[
+                :, :, INDICES, :
+            ]  # (num_segments, segment_length, num_target_joints, 3)
             sample["fused_kpt3d"] = transformed_fused_3d_kpt
 
         return sample

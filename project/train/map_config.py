@@ -20,70 +20,100 @@ Date      	By	Comments
 ----------	---	---------------------------------------------------------
 """
 
-import logging
 from dataclasses import dataclass
-from typing import Optional
 
-# --- 設定 ---
 # * 这个文件定义了与 Unity MHR70 骨骼结构相关的映射和配置，供整个项目使用。
-UNITY_MHR70_MAPPING = {
-    1: "Bone_Eye_L",
-    2: "Bone_Eye_R",
-    5: "Upperarm_L",
-    6: "Upperarm_R",
-    7: "lowerarm_l",
-    8: "lowerarm_r",
-    9: "Thigh_L",
-    10: "Thigh_R",
-    11: "calf_l",
-    12: "calf_r",
-    13: "Foot_L",
-    14: "Foot_R",
-    41: "Hand_R",
-    62: "Hand_L",
-    69: "neck_01",
+INDICES = [
+    0,  # nose
+    5,
+    6,  # shoulders
+    7,
+    8,  # elbows
+    41,
+    62,  # wrists
+    69,  # neck
+    9,
+    10,  # hips
+    11,
+    12,  # knees
+    13,
+    14,  # ankles
+    15,
+    16,
+    17,  # left foot
+    18,
+    19,
+    20,  # right foot
+]
+ID_TO_INDEX = {
+    0: 0,
+    5: 1,
+    6: 2,
+    7: 3,
+    8: 4,
+    41: 5,
+    62: 6,
+    69: 7,
+    9: 8,
+    10: 9,
+    11: 10,
+    12: 11,
+    13: 12,
+    14: 13,
+    15: 14,
+    16: 15,
+    17: 16,
+    18: 17,
+    19: 18,
+    20: 19,
 }
-TARGET_IDS = list(UNITY_MHR70_MAPPING.keys())
 
-ID_TO_INDEX = {jid: idx for idx, jid in enumerate(TARGET_IDS)}
+GLOBAL_SKELETON_CONNECTIONS = [
+    (0, 69),  # nose - neck
+    (69, 5),  # neck - left_shoulder
+    (69, 6),  # neck - right_shoulder
+    (5, 7),  # left_shoulder - left_elbow
+    (7, 62),  # left_elbow - left_wrist
+    (6, 8),  # right_shoulder - right_elbow
+    (8, 41),  # right_elbow - right_wrist
+    (5, 6),  # left_shoulder - right_shoulder
+    (9, 10),  # left_hip - right_hip
+    (5, 9),  # left_shoulder - left_hip
+    (6, 10),  # right_shoulder - right_hip
+    (9, 11),  # left_hip - left_knee
+    (11, 13),  # left_knee - left_ankle
+    (13, 15),  # left_ankle - left_big_toe
+    (13, 16),  # left_ankle - left_small_toe
+    (13, 17),  # left_ankle - left_heel
+    (10, 12),  # right_hip - right_knee
+    (12, 14),  # right_knee - right_ankle
+    (14, 18),  # right_ankle - right_big_toe
+    (14, 19),  # right_ankle - right_small_toe
+    (14, 20),  # right_ankle - right_heel
+]
 
-ANGLE_DEFS = {
-    "knee_l": (9, 11, 13),
-    "knee_r": (10, 12, 14),
-    "elbow_l": (5, 7, 62),
-    "elbow_r": (6, 8, 41),
-    "shoulder_l": (69, 5, 7),
-    "shoulder_r": (69, 6, 8),
-    "hip_l": (69, 9, 11),
-    "hip_r": (69, 10, 12),
-}
-
-# Elbow joint IDs
-ELBOW_IDS = {
-    "elbow_l": 7,  # lowerarm_l
-    "elbow_r": 8,  # lowerarm_r
-}
-
-# Skeleton connections (bone pairs) for visualization
-# Each tuple is (parent_joint_id, child_joint_id)
-SKELETON_CONNECTIONS = [
-    # Left arm
-    (69, 5),  # neck -> shoulder_l
-    (5, 7),  # shoulder_l -> elbow_l
-    (7, 62),  # elbow_l -> hand_l
-    # Right arm
-    (69, 6),  # neck -> shoulder_r
-    (6, 8),  # shoulder_r -> elbow_r
-    (8, 41),  # elbow_r -> hand_r
-    # Spine
-    (69, 9),  # neck -> hip_l
-    (69, 10),  # neck -> hip_r
-    # Left leg
-    (9, 11),  # hip_l -> knee_l
-    (11, 13),  # knee_l -> foot_l
-    # Right leg
-    (10, 12),  # hip_r -> knee_r
-    (12, 14),  # knee_r -> foot_r
+FILTERED_SKELETON_CONNECTIONS = [
+    (0, 7),  # nose - neck
+    (7, 1),  # neck - left_shoulder
+    (7, 2),  # neck - right_shoulder
+    (1, 3),  # left_shoulder - left_elbow
+    (3, 6),  # left_elbow - left_wrist
+    (2, 4),  # right_shoulder - right_elbow
+    (4, 5),  # right_elbow - right_wrist
+    (1, 2),  # left_shoulder - right_shoulder
+    (8, 9),  # left_hip - right_hip
+    (1, 8),  # left_shoulder - left_hip
+    (2, 9),  # right_shoulder - right_hip
+    (8, 10),  # left_hip - left_knee
+    (10, 12),  # left_knee - left_ankle
+    (12, 14),  # left_ankle - left_big_toe
+    (12, 15),  # left_ankle - left_small_toe
+    (12, 16),  # left_ankle - left_heel
+    (9, 11),  # right_hip - right_knee
+    (11, 13),  # right_knee - right_ankle
+    (13, 17),  # right_ankle - right_big_toe
+    (13, 18),  # right_ankle - right_small_toe
+    (13, 19),  # right_ankle - right_heel
 ]
 
 
