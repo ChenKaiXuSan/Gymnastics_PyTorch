@@ -19,7 +19,7 @@ data:
     num_persons: 45
     num_cameras: 2
     strategies: [by_person]
-    n_splits: 5
+    n_splits: 10
 
   raw:
     video_path: ${data.root_path}/raw/person # 暂时不使用kpt
@@ -44,7 +44,7 @@ data:
 model:
   backbone: st_gcn # choices=[st_gcn, st_gcn_fusion], help='the backbone of the model'
   model_class_num: 3 # score number of the model, used for classification
-  temporal_kernel_size: 31 # temporal kernel size for st-gcn
+  temporal_kernel_size: 9 # temporal kernel size for st-gcn
   num_point: 20 # number of keypoints, used for st-gcn input
   num_persons: 1 # number of persons, used for st-gcn input
   dropout: 0.5 # dropout rate for st-gcn

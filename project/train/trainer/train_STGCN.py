@@ -95,10 +95,18 @@ class STGCNTrainer(LightningModule):
 
         if isinstance(labels, dict):
             label_dict: Dict[str, Any] = {
-                "twist": labels.get("twist", torch.full((batch_size,), -1, dtype=torch.long)),
-                "posture": labels.get("posture", torch.full((batch_size,), -1, dtype=torch.long)),
-                "relax": labels.get("relax", torch.full((batch_size,), -1, dtype=torch.long)),
-                "total": labels.get("total", torch.full((batch_size,), -1, dtype=torch.long)),
+                "twist": labels.get(
+                    "twist", torch.full((batch_size,), -1, dtype=torch.long)
+                ),
+                "posture": labels.get(
+                    "posture", torch.full((batch_size,), -1, dtype=torch.long)
+                ),
+                "relax": labels.get(
+                    "relax", torch.full((batch_size,), -1, dtype=torch.long)
+                ),
+                "total": labels.get(
+                    "total", torch.full((batch_size,), -1, dtype=torch.long)
+                ),
             }
         else:
             label_dict = {task: labels for task in self.tasks}
@@ -248,7 +256,9 @@ class STGCNTrainer(LightningModule):
             valid_mask = task_labels >= 0
             if valid_mask.sum() == 0:
                 continue
-            task_preds_softmax = torch.softmax(task_logits[valid_mask], dim=1).detach().cpu()
+            task_preds_softmax = (
+                torch.softmax(task_logits[valid_mask], dim=1).detach().cpu()
+            )
             task_labels_valid = task_labels[valid_mask].detach().cpu()
             self.test_pred_by_task[task].append(task_preds_softmax)
             self.test_label_by_task[task].append(task_labels_valid)
@@ -260,54 +270,6 @@ class STGCNTrainer(LightningModule):
         if not self.test_outputs:
             logger.warning("No test outputs to save")
             return
-
-        payload: Dict[str, Any] = {"tasks": {}}
-        for task in self.tasks:
-            logits_parts: List[torch.Tensor] = []
-            preds_parts: List[torch.Tensor] = []
-            labels_parts: List[torch.Tensor] = []
-
-            for one in self.test_outputs:
-                task_pack = one.get("tasks", {}).get(task)
-                if task_pack is None:
-                    continue
-                logits_parts.append(task_pack["logits"])
-                preds_parts.append(task_pack["preds"])
-                labels_parts.append(task_pack["labels"])
-
-            if logits_parts:
-                payload["tasks"][task] = {
-                    "logits": torch.cat(logits_parts, dim=0),
-                    "preds": torch.cat(preds_parts, dim=0),
-                    "labels": torch.cat(labels_parts, dim=0),
-                }
-
-        person_ids: List[str] = []
-        turn_ids: List[str] = []
-        for one in self.test_outputs:
-            if "person_id" in one and isinstance(one["person_id"], list):
-                person_ids.extend([str(x) for x in one["person_id"]])
-            if "turn_id" in one and isinstance(one["turn_id"], list):
-                turn_ids.extend([str(x) for x in one["turn_id"]])
-
-        payload["person_id"] = person_ids
-        payload["turn_id"] = turn_ids
-
-        result_file = self.test_save_dir / "test_predictions.pt"
-        torch.save(payload, result_file)
-
-        metrics_summary: Dict[str, float] = {}
-        for k, v in self.trainer.callback_metrics.items():
-            if not str(k).startswith("test/"):
-                continue
-            if isinstance(v, torch.Tensor):
-                metrics_summary[str(k)] = float(v.detach().cpu().item())
-            else:
-                metrics_summary[str(k)] = float(v)
-
-        metrics_file = self.test_save_dir / "test_metrics.json"
-        with open(metrics_file, "w", encoding="utf-8") as f:
-            json.dump(metrics_summary, f, ensure_ascii=False, indent=2)
 
         fold_name = (
             Path(self.logger.root_dir).name

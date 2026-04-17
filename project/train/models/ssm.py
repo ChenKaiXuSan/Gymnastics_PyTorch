@@ -206,6 +206,121 @@ class FusionSSM(nn.Module):
         return out
 
 
+class SSMClassifier(nn.Module):
+    """Multi-task classifier with temporal SSM blocks.
+
+    Input:
+    - x: (N, T, J, C) or (N, S, T, J, C)
+    Output:
+    - dict logits for tasks: twist/posture/relax/total, each (N, num_class)
+    """
+
+    def __init__(
+        self,
+        num_class: int,
+        num_point: int,
+        in_channels: int = 3,
+        d_model: int = 256,
+        n_layers: int = 4,
+        expansion: int = 2,
+        kernel_size: int = 5,
+        dropout: float = 0.1,
+    ) -> None:
+        super().__init__()
+        if num_class <= 0:
+            raise ValueError(f"num_class must be positive, got {num_class}")
+        if num_point <= 0:
+            raise ValueError(f"num_point must be positive, got {num_point}")
+        if in_channels <= 0:
+            raise ValueError(f"in_channels must be positive, got {in_channels}")
+
+        self.num_class = int(num_class)
+        self.num_point = int(num_point)
+        self.in_channels = int(in_channels)
+
+        self.in_proj = nn.Linear(self.num_point * self.in_channels, d_model)
+        self.blocks = nn.ModuleList(
+            [
+                TemporalSSMBlock(
+                    d_model=d_model,
+                    expansion=expansion,
+                    kernel_size=kernel_size,
+                )
+                for _ in range(n_layers)
+            ]
+        )
+        self.norm = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+
+        self.heads = nn.ModuleDict(
+            {
+                "twist": nn.Linear(d_model, self.num_class),
+                "posture": nn.Linear(d_model, self.num_class),
+                "relax": nn.Linear(d_model, self.num_class),
+                "total": nn.Linear(d_model, self.num_class),
+            }
+        )
+
+    def _forward_4d(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
+        if x.ndim != 4:
+            raise ValueError(f"Expected 4D input, got {tuple(x.shape)}")
+
+        n, t, j, c = x.shape
+        if j != self.num_point or c != self.in_channels:
+            raise ValueError(
+                f"Expected (N,T,{self.num_point},{self.in_channels}), got {tuple(x.shape)}"
+            )
+
+        h = x.reshape(n, t, j * c)
+        h = self.in_proj(h)
+        for blk in self.blocks:
+            h = h + blk(h)
+        h = self.norm(h)
+        h = self.dropout(h)
+        h = h.mean(dim=1)
+        return {task: head(h) for task, head in self.heads.items()}
+
+    def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
+        if x.ndim == 4:
+            return self._forward_4d(x)
+
+        if x.ndim == 5:
+            n, s, t, j, c = x.shape
+            flat_x = x.reshape(n * s, t, j, c)
+            flat_logits = self._forward_4d(flat_x)
+            return {
+                task: task_logits.reshape(n, s, -1).mean(dim=1)
+                for task, task_logits in flat_logits.items()
+            }
+
+        raise ValueError(
+            f"Expected input ndim 4 or 5, got shape {tuple(x.shape)}"
+        )
+
+
+def build_ssm_classifier_from_hparams(hparams) -> SSMClassifier:
+    model_cfg = getattr(hparams, "model", hparams)
+    num_class = int(getattr(model_cfg, "model_class_num", 3))
+    num_point = int(getattr(model_cfg, "num_point", 20))
+    in_channels = int(getattr(model_cfg, "in_channels", 3))
+    d_model = int(getattr(model_cfg, "d_model", 256))
+    n_layers = int(getattr(model_cfg, "n_layers", 4))
+    expansion = int(getattr(model_cfg, "expansion", 2))
+    kernel_size = int(getattr(model_cfg, "kernel_size", 5))
+    dropout = float(getattr(model_cfg, "dropout", 0.1))
+
+    return SSMClassifier(
+        num_class=num_class,
+        num_point=num_point,
+        in_channels=in_channels,
+        d_model=d_model,
+        n_layers=n_layers,
+        expansion=expansion,
+        kernel_size=kernel_size,
+        dropout=dropout,
+    )
+
+
 @dataclass
 class PoseLossWeights:
     mpjpe: float = 1.0
