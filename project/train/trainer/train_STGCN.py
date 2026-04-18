@@ -290,9 +290,6 @@ class STGCNTrainer(LightningModule):
                 num_class=self.num_classes,
             )
 
-        logger.info("Saved test predictions to %s", result_file)
-        logger.info("Saved test metrics to %s", metrics_file)
-
     def configure_optimizers(self) -> dict:
         optimizer = torch.optim.AdamW(
             self.parameters(),

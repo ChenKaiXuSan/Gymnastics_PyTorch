@@ -18,7 +18,6 @@ Have a good code time :)
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, cast
@@ -379,9 +378,6 @@ class TCNTrainer(LightningModule):
                 save_path=str(task_save_root),
                 num_class=self.num_classes,
             )
-
-        logger.info("Saved test predictions to %s", result_file)
-        logger.info("Saved test metrics to %s", metrics_file)
 
     def configure_optimizers(self) -> Any:
         optimizer = torch.optim.AdamW(

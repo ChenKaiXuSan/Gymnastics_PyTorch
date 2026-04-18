@@ -43,11 +43,12 @@ data:
 
 model:
   backbone: st_gcn # choices=[st_gcn, st_gcn_fusion], help='the backbone of the model'
-  model_class_num: 3 # score number of the model, used for classification
+  model_class_num: 3 # score number of one class haead, used for multi-task learning
   temporal_kernel_size: 9 # temporal kernel size for st-gcn
   num_point: 20 # number of keypoints, used for st-gcn input
   num_persons: 1 # number of persons, used for st-gcn input
   dropout: 0.5 # dropout rate for st-gcn
+  class_task: [posture, relax, twist, total] # the classification tasks, used for multi-task learning
 
 train:
   # Training config
