@@ -30,8 +30,8 @@ from torchvision.transforms import (
     Resize,
 )
 
-from project.train.dataloader.whole_video_dataset import whole_video_dataset
-from project.train.dataloader.utils import Div255
+from .whole_video_dataset import whole_video_dataset
+from .utils import Div255
 
 
 class PersonDataModule(LightningDataModule):

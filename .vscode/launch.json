@@ -64,14 +64,14 @@
       "name": "train_stgcn",
       "type": "debugpy",
       "request": "launch",
-      "module": "project.train.main",
-      "cwd": "/workspace/code",
+      "module": "train",
+      "cwd": "/workspace/code/project/train",
       "python": "/opt/conda/envs/sam_3d_body/bin/python",
       "console": "integratedTerminal",
       "args": [
         "model.backbone=st_gcn",
-        "data.batch_size=2",
-        "data.num_workers=0"
+        // "data.batch_size=2",
+        // "data.num_workers=0"
       ]
     },
     {

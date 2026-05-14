@@ -10,9 +10,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from project.train.map_config import PersonInfo
-from project.train.dataloader.utils import uniform_temporal_subsample
-from project.train.map_config import INDICES
+from map_config import PersonInfo, INDICES
+from dataloader.utils import uniform_temporal_subsample
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +96,7 @@ class LabeledPersonDataset(Dataset):
                 "twist": int(raw_item.label_twist_3class),
                 "posture": int(raw_item.label_posture_3class),
                 "relax": int(raw_item.label_relax_3class),
-                "total": int(raw_item.label_total_3class),
+                "total": int(raw_item.label_total_5class),
             },
         }
 
@@ -125,19 +124,10 @@ class LabeledPersonDataset(Dataset):
 
             # 不抽帧，把dim 0 的t 按照temporal_subsample_num_samples 切开，然后把每段切开后再堆成一个新的dim 0，变成 (num_segments, segment_length, J, 3)，segment_length = ceil(T / num_segments)
 
-            segments = []
-            for i in range(
-                0,
-                T - self._temporal_subsample_num_samples,
-                self._temporal_subsample_num_samples,
-            ):
-                segment = fused_3d_kpt[
-                    i : i + self._temporal_subsample_num_samples, ...
-                ]  # (segment_length, J, 3)
-                segments.append(segment)
-
-            transformed_fused_3d_kpt = torch.stack(
-                segments, dim=0
+            transformed_fused_3d_kpt = uniform_temporal_subsample(
+                fused_3d_kpt, num_samples=self._temporal_subsample_num_samples, dim=0
+            ).unsqueeze(
+                0
             )  # (num_segments, segment_length, J, 3)
 
             # 只保留目标关节，按照INDICES重新排序

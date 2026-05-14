@@ -17,9 +17,9 @@ from torchmetrics.classification import (
     MulticlassRecall,
 )
 
-from project.train.map_config import INDICES
-from project.train.models.ssm import build_ssm_classifier_from_hparams
-from project.train.utils.helper import save_helper
+from map_config import INDICES
+from models.ssm import build_ssm_classifier_from_hparams
+from utils.helper import save_helper
 
 logger = logging.getLogger(__name__)
 

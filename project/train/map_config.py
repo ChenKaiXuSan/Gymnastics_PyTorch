@@ -123,18 +123,25 @@ class PersonInfo:
 
     person_id: str
     turn_id: str
+
     cam1_video_path: str
     cam2_video_path: str
+
     sam3d_cam1_results_path: str
     sam3d_cam2_results_path: str
+
     cam1_turn_frame_start: int
     cam1_turn_frame_end: int
+
     cam2_turn_frame_start: int
     cam2_turn_frame_end: int
+
     label_twist_3class: int
     label_posture_3class: int
     label_relax_3class: int
-    label_total_3class: int
+
+    label_total_5class: int
+
     fused_kpt_path: str
     fused_kpt_turn_frame_start: int
     fused_kpt_turn_frame_end: int

@@ -27,7 +27,7 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 import torch
 import torch.nn as nn
 
-from project.train.map_config import INDICES, FILTERED_SKELETON_CONNECTIONS
+from map_config import INDICES, FILTERED_SKELETON_CONNECTIONS
 
 
 def _build_edge_index(
@@ -325,7 +325,7 @@ class STGCN(nn.Module):
 def build_stgcn_from_hparams(hparams) -> STGCN:
     """Build ST-GCN from hydra-style hparams."""
     model_cfg = getattr(hparams, "model", hparams)
-    num_class = int(getattr(model_cfg, "model_class_num", 3))
+    num_class = int(getattr(model_cfg, "model_class_num", 5))
     num_point = int(len(INDICES))  # Override with actual indices length if available
     in_channels = int(getattr(model_cfg, "in_channels", 3))
     temporal_kernel_size = int(getattr(model_cfg, "temporal_kernel_size", 9))

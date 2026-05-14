@@ -7,9 +7,8 @@ hydra:
     subdir: ${experiment}/${now:%Y-%m-%d}/${now:%H-%M-%S}
 
 loss:
-  lr: 0.0001
-  beta1: 0.5 # decapture
-  beta2: 0.999 # decapture
+  lr: 0.001
+  weight_decay: 0.0001
 
 data:
   root_path: /workspace/data
@@ -27,24 +26,24 @@ data:
     split_cycle: ${data.root_path}/split_cycle # 预先计算的 split cycle 文件路径
     fused_kpt_path: ${data.root_path}/fused_kpt # 预先计算的融合后的关键点文件路径
 
-  annotation_path: ${data.root_path}/suwabe_label.xlsx
+  annotation_path: ${data.root_path}/高齢者体回旋20260513.xlsx
 
   index_mapping: ${data.root_path}/index_mapping # precomputed index mapping directory
   # index_mapping_file: camera_pairs_by_action.json # precomputed index mapping json file name
   index_mapping_path: ${data.index_mapping}/camera_pairs_by_person_folds # precomputed index mapping json file path
 
-  num_workers: 32
   img_size: 224
   load_frames: false # whether to load video frames
   load_2d_kpt: false # whether to load 2d keypoints
   load_3d_kpt: true
 
+  num_workers: 32
   batch_size: 32
 
 model:
   backbone: st_gcn # choices=[st_gcn, st_gcn_fusion], help='the backbone of the model'
-  model_class_num: 3 # score number of one class haead, used for multi-task learning
-  temporal_kernel_size: 9 # temporal kernel size for st-gcn
+  model_class_num: 5 # score number of one class haead, used for multi-task learning
+  temporal_kernel_size: 111
   num_point: 20 # number of keypoints, used for st-gcn input
   num_persons: 1 # number of persons, used for st-gcn input
   dropout: 0.5 # dropout rate for st-gcn
@@ -52,7 +51,7 @@ model:
 
 train:
   # Training config
-  max_epochs: 100 # numer of epochs of training
+  max_epochs: 100
 
   gpu: 0 # choices=[0, 1], help='the gpu number whicht to train'
   fold: 0 # the fold number for cross validation

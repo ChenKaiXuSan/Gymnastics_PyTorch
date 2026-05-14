@@ -33,82 +33,24 @@ from pytorch_lightning.callbacks import (
     LearningRateMonitor,
     ModelCheckpoint,
     RichModelSummary,
-    TQDMProgressBar,
+    RichProgressBar,
 )
-from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.loggers import TensorBoardLogger, CSVLogger
 
-from project.train.dataloader.data_loader import PersonDataModule
-from project.train.map_config import PersonInfo
-
+from dataloader.data_loader import PersonDataModule
+from map_config import PersonInfo
 
 #####################################
 # select different experiment trainer
 #####################################
 
-from project.train.trainer.train_STGCN import STGCNTrainer
-from project.train.trainer.train_SSM import SSMTrainer
-from project.train.trainer.train_TCN import TCNTrainer
+from trainer.train_STGCN import STGCNTrainer
+from trainer.train_SSM import SSMTrainer
+from trainer.train_TCN import TCNTrainer
 
-# from project.train.trainer.train_fusion_SSM import FusionSSMTrainer
+# from trainer.train_fusion_SSM import FusionSSMTrainer
 
 logger = logging.getLogger(__name__)
-
-
-def _resolve_trainer_requirements(hparams: DictConfig) -> Dict[str, object]:
-    """Infer required input modalities from current trainer selection."""
-    backbone = str(hparams.model.backbone)
-    backbone_key = backbone.lower()
-    fuse_method = str(hparams.model.fuse_method)
-
-    if backbone_key in {"st_gcn"}:
-        return {
-            "trainer_name": "STGCNTrainer",
-            "requires_frames": False,
-            "requires_2d_kpt": False,
-            "requires_3d_kpt": True,
-        }
-
-    raise ValueError(
-        "Cannot infer trainer input requirements for "
-        f"backbone={backbone}, fuse_method={fuse_method}"
-    )
-
-
-def _validate_input_loading_config(hparams: DictConfig) -> Dict[str, object]:
-    """Fail fast when dataloader switches do not satisfy trainer inputs."""
-    req = _resolve_trainer_requirements(hparams)
-
-    load_frames = bool(getattr(hparams.data, "load_frames", True))
-    load_2d_kpt = bool(getattr(hparams.data, "load_2d_kpt", True))
-    load_3d_kpt = bool(getattr(hparams.data, "load_3d_kpt", True))
-
-    missing: List[str] = []
-    if bool(req["requires_frames"]) and not load_frames:
-        missing.append("frames")
-    if bool(req["requires_2d_kpt"]) and not load_2d_kpt:
-        missing.append("2D keypoints")
-    if bool(req["requires_3d_kpt"]) and not load_3d_kpt:
-        missing.append("3D keypoints")
-
-    logger.info(
-        "Trainer=%s | required inputs: frames=%s, 2d=%s, 3d=%s | enabled loading: frames=%s, 2d=%s, 3d=%s",
-        req["trainer_name"],
-        req["requires_frames"],
-        req["requires_2d_kpt"],
-        req["requires_3d_kpt"],
-        load_frames,
-        load_2d_kpt,
-        load_3d_kpt,
-    )
-
-    if missing:
-        raise ValueError(
-            f"Current trainer {req['trainer_name']} requires: {', '.join(missing)}, "
-            "but the corresponding dataloader switches are disabled. "
-            f"Current config: load_frames={load_frames}, load_2d_kpt={load_2d_kpt}, load_3d_kpt={load_3d_kpt}"
-        )
-
-    return req
 
 
 def load_fold_dataset_idx_from_fold_json(
@@ -155,7 +97,7 @@ def load_fold_dataset_idx_from_fold_json(
                     label_twist_3class=int(item.get("label_twist_3class", -1)),
                     label_posture_3class=int(item.get("label_posture_3class", -1)),
                     label_relax_3class=int(item.get("label_relax_3class", -1)),
-                    label_total_3class=int(item.get("label_total_3class", -1)),
+                    label_total_5class=int(item.get("label_total_5class", -1)),
                     fused_kpt_path=str(item.get("fused_kpt_path", "")),
                     fused_kpt_turn_frame_start=int(
                         item.get("fused_turn_frame_start", -1)
@@ -220,8 +162,13 @@ def train(hparams: DictConfig, dataset_idx, fold: int):
         name="fold_" + str(fold),  # here should be str type.
     )
 
+    csv_logger = CSVLogger(
+        save_dir=os.path.join(hparams.log_path, "csv_logs"),
+        name="fold_" + str(fold),
+    )
+
     # some callbacks
-    progress_bar = TQDMProgressBar(refresh_rate=10)
+    progress_bar = RichProgressBar(refresh_rate=10)
     rich_model_summary = RichModelSummary(max_depth=2)
 
     # define the checkpoint becavier.
@@ -243,8 +190,7 @@ def train(hparams: DictConfig, dataset_idx, fold: int):
         ],
         accelerator="gpu",
         max_epochs=hparams.train.max_epochs,
-        logger=[tb_logger],
-        check_val_every_n_epoch=1,
+        logger=[tb_logger, csv_logger],
         callbacks=[
             progress_bar,
             rich_model_summary,
@@ -292,19 +238,8 @@ def init_params(config):
     for fold in range(n_splits):
         # 加载单个fold的JSON文件
         dataset_value = load_fold_dataset_idx_from_fold_json(config, fold)
-        logger.info("#" * 50)
-        logger.info("Start train fold: %s", fold)
-        logger.info("#" * 50)
 
         train(config, dataset_value, fold)
-
-        logger.info("#" * 50)
-        logger.info("finish train fold: %s", fold)
-        logger.info("#" * 50)
-
-    logger.info("#" * 50)
-    logger.info("finish train folds: total=%s", n_splits)
-    logger.info("#" * 50)
 
 
 if __name__ == "__main__":

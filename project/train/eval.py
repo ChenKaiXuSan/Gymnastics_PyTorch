@@ -36,16 +36,10 @@ from pytorch_lightning.loggers import CSVLogger
 from pytorch_lightning.callbacks import DeviceStatsMonitor
 
 # DataModule
-from project.dataloader.data_loader import UnityDataModule
+from dataloader.data_loader import UnityDataModule
 
 # Trainers (LightningModules)
-from project.trainer.baseline.train_3dcnn import Res3DCNNTrainer
-from project.trainer.mid.train_pose_attn import PoseAttnTrainer
-from project.trainer.early.train_early_fusion import EarlyFusion3DCNNTrainer
-from project.trainer.late.train_late_fusion import LateFusion3DCNNTrainer
-
-# K-fold splitter
-from project.cross_validation import DefineCrossValidation
+from trainer.baseline.train_3dcnn import Res3DCNNTrainer
 
 logger = logging.getLogger(__name__)
 

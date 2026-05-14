@@ -60,6 +60,7 @@ class CameraPairSample:
     label_posture_3class: Optional[int] = None
     label_relax_3class: Optional[int] = None
     label_total_3class: Optional[int] = None
+    label_total_5class: Optional[int] = None
 
     fused_kpt_path: Optional[str] = None  # 预先计算的融合后的关键点文件路径
 
@@ -183,6 +184,23 @@ class CameraPairCrossValidation:
             return 1
         return 2
 
+    @staticmethod
+    def _normalize_five_class(value: Any) -> int:
+        if value is None:
+            raise ValueError("Empty 5-class label value in annotation")
+
+        v = float(value)
+        if np.isnan(v):
+            raise ValueError("NaN 5-class label value in annotation")
+
+        if 1.0 <= v <= 5.0:
+            return int(round(v)) - 1
+
+        if 0.0 <= v <= 4.0:
+            return int(round(v))
+
+        return int(np.clip(int(round(v)), 0, 4))
+
     def _load_annotation_labels(self) -> Dict[str, Dict[str, int]]:
         if self.annotation_path is None:
             return {}
@@ -216,15 +234,17 @@ class CameraPairCrossValidation:
         twist_idx = find_col(["ねじり", "twist"])
         posture_idx = find_col(["姿勢", "posture"])
         relax_idx = find_col(["脱力", "relax"])
+        total_5_idx = find_col(["総合（５段階）", "総合(５段階)", "総合（5段階）", "総合(5段階)", "overall_5class", "total_5class"])
 
         if (
             id_idx is None
             or twist_idx is None
             or posture_idx is None
             or relax_idx is None
+            or total_5_idx is None
         ):
             raise KeyError(
-                "annotation 表头缺少必要列，至少需要: ID, ねじり, 姿勢, 脱力"
+                "annotation 表头缺少必要列，至少需要: ID, ねじり, 姿勢, 脱力, 総合（５段階）"
             )
 
         person_map: Dict[str, Dict[str, int]] = {}
@@ -242,19 +262,24 @@ class CameraPairCrossValidation:
             twist_raw = row[twist_idx] if twist_idx < len(row) else None
             posture_raw = row[posture_idx] if posture_idx < len(row) else None
             relax_raw = row[relax_idx] if relax_idx < len(row) else None
+            total_5_raw = row[total_5_idx] if total_5_idx < len(row) else None
 
             twist = self._normalize_three_class(twist_raw)
             posture = self._normalize_three_class(posture_raw)
             relax = self._normalize_three_class(relax_raw)
 
             total_avg = (twist + posture + relax) / 3.0
-            total = int(np.clip(int(round(total_avg)), 0, 2))
+            total_3_class = int(np.clip(int(round(total_avg)), 0, 2))
 
+            # 5 分类标签必须直接来自标注文件，不通过 3 分类均值推导。
+            total_5_class = self._normalize_five_class(total_5_raw)
+            
             person_map[person_id] = {
                 "label_twist_3class": int(twist),
                 "label_posture_3class": int(posture),
                 "label_relax_3class": int(relax),
-                "label_total_3class": int(total),
+                "label_total_3class": int(total_3_class),
+                "label_total_5class": int(total_5_class),
             }
 
         print(
@@ -424,6 +449,7 @@ class CameraPairCrossValidation:
                     label_posture_3class=int(person_label["label_posture_3class"]),
                     label_relax_3class=int(person_label["label_relax_3class"]),
                     label_total_3class=int(person_label["label_total_3class"]),
+                    label_total_5class=int(person_label["label_total_5class"]),
                     fused_kpt_path=str(fused_kpt_path),
                 )
                 samples.append(sample)

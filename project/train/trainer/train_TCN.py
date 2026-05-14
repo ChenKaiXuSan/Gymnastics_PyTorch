@@ -34,8 +34,8 @@ from torchmetrics.classification import (
 )
 
 
-from project.train.models.tcn import TCN
-from project.train.utils.helper import save_helper
+from models.tcn import TCN
+from utils.helper import save_helper
 
 logger = logging.getLogger(__name__)
 

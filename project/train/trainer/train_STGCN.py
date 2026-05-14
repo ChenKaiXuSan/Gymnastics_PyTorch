@@ -17,7 +17,6 @@ Have a good code time :)
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, cast
@@ -33,8 +32,8 @@ from torchmetrics.classification import (
     MulticlassRecall,
 )
 
-from project.train.models.st_gcn import STGCN, build_stgcn_from_hparams
-from project.train.utils.helper import save_helper
+from models.st_gcn import STGCN, build_stgcn_from_hparams
+from utils.helper import save_helper
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +45,8 @@ class STGCNTrainer(LightningModule):
         super().__init__()
         self.save_hyperparameters()
 
-        self.lr = float(getattr(hparams.loss, "lr", 1e-4))
-        self.weight_decay = float(getattr(hparams.loss, "weight_decay", 1e-4))
+        self.lr = float(getattr(hparams.loss, "lr", 0.001))
+        self.weight_decay = float(getattr(hparams.loss, "weight_decay", 0.0001))
 
         # Build ST-GCN model
         self.model: STGCN = build_stgcn_from_hparams(hparams)
@@ -238,11 +237,9 @@ class STGCNTrainer(LightningModule):
     def training_step(self, batch: Dict[str, Any], _batch_idx: int) -> torch.Tensor:
         return self._shared_step(batch, stage="train")
 
-    @torch.no_grad()
     def validation_step(self, batch: Dict[str, Any], _batch_idx: int) -> torch.Tensor:
         return self._shared_step(batch, stage="val")
 
-    @torch.no_grad()
     def test_step(self, batch: Dict[str, Any], _batch_idx: int) -> torch.Tensor:
         logits, label_dict, batch_size = self._extract_logits_and_labels(batch)
         loss = self._compute_and_log_loss(logits, label_dict, batch_size, stage="test")
