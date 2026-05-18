@@ -5,6 +5,9 @@ hydra:
   sweep:
     dir: logs/
     subdir: ${experiment}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweeper:
+    params:
+      model.class_task: "[posture,relax,twist,total],[posture,relax,twist],[total],[relax],[posture],[twist]"
 
 loss:
   lr: 0.001
@@ -42,19 +45,20 @@ data:
 
 model:
   backbone: st_gcn # choices=[st_gcn, st_gcn_fusion], help='the backbone of the model'
-  model_class_num: 5 # score number of one class haead, used for multi-task learning
-  temporal_kernel_size: 111
-  num_point: 20 # number of keypoints, used for st-gcn input
-  num_persons: 1 # number of persons, used for st-gcn input
+  model_class_num: 3
+  model_total_class_num: 5 # score number of one class haead, used for multi-task learning
+
+  temporal_kernel_size: 17
+
   dropout: 0.5 # dropout rate for st-gcn
+  use_all_joints: true # whether to use all 70 joints or filtered 20 joints
   class_task: [posture, relax, twist, total] # the classification tasks, used for multi-task learning
 
 train:
-  # Training config
-  max_epochs: 100
+  max_epochs: 50
 
   gpu: 0 # choices=[0, 1], help='the gpu number whicht to train'
   fold: 0 # the fold number for cross validation
 
-experiment: ${model.backbone} # the experiment name, used for log path
+experiment: ${model.backbone}_${model.class_task} # the experiment name, used for log path
 log_path: logs/train/${experiment}/${now:%Y-%m-%d}/${now:%H-%M-%S}/fold_${train.fold}

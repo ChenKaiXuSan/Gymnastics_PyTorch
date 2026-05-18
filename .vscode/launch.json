@@ -79,7 +79,7 @@
       "type": "debugpy",
       "request": "launch",
       "module": "project.train.main",
-      "cwd": "/workspace/code",
+      "cwd": "/workspace/code/project/train",
       "python": "/opt/conda/envs/sam_3d_body/bin/python",
       "console": "integratedTerminal",
       "args": [
@@ -92,8 +92,8 @@
       "name": "train_tcn",
       "type": "debugpy",
       "request": "launch",
-      "module": "project.train.main",
-      "cwd": "/workspace/code",
+      "module": "train",
+      "cwd": "/workspace/code/project/train",
       "python": "/opt/conda/envs/sam_3d_body/bin/python",
       "console": "integratedTerminal",
       "args": [

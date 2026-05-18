@@ -10,10 +10,34 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from map_config import PersonInfo, INDICES
+from map_config import PersonInfo
 from dataloader.utils import uniform_temporal_subsample
 
 logger = logging.getLogger(__name__)
+
+
+def canonicalize_kpt3d(kpt3d: torch.Tensor) -> torch.Tensor:
+    """Canonicalize 3D keypoints by root centering and scale normalization."""
+    if kpt3d.ndim != 3 or kpt3d.shape[2] != 3:
+        raise ValueError(f"Expected kpt3d of shape (T, J, 3), got {kpt3d.shape}")
+
+    if kpt3d.shape[1] <= 10:
+        raise ValueError(
+            f"Expected at least 11 joints for hip-centering, got {kpt3d.shape[1]}"
+        )
+
+    # Root centering using the hip center between left hip (9) and right hip (10).
+    root = (kpt3d[:, 9:10, :] + kpt3d[:, 10:11, :]) / 2.0  # (T, 1, 3)
+    centered_kpt3d = kpt3d - root  # (T, J, 3)
+
+    # Scale normalization using the max distance from root to any joint across all frames
+    max_dist = torch.max(torch.norm(centered_kpt3d, dim=2))  # (T, J)  # scalar
+    if max_dist > 0:
+        normalized_kpt3d = centered_kpt3d / max_dist
+    else:
+        normalized_kpt3d = centered_kpt3d
+
+    return normalized_kpt3d
 
 
 class LabeledPersonDataset(Dataset):
@@ -111,29 +135,18 @@ class LabeledPersonDataset(Dataset):
                 frame_start=fused_turn_start,
                 frame_end=fused_turn_end,
             )  # (T,J,3)
+            fused_3d_kpt = canonicalize_kpt3d(fused_3d_kpt)
 
             sample["fused_turn_frame_start"] = fused_turn_start
             sample["fused_turn_frame_end"] = fused_turn_end
 
-            # 抽帧
-            # transformed_fused_3d_kpt = uniform_temporal_subsample(
-            #     fused_3d_kpt, num_samples=self._temporal_subsample_num_samples, dim=0
-            # )
-
-            T, J, C = fused_3d_kpt.shape
-
-            # 不抽帧，把dim 0 的t 按照temporal_subsample_num_samples 切开，然后把每段切开后再堆成一个新的dim 0，变成 (num_segments, segment_length, J, 3)，segment_length = ceil(T / num_segments)
-
+            # 统一按时间维做采样，再补一个 batch 内部段维。
             transformed_fused_3d_kpt = uniform_temporal_subsample(
                 fused_3d_kpt, num_samples=self._temporal_subsample_num_samples, dim=0
             ).unsqueeze(
                 0
             )  # (num_segments, segment_length, J, 3)
 
-            # 只保留目标关节，按照INDICES重新排序
-            transformed_fused_3d_kpt = transformed_fused_3d_kpt[
-                :, :, INDICES, :
-            ]  # (num_segments, segment_length, num_target_joints, 3)
             sample["fused_kpt3d"] = transformed_fused_3d_kpt
 
         return sample

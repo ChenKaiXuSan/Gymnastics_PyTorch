@@ -27,7 +27,10 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 import torch
 import torch.nn as nn
 
-from map_config import INDICES, FILTERED_SKELETON_CONNECTIONS
+from map_config import (
+    ALL_INDICES,
+    GLOBAL_SKELETON_CONNECTIONS,
+)
 
 
 def _build_edge_index(
@@ -49,15 +52,10 @@ def _build_edge_index(
 
 
 def _edge_from_map_config() -> List[Tuple[int, int]]:
-    """Convert global joint ids to contiguous indices when map config is available."""
-    if not FILTERED_SKELETON_CONNECTIONS or not INDICES:
+    """Use full 70-joint skeleton connections from map config."""
+    if not GLOBAL_SKELETON_CONNECTIONS:
         return []
-
-    converted: List[Tuple[int, int]] = []
-    for src_id, dst_id in FILTERED_SKELETON_CONNECTIONS:
-        if src_id in INDICES and dst_id in INDICES:
-            converted.append((INDICES.index(src_id), INDICES.index(dst_id)))
-    return converted
+    return list(GLOBAL_SKELETON_CONNECTIONS)
 
 
 def _normalize_adjacency(
@@ -187,6 +185,7 @@ class STGCN(nn.Module):
     def __init__(
         self,
         num_class: int,
+        num_total_class: int,
         num_point: int,
         in_channels: int = 3,
         graph_edges: Optional[Sequence[Tuple[int, int]]] = None,
@@ -195,10 +194,6 @@ class STGCN(nn.Module):
         edge_importance_weighting: bool = True,
     ) -> None:
         super().__init__()
-        if num_class <= 0:
-            raise ValueError(f"num_class must be positive, got {num_class}")
-        if num_point <= 0:
-            raise ValueError(f"num_point must be positive, got {num_point}")
 
         if graph_edges is None:
             graph_edges = _edge_from_map_config()
@@ -243,7 +238,7 @@ class STGCN(nn.Module):
         self.cls_head_twist = nn.Conv2d(256, num_class, kernel_size=1)
         self.cls_head_posture = nn.Conv2d(256, num_class, kernel_size=1)
         self.cls_head_relax = nn.Conv2d(256, num_class, kernel_size=1)
-        self.cls_head_total = nn.Conv2d(256, num_class, kernel_size=1)
+        self.cls_head_total = nn.Conv2d(256, num_total_class, kernel_size=1)
 
     def _to_nctvm(self, x: torch.Tensor) -> torch.Tensor:
         """Convert input into ST-GCN standard shape (N,C,T,V,M)."""
@@ -325,8 +320,10 @@ class STGCN(nn.Module):
 def build_stgcn_from_hparams(hparams) -> STGCN:
     """Build ST-GCN from hydra-style hparams."""
     model_cfg = getattr(hparams, "model", hparams)
-    num_class = int(getattr(model_cfg, "model_class_num", 5))
-    num_point = int(len(INDICES))  # Override with actual indices length if available
+    total_classes = int(getattr(model_cfg, "model_total_class_num", 5))
+    num_classes = int(getattr(model_cfg, "model_class_num", 3))
+    num_point = len(ALL_INDICES)
+
     in_channels = int(getattr(model_cfg, "in_channels", 3))
     temporal_kernel_size = int(getattr(model_cfg, "temporal_kernel_size", 9))
     dropout = float(getattr(model_cfg, "dropout", 0.2))
@@ -335,7 +332,8 @@ def build_stgcn_from_hparams(hparams) -> STGCN:
     )
 
     return STGCN(
-        num_class=num_class,
+        num_total_class=total_classes,
+        num_class=num_classes,
         num_point=num_point,
         in_channels=in_channels,
         graph_edges=_edge_from_map_config(),

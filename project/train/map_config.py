@@ -23,6 +23,10 @@ Date      	By	Comments
 from dataclasses import dataclass
 
 # * 这个文件定义了与 Unity MHR70 骨骼结构相关的映射和配置，供整个项目使用。
+# 所有关节索引 (0-69，共70个关节)
+ALL_INDICES = list(range(70))
+
+# 过滤后的关节索引 (选中的20个关键关节)
 INDICES = [
     0,  # nose
     5,
@@ -45,28 +49,6 @@ INDICES = [
     19,
     20,  # right foot
 ]
-ID_TO_INDEX = {
-    0: 0,
-    5: 1,
-    6: 2,
-    7: 3,
-    8: 4,
-    41: 5,
-    62: 6,
-    69: 7,
-    9: 8,
-    10: 9,
-    11: 10,
-    12: 11,
-    13: 12,
-    14: 13,
-    15: 14,
-    16: 15,
-    17: 16,
-    18: 17,
-    19: 18,
-    20: 19,
-}
 
 GLOBAL_SKELETON_CONNECTIONS = [
     (0, 69),  # nose - neck
@@ -90,30 +72,6 @@ GLOBAL_SKELETON_CONNECTIONS = [
     (14, 18),  # right_ankle - right_big_toe
     (14, 19),  # right_ankle - right_small_toe
     (14, 20),  # right_ankle - right_heel
-]
-
-FILTERED_SKELETON_CONNECTIONS = [
-    (0, 7),  # nose - neck
-    (7, 1),  # neck - left_shoulder
-    (7, 2),  # neck - right_shoulder
-    (1, 3),  # left_shoulder - left_elbow
-    (3, 6),  # left_elbow - left_wrist
-    (2, 4),  # right_shoulder - right_elbow
-    (4, 5),  # right_elbow - right_wrist
-    (1, 2),  # left_shoulder - right_shoulder
-    (8, 9),  # left_hip - right_hip
-    (1, 8),  # left_shoulder - left_hip
-    (2, 9),  # right_shoulder - right_hip
-    (8, 10),  # left_hip - left_knee
-    (10, 12),  # left_knee - left_ankle
-    (12, 14),  # left_ankle - left_big_toe
-    (12, 15),  # left_ankle - left_small_toe
-    (12, 16),  # left_ankle - left_heel
-    (9, 11),  # right_hip - right_knee
-    (11, 13),  # right_knee - right_ankle
-    (13, 17),  # right_ankle - right_big_toe
-    (13, 18),  # right_ankle - right_small_toe
-    (13, 19),  # right_ankle - right_heel
 ]
 
 

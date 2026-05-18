@@ -10,6 +10,7 @@ class TCN(nn.Module):
     def __init__(
         self,
         num_class: int,
+        num_total_class: int,
         num_point: int,
         in_channels: int = 3,
         tcn_channels: Sequence[int] = (64, 128, 256),
@@ -32,6 +33,7 @@ class TCN(nn.Module):
         self.num_point = int(num_point)
         self.in_channels = int(in_channels)
         self.num_class = int(num_class)
+        self.num_total_class = int(num_total_class)
 
         layers = []
         input_dim = self.num_point * self.in_channels
@@ -54,7 +56,7 @@ class TCN(nn.Module):
                 "twist": nn.Linear(input_dim, self.num_class),
                 "posture": nn.Linear(input_dim, self.num_class),
                 "relax": nn.Linear(input_dim, self.num_class),
-                "total": nn.Linear(input_dim, self.num_class),
+                "total": nn.Linear(input_dim, self.num_total_class),
             }
         )
 

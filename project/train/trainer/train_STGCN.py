@@ -28,12 +28,9 @@ from pytorch_lightning import LightningModule
 from torchmetrics.classification import (
     MulticlassAccuracy,
     MulticlassF1Score,
-    MulticlassPrecision,
-    MulticlassRecall,
 )
 
 from models.st_gcn import STGCN, build_stgcn_from_hparams
-from utils.helper import save_helper
 
 logger = logging.getLogger(__name__)
 
@@ -54,18 +51,23 @@ class STGCNTrainer(LightningModule):
         # Task names
         self.tasks = ["twist", "posture", "relax", "total"]
         self.num_classes = int(getattr(hparams.model, "model_class_num", 3))
+        self.num_total_classes = int(getattr(hparams.model, "model_total_class_num", 5))
 
         # Metrics for each task
         self.metrics: nn.ModuleDict = nn.ModuleDict()
-        for task in self.tasks:
+        for task in ["twist", "posture", "relax"]:
             self.metrics[task] = nn.ModuleDict(
                 {
                     "accuracy": MulticlassAccuracy(num_classes=self.num_classes),
-                    "precision": MulticlassPrecision(num_classes=self.num_classes),
-                    "recall": MulticlassRecall(num_classes=self.num_classes),
                     "f1": MulticlassF1Score(num_classes=self.num_classes),
                 }
             )
+        self.metrics["total"] = nn.ModuleDict(
+            {
+                "accuracy": MulticlassAccuracy(num_classes=self.num_total_classes),
+                "f1": MulticlassF1Score(num_classes=self.num_total_classes),
+            }
+        )
 
         self.test_outputs: List[Dict[str, Any]] = []
         self.test_save_dir: Path = (
@@ -262,30 +264,6 @@ class STGCNTrainer(LightningModule):
 
         self.test_outputs.append(self._build_test_pack(logits, label_dict, batch))
         return loss
-
-    def on_test_epoch_end(self) -> None:
-        if not self.test_outputs:
-            logger.warning("No test outputs to save")
-            return
-
-        fold_name = (
-            Path(self.logger.root_dir).name
-            if self.logger is not None and hasattr(self.logger, "root_dir")
-            else "fold"
-        )
-        for task in self.tasks:
-            preds_list = self.test_pred_by_task[task]
-            labels_list = self.test_label_by_task[task]
-            if not preds_list or not labels_list:
-                continue
-            task_save_root = self.test_save_dir / task
-            save_helper(
-                all_pred=preds_list,
-                all_label=labels_list,
-                fold=fold_name,
-                save_path=str(task_save_root),
-                num_class=self.num_classes,
-            )
 
     def configure_optimizers(self) -> dict:
         optimizer = torch.optim.AdamW(

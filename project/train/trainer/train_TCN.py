@@ -29,13 +29,10 @@ from pytorch_lightning import LightningModule
 from torchmetrics.classification import (
     MulticlassAccuracy,
     MulticlassF1Score,
-    MulticlassPrecision,
-    MulticlassRecall,
 )
 
 
 from models.tcn import TCN
-from utils.helper import save_helper
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +53,9 @@ class TCNTrainer(LightningModule):
         # Build TCN model
         model_cfg = getattr(hparams, "model", hparams)
         num_class = int(getattr(model_cfg, "model_class_num", 3))
-        num_point = int(getattr(model_cfg, "num_point", 17))
+        num_total_class = int(getattr(model_cfg, "model_total_class_num", 5))
+
+        num_point = int(getattr(model_cfg, "num_point", 70))
         in_channels = int(getattr(model_cfg, "in_channels", 3))
         tcn_channels_cfg = getattr(model_cfg, "tcn_channels", [64, 128, 256])
         if isinstance(tcn_channels_cfg, (list, tuple)):
@@ -68,6 +67,7 @@ class TCNTrainer(LightningModule):
 
         self.model = TCN(
             num_class=num_class,
+            num_total_class=num_total_class,
             num_point=num_point,
             in_channels=in_channels,
             tcn_channels=tcn_channels,
@@ -81,15 +81,19 @@ class TCNTrainer(LightningModule):
 
         # Metrics for each task
         self.metrics: nn.ModuleDict = nn.ModuleDict()
-        for task in self.tasks:
+        for task in ["twist", "posture", "relax"]:
             self.metrics[task] = nn.ModuleDict(
                 {
                     "accuracy": MulticlassAccuracy(num_classes=self.num_classes),
-                    "precision": MulticlassPrecision(num_classes=self.num_classes),
-                    "recall": MulticlassRecall(num_classes=self.num_classes),
                     "f1": MulticlassF1Score(num_classes=self.num_classes),
                 }
             )
+        self.metrics["total"] = nn.ModuleDict(
+            {
+                "accuracy": MulticlassAccuracy(num_classes=num_total_class),
+                "f1": MulticlassF1Score(num_classes=num_total_class),
+            }
+        )
 
         self.test_outputs: List[Dict[str, Any]] = []
         self.test_save_dir: Path = (
@@ -225,34 +229,14 @@ class TCNTrainer(LightningModule):
             task_metric_group = cast(nn.ModuleDict, self.metrics[task])
 
             metric_acc = task_metric_group["accuracy"].to(task_logits.device)
-            metric_precision = task_metric_group["precision"].to(task_logits.device)
-            metric_recall = task_metric_group["recall"].to(task_logits.device)
             metric_f1 = task_metric_group["f1"].to(task_logits.device)
 
             acc = metric_acc(task_preds, task_label_valid)
-            precision = metric_precision(task_preds, task_label_valid)
-            recall = metric_recall(task_preds, task_label_valid)
             f1 = metric_f1(task_preds, task_label_valid)
 
             self.log(
                 f"{stage}/acc_{task}",
                 acc,
-                on_step=False,
-                on_epoch=True,
-                batch_size=task_logits.shape[0],
-                sync_dist=sync_dist,
-            )
-            self.log(
-                f"{stage}/precision_{task}",
-                precision,
-                on_step=False,
-                on_epoch=True,
-                batch_size=task_logits.shape[0],
-                sync_dist=sync_dist,
-            )
-            self.log(
-                f"{stage}/recall_{task}",
-                recall,
                 on_step=False,
                 on_epoch=True,
                 batch_size=task_logits.shape[0],
@@ -328,11 +312,9 @@ class TCNTrainer(LightningModule):
     def training_step(self, batch: Dict[str, Any], _batch_idx: int) -> torch.Tensor:
         return self._shared_step(batch, stage="train")
 
-    @torch.no_grad()
     def validation_step(self, batch: Dict[str, Any], _batch_idx: int) -> torch.Tensor:
         return self._shared_step(batch, stage="val")
 
-    @torch.no_grad()
     def test_step(self, batch: Dict[str, Any], _batch_idx: int) -> torch.Tensor:
         logits, label_dict, batch_size = self._extract_logits_and_labels(batch)
         loss = self._compute_and_log_loss(logits, label_dict, batch_size, stage="test")
@@ -355,29 +337,6 @@ class TCNTrainer(LightningModule):
 
         self.test_outputs.append(self._build_test_pack(logits, label_dict, batch))
         return loss
-
-    def on_test_epoch_end(self) -> None:
-        if not self.test_outputs:
-            logger.warning("No test outputs to save")
-            return
-
-        logger_root_dir = (
-            getattr(self.logger, "root_dir", None) if self.logger is not None else None
-        )
-        fold_name = Path(str(logger_root_dir)).name if logger_root_dir else "fold"
-        for task in self.tasks:
-            preds_list = self.test_pred_by_task[task]
-            labels_list = self.test_label_by_task[task]
-            if not preds_list or not labels_list:
-                continue
-            task_save_root = self.test_save_dir / task
-            save_helper(
-                all_pred=preds_list,
-                all_label=labels_list,
-                fold=fold_name,
-                save_path=str(task_save_root),
-                num_class=self.num_classes,
-            )
 
     def configure_optimizers(self) -> Any:
         optimizer = torch.optim.AdamW(

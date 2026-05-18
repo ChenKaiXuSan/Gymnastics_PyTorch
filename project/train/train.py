@@ -48,8 +48,6 @@ from trainer.train_STGCN import STGCNTrainer
 from trainer.train_SSM import SSMTrainer
 from trainer.train_TCN import TCNTrainer
 
-# from trainer.train_fusion_SSM import FusionSSMTrainer
-
 logger = logging.getLogger(__name__)
 
 
@@ -168,7 +166,7 @@ def train(hparams: DictConfig, dataset_idx, fold: int):
     )
 
     # some callbacks
-    progress_bar = RichProgressBar(refresh_rate=10)
+    progress_bar = RichProgressBar(refresh_rate=10, leave=True)
     rich_model_summary = RichModelSummary(max_depth=2)
 
     # define the checkpoint becavier.
@@ -208,7 +206,7 @@ def train(hparams: DictConfig, dataset_idx, fold: int):
     # PyTorch 2.6 changed torch.load default to weights_only=True.
     # Our checkpoints include OmegaConf objects, so force full load for trusted local ckpts.
     try:
-        trainer.test(
+        test_metrics = trainer.test(
             classification_module,
             data_module,
             ckpt_path="best",
@@ -216,11 +214,19 @@ def train(hparams: DictConfig, dataset_idx, fold: int):
         )
     except TypeError:
         # Backward compatibility for Lightning versions without `weights_only` arg.
-        trainer.test(
+        test_metrics = trainer.test(
             classification_module,
             data_module,
             ckpt_path="best",
         )
+
+    # write test metrics to txt file 
+    metrics_save_path = os.path.join(
+        hparams.log_path, "metrics", f"fold_{fold}_test_metrics.txt"
+    )
+    os.makedirs(os.path.dirname(metrics_save_path), exist_ok=True)
+    with open(metrics_save_path, "w", encoding="utf-8") as f:
+        f.write(json.dumps(test_metrics, indent=4))
 
 
 @hydra.main(
