@@ -148,6 +148,13 @@ def train(hparams: DictConfig, dataset_idx, fold: int):
         monitor_metric = "val/loss"
         monitor_mode = "min"
         ckpt_filename = "{epoch}-{val/loss:.4f}"
+    elif trainer_name == "body_part_mamba":
+        from trainer.train_body_part_mamba import BodyPartMambaClassificationModule
+
+        classification_module = BodyPartMambaClassificationModule(hparams)
+        monitor_metric = "val/loss"
+        monitor_mode = "min"
+        ckpt_filename = "{epoch}-{val/loss:.4f}"
     else:
         raise ValueError(f"Unsupported trainer name: {trainer_name}")
 
@@ -220,7 +227,7 @@ def train(hparams: DictConfig, dataset_idx, fold: int):
             ckpt_path="best",
         )
 
-    # write test metrics to txt file 
+    # write test metrics to txt file
     metrics_save_path = os.path.join(
         hparams.log_path, "metrics", f"fold_{fold}_test_metrics.txt"
     )

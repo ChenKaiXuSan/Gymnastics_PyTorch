@@ -2,9 +2,6 @@ pytorch-lightning
 torch
 torchvision
 
-# yolo api
-ultralytics==8.3.113
-
 # config hydra 
 hydra-core
 
@@ -28,6 +25,5 @@ transformers
 opencv-python
 numpy
 plotly
-
-# detectron2
-# python -m pip install 'git+https://github.com/facebookresearch/detectron2.git'
+seaborn
+matplotlib

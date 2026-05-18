@@ -154,6 +154,7 @@ class STGCNUnit(nn.Module):
             nn.Dropout(dropout, inplace=True),
         )
 
+        self.residual: Optional[nn.Module]
         if not residual:
             self.residual = None
         elif in_channels == out_channels and stride == 1:
@@ -210,7 +211,7 @@ class STGCN(nn.Module):
         kernel_size = (temporal_kernel_size, spatial_kernel_size)
         kwargs0 = {"dropout": 0.0}
 
-        self.st_gcn_networks = nn.ModuleList(
+        self.shared_st_gcn_networks = nn.ModuleList(
             (
                 STGCNUnit(in_channels, 64, kernel_size, 1, residual=False, **kwargs0),
                 STGCNUnit(64, 64, kernel_size, 1, dropout=dropout),
@@ -219,26 +220,78 @@ class STGCN(nn.Module):
                 STGCNUnit(64, 128, kernel_size, 2, dropout=dropout),
                 STGCNUnit(128, 128, kernel_size, 1, dropout=dropout),
                 STGCNUnit(128, 128, kernel_size, 1, dropout=dropout),
+            )
+        )
+
+        self.twist_st_gcn_networks = nn.ModuleList(
+            (
+                STGCNUnit(128, 256, kernel_size, 2, dropout=dropout),
+                STGCNUnit(256, 256, kernel_size, 1, dropout=dropout),
+                STGCNUnit(256, 256, kernel_size, 1, dropout=dropout),
+            )
+        )
+        self.posture_st_gcn_networks = nn.ModuleList(
+            (
+                STGCNUnit(128, 256, kernel_size, 2, dropout=dropout),
+                STGCNUnit(256, 256, kernel_size, 1, dropout=dropout),
+                STGCNUnit(256, 256, kernel_size, 1, dropout=dropout),
+            )
+        )
+        self.relax_st_gcn_networks = nn.ModuleList(
+            (
                 STGCNUnit(128, 256, kernel_size, 2, dropout=dropout),
                 STGCNUnit(256, 256, kernel_size, 1, dropout=dropout),
                 STGCNUnit(256, 256, kernel_size, 1, dropout=dropout),
             )
         )
 
-        if edge_importance_weighting:
-            self.edge_importance = nn.ParameterList(
-                [
-                    nn.Parameter(torch.ones_like(adjacency_tensor))
-                    for _ in self.st_gcn_networks
-                ]
-            )
-        else:
-            self.edge_importance = [1.0] * len(self.st_gcn_networks)
+        use_grad = edge_importance_weighting
+        self.shared_edge_importance = nn.ParameterList(
+            [
+                nn.Parameter(torch.ones_like(adjacency_tensor), requires_grad=use_grad)
+                for _ in self.shared_st_gcn_networks
+            ]
+        )
+        self.twist_edge_importance = nn.ParameterList(
+            [
+                nn.Parameter(torch.ones_like(adjacency_tensor), requires_grad=use_grad)
+                for _ in self.twist_st_gcn_networks
+            ]
+        )
+        self.posture_edge_importance = nn.ParameterList(
+            [
+                nn.Parameter(torch.ones_like(adjacency_tensor), requires_grad=use_grad)
+                for _ in self.posture_st_gcn_networks
+            ]
+        )
+        self.relax_edge_importance = nn.ParameterList(
+            [
+                nn.Parameter(torch.ones_like(adjacency_tensor), requires_grad=use_grad)
+                for _ in self.relax_st_gcn_networks
+            ]
+        )
 
         self.cls_head_twist = nn.Conv2d(256, num_class, kernel_size=1)
         self.cls_head_posture = nn.Conv2d(256, num_class, kernel_size=1)
         self.cls_head_relax = nn.Conv2d(256, num_class, kernel_size=1)
+        self.fusion_proj = nn.Sequential(
+            nn.Conv2d(256 * 3, 256, kernel_size=1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+        )
         self.cls_head_total = nn.Conv2d(256, num_total_class, kernel_size=1)
+
+    @staticmethod
+    def _forward_stgcn_stack(
+        x_tensor: torch.Tensor,
+        adjacency_tensor: torch.Tensor,
+        blocks: nn.ModuleList,
+        edge_importance,
+    ) -> torch.Tensor:
+        out = x_tensor
+        for gcn, importance in zip(blocks, edge_importance):
+            out, _ = gcn(out, adjacency_tensor * importance)
+        return out
 
     def _to_nctvm(self, x: torch.Tensor) -> torch.Tensor:
         """Convert input into ST-GCN standard shape (N,C,T,V,M)."""
@@ -274,7 +327,7 @@ class STGCN(nn.Module):
 
     def forward(
         self,
-        x: Optional[torch.Tensor] = None,
+        x: torch.Tensor,
     ) -> dict:
         """
         Args:
@@ -296,18 +349,51 @@ class STGCN(nn.Module):
 
         adjacency_tensor = self._get_adjacency()
 
-        for gcn, importance in zip(self.st_gcn_networks, self.edge_importance):
-            x_tensor, _ = gcn(x_tensor, adjacency_tensor * importance)
+        shared_feat = self._forward_stgcn_stack(
+            x_tensor,
+            adjacency_tensor,
+            self.shared_st_gcn_networks,
+            self.shared_edge_importance,
+        )
 
-        # Global pooling + instance average
-        x_tensor = x_tensor.mean(dim=(2, 3), keepdim=True)
-        x_tensor = x_tensor.view(n, m, -1, 1, 1).mean(dim=1)
+        twist_feat = self._forward_stgcn_stack(
+            shared_feat,
+            adjacency_tensor,
+            self.twist_st_gcn_networks,
+            self.twist_edge_importance,
+        )
+        posture_feat = self._forward_stgcn_stack(
+            shared_feat,
+            adjacency_tensor,
+            self.posture_st_gcn_networks,
+            self.posture_edge_importance,
+        )
+        relax_feat = self._forward_stgcn_stack(
+            shared_feat,
+            adjacency_tensor,
+            self.relax_st_gcn_networks,
+            self.relax_edge_importance,
+        )
 
-        # Four classification heads for multi-task learning
-        logits_twist = self.cls_head_twist(x_tensor).flatten(1)
-        logits_posture = self.cls_head_posture(x_tensor).flatten(1)
-        logits_relax = self.cls_head_relax(x_tensor).flatten(1)
-        logits_total = self.cls_head_total(x_tensor).flatten(1)
+        # Branch heads: per-branch global pooling + instance average.
+        twist_pooled = twist_feat.mean(dim=(2, 3), keepdim=True)
+        posture_pooled = posture_feat.mean(dim=(2, 3), keepdim=True)
+        relax_pooled = relax_feat.mean(dim=(2, 3), keepdim=True)
+
+        twist_pooled = twist_pooled.view(n, m, -1, 1, 1).mean(dim=1)
+        posture_pooled = posture_pooled.view(n, m, -1, 1, 1).mean(dim=1)
+        relax_pooled = relax_pooled.view(n, m, -1, 1, 1).mean(dim=1)
+
+        logits_twist = self.cls_head_twist(twist_pooled).flatten(1)
+        logits_posture = self.cls_head_posture(posture_pooled).flatten(1)
+        logits_relax = self.cls_head_relax(relax_pooled).flatten(1)
+
+        # Total head: fuse three branch final-layer features, then classify.
+        fusion_feat = torch.cat([twist_feat, posture_feat, relax_feat], dim=1)
+        fusion_feat = self.fusion_proj(fusion_feat)
+        fusion_feat = fusion_feat.mean(dim=(2, 3), keepdim=True)
+        fusion_feat = fusion_feat.view(n, m, -1, 1, 1).mean(dim=1)
+        logits_total = self.cls_head_total(fusion_feat).flatten(1)
 
         return {
             "twist": logits_twist,

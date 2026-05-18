@@ -49,7 +49,7 @@ class STGCNTrainer(LightningModule):
         self.model: STGCN = build_stgcn_from_hparams(hparams)
 
         # Task names
-        self.tasks = ["twist", "posture", "relax", "total"]
+        self.tasks = hparams.model.get("class_task", ["twist", "posture", "relax", "total"])
         self.num_classes = int(getattr(hparams.model, "model_class_num", 3))
         self.num_total_classes = int(getattr(hparams.model, "model_total_class_num", 5))
 

@@ -4,7 +4,7 @@ hydra:
     dir: ${log_path} # the log path, used for log and checkpoint
   sweep:
     dir: logs/
-    subdir: ${experiment}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: train/${experiment}/${now:%Y-%m-%d}/${now:%H-%M-%S}
   sweeper:
     params:
       model.class_task: "[posture,relax,twist,total],[posture,relax,twist],[total],[relax],[posture],[twist]"
@@ -44,7 +44,7 @@ data:
   batch_size: 32
 
 model:
-  backbone: st_gcn # choices=[st_gcn, st_gcn_fusion], help='the backbone of the model'
+  backbone: st_gcn # st_gcn, tcn, body_part_mamba
   model_class_num: 3
   model_total_class_num: 5 # score number of one class haead, used for multi-task learning
 

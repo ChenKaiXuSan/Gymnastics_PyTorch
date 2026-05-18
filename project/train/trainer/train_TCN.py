@@ -57,26 +57,16 @@ class TCNTrainer(LightningModule):
 
         num_point = int(getattr(model_cfg, "num_point", 70))
         in_channels = int(getattr(model_cfg, "in_channels", 3))
-        tcn_channels_cfg = getattr(model_cfg, "tcn_channels", [64, 128, 256])
-        if isinstance(tcn_channels_cfg, (list, tuple)):
-            tcn_channels = [int(x) for x in tcn_channels_cfg]
-        else:
-            tcn_channels = [64, 128, 256]
-        kernel_size = int(getattr(model_cfg, "temporal_kernel_size", 9))
-        dropout = float(getattr(model_cfg, "dropout", 0.2))
 
         self.model = TCN(
             num_class=num_class,
             num_total_class=num_total_class,
             num_point=num_point,
             in_channels=in_channels,
-            tcn_channels=tcn_channels,
-            kernel_size=kernel_size,
-            dropout=dropout,
         )
 
         # Task names
-        self.tasks = ["twist", "posture", "relax", "total"]
+        self.tasks = hparams.get("class_task", ["twist", "posture", "relax", "total"])
         self.num_classes = num_class
 
         # Metrics for each task
@@ -118,23 +108,8 @@ class TCNTrainer(LightningModule):
         if not isinstance(kpt_tensor, torch.Tensor):
             raise TypeError(f"fused_kpt3d must be Tensor, got {type(kpt_tensor)}")
 
-        if kpt_tensor.ndim == 4:
-            logits = self.model(kpt_tensor)
-            batch_size = logits["twist"].shape[0]
-        elif kpt_tensor.ndim == 5:
-            # 分段输入时先逐段推理，再在 segment 维度上求均值聚合到样本级预测
-            b, s, t, j, c = kpt_tensor.shape
-            flat_kpt = kpt_tensor.reshape(b * s, t, j, c)
-            flat_logits = self.model(flat_kpt)
-            logits = {
-                task: task_logits.reshape(b, s, -1).mean(dim=1)
-                for task, task_logits in flat_logits.items()
-            }
-            batch_size = b
-        else:
-            raise ValueError(
-                f"Unsupported fused_kpt3d shape {tuple(kpt_tensor.shape)}, expected 4D or 5D"
-            )
+        logits = self.model(kpt_tensor)
+        batch_size = logits["twist"].shape[0]
 
         labels = batch.get("labels", {})
         batch_size = logits["twist"].shape[0]

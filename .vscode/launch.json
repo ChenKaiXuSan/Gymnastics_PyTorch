@@ -101,6 +101,20 @@
         "data.batch_size=2",
         "data.num_workers=0"
       ]
+    },
+    {
+      "name": "train_body_part_mamba",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "train",
+      "cwd": "/workspace/code/project/train",
+      "python": "/opt/conda/envs/mamba/bin/python",
+      "console": "integratedTerminal",
+      "args": [
+        "model.backbone=body_part_mamba",
+        "data.batch_size=2",
+        "data.num_workers=0"
+      ]
     }
   ]
 }
