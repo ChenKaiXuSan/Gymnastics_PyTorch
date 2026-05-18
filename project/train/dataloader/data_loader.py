@@ -65,26 +65,6 @@ class PersonDataModule(LightningDataModule):
             ]
         )
 
-    @staticmethod
-    def _merge_bt_pose(x: torch.Tensor, name: str) -> torch.Tensor:
-        """Merge sample/time dims: (1,T,J,C) or (T,J,C) -> (T,1,J,C)."""
-        if not isinstance(x, torch.Tensor):
-            raise TypeError(f"Expected tensor for {name}, got {type(x)}")
-        if x.ndim == 4 and x.shape[0] == 1:
-            x = x[0]
-        if x.ndim != 3:
-            raise ValueError(f"Expected {name} shape (T,J,C), got {tuple(x.shape)}")
-        return x.unsqueeze(1)
-
-    @staticmethod
-    def _merge_bt_video(x: torch.Tensor, name: str) -> torch.Tensor:
-        """Merge sample/time dims: (1,C,T,H,W) -> (T,C,H,W)."""
-        if not isinstance(x, torch.Tensor):
-            raise TypeError(f"Expected tensor for {name}, got {type(x)}")
-        if x.ndim != 5 or x.shape[0] != 1:
-            raise ValueError(f"Expected {name} shape (1,C,T,H,W), got {tuple(x.shape)}")
-        return x[0].permute(1, 0, 2, 3)
-
     def prepare_data(self) -> None:
         """here prepare the temp val data path,
         because the val dataset not use the gait cycle index,
