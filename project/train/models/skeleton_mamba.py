@@ -69,7 +69,6 @@ class SkeletonMambaClassifier(nn.Module):
         num_joints: int,
         num_classes: int,
         total_class_num: int,
-        num_coarse_classes: int = 7,
         d_model: int = 256,
         d_state: int = 16,
         d_conv: int = 4,
@@ -81,7 +80,6 @@ class SkeletonMambaClassifier(nn.Module):
         super().__init__()
         self.num_joints = num_joints
         self.num_classes = num_classes
-        self.num_coarse_classes = num_coarse_classes
         self.normalizer = SkeletonNormalizer(
             root_idx=root_idx, scale_joints=scale_joints
         )

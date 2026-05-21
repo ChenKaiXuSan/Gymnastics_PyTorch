@@ -120,7 +120,7 @@ class LabeledPersonDataset(Dataset):
                 "twist": int(raw_item.label_twist_3class),
                 "posture": int(raw_item.label_posture_3class),
                 "relax": int(raw_item.label_relax_3class),
-                "total": int(raw_item.label_total_5class),
+                "total": int(raw_item.label_total_3class),
             },
         }
 

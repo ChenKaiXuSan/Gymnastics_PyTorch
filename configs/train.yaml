@@ -21,7 +21,7 @@ data:
     num_persons: 45
     num_cameras: 2
     strategies: [by_person]
-    n_splits: 10
+    n_splits: 3
 
   raw:
     video_path: ${data.root_path}/raw/person # 暂时不使用kpt
@@ -46,7 +46,7 @@ data:
 model:
   backbone: st_gcn # st_gcn, tcn, body_part_mamba
   model_class_num: 3
-  model_total_class_num: 5 # score number of one class haead, used for multi-task learning
+  model_total_class_num: 3 # score number of one class haead, used for multi-task learning
 
   temporal_kernel_size: 17
 
@@ -61,4 +61,4 @@ train:
   fold: 0 # the fold number for cross validation
 
 experiment: ${model.backbone}_${model.class_task} # the experiment name, used for log path
-log_path: logs/train/${experiment}/${now:%Y-%m-%d}/${now:%H-%M-%S}/fold_${train.fold}
+log_path: logs/train/${experiment}/${now:%Y-%m-%d}/${now:%H-%M-%S}/

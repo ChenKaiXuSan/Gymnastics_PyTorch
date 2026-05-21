@@ -96,6 +96,7 @@ def load_fold_dataset_idx_from_fold_json(
                     label_posture_3class=int(item.get("label_posture_3class", -1)),
                     label_relax_3class=int(item.get("label_relax_3class", -1)),
                     label_total_5class=int(item.get("label_total_5class", -1)),
+                    label_total_3class=int(item.get("label_total_3class", -1)),
                     fused_kpt_path=str(item.get("fused_kpt_path", "")),
                     fused_kpt_turn_frame_start=int(
                         item.get("fused_turn_frame_start", -1)
@@ -228,11 +229,10 @@ def train(hparams: DictConfig, dataset_idx, fold: int):
         )
 
     # write test metrics to txt file
-    metrics_save_path = os.path.join(
-        hparams.log_path, "metrics", f"fold_{fold}_test_metrics.txt"
-    )
+    metrics_save_path = os.path.join(hparams.log_path, "metrics", "test_metrics.txt")
     os.makedirs(os.path.dirname(metrics_save_path), exist_ok=True)
     with open(metrics_save_path, "w", encoding="utf-8") as f:
+        f.write(f"Test metrics for fold {fold}:\n")
         f.write(json.dumps(test_metrics, indent=4))
 
 

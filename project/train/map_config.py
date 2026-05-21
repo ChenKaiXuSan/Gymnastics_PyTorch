@@ -99,6 +99,7 @@ class PersonInfo:
     label_relax_3class: int
 
     label_total_5class: int
+    label_total_3class: int
 
     fused_kpt_path: str
     fused_kpt_turn_frame_start: int
