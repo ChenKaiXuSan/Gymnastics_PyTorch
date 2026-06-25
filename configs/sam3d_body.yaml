@@ -40,6 +40,8 @@ infer:
   gpu: [0, 1] # 指定使用的 GPU 列表
   workers_per_gpu: 1 # 每个 GPU 使用的工作线程数,3090 建议 2
   person_list: [-1] # 指定需要处理的人物 ID 列表，-1 表示处理所有人物
+  rotate_frames: false # 是否在推理前旋转输入帧
+  rotate_code: ROTATE_90_CLOCKWISE # rotate_frames=true 时使用的 cv2 旋转方式
 
 dataset:
   recursive: true

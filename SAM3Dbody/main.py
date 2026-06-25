@@ -42,6 +42,28 @@ REQUIRED_VIEWS = {"face", "side"}
 logger = logging.getLogger(__name__)
 
 
+ROTATE_CODES = {
+    "ROTATE_90_CLOCKWISE": cv2.ROTATE_90_CLOCKWISE,
+    "ROTATE_180": cv2.ROTATE_180,
+    "ROTATE_90_COUNTERCLOCKWISE": cv2.ROTATE_90_COUNTERCLOCKWISE,
+}
+
+
+def maybe_rotate_frames(frames: List[np.ndarray], cfg: DictConfig) -> List[np.ndarray]:
+    """Optionally rotate input frames before SAM3D-Body inference."""
+    if not cfg.infer.get("rotate_frames", False):
+        return frames
+
+    rotate_code_name = cfg.infer.get("rotate_code", "ROTATE_90_CLOCKWISE")
+    if rotate_code_name not in ROTATE_CODES:
+        raise ValueError(
+            f"Unsupported rotate_code '{rotate_code_name}'. "
+            f"Expected one of: {', '.join(ROTATE_CODES)}"
+        )
+
+    return [cv2.rotate(frame, ROTATE_CODES[rotate_code_name]) for frame in frames]
+
+
 # ---------------------------------------------------------------------
 # 核心处理逻辑：处理单个人的数据
 # ---------------------------------------------------------------------
@@ -107,8 +129,7 @@ def process_single_person(
         #     f" 視角 {view_label} を処理中: {len(frames)} 枠。右回転を適用します。"
         # )
 
-        # # --- ここで各フレームを右に90度回転 ---
-        rotated_frames = [cv2.rotate(f, cv2.ROTATE_90_CLOCKWISE) for f in frames]
+        rotated_frames = maybe_rotate_frames(frames, cfg)
 
         # 保存先の作成
         _out_root = out_root / person_id / view_label
