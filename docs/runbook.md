@@ -34,6 +34,34 @@ Run cycle segmentation:
 conda run -n drivefusion python -m split_cycle.main
 ```
 
+Triangulate SAM3D-Body 2D keypoints using the `split_cycle` face/side alignment
+records:
+
+```bash
+conda run -n drivefusion python -m triangulation.sam3d_from_split_cycle
+```
+
+The output is written under:
+
+```text
+/home/data/xchen/gymnastics/sam3d_triangulated/person
+```
+
+For each person and cycle, the script saves:
+
+```text
+person_<id>/cycle_<idx>/joints_3d/*.json
+person_<id>/cycle_<idx>/joints_3d_sequence.npz
+person_<id>/cycle_<idx>/visualization/*.png
+person_<id>/cycle_<idx>/cycle_<idx>_3d.mp4
+```
+
+Quick smoke test on one person/cycle:
+
+```bash
+conda run -n drivefusion python -m triangulation.sam3d_from_split_cycle --person 1 --max-cycles 1 --max-frames 2
+```
+
 Run classifier training:
 
 ```bash

@@ -38,7 +38,7 @@ infer:
   keep_frames: true
   num_inference_steps: 4
   gpu: [0, 1] # 指定使用的 GPU 列表
-  workers_per_gpu: 2 # 每个 GPU 使用的工作线程数,3090 建议 2
+  workers_per_gpu: 1 # 每个 GPU 使用的工作线程数,3090 建议 2
   person_list: [-1] # 指定需要处理的人物 ID 列表，-1 表示处理所有人物
 
 dataset:

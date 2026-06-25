@@ -38,6 +38,24 @@ Entry point:
 python -m split_cycle.main
 ```
 
+### `triangulation/sam3d_from_split_cycle.py`
+
+Uses `split_cycle/person_<id>/alignment_record_<id>.json` to align face and side
+SAM3D-Body frame indices, then triangulates `pred_keypoints_2d` from:
+
+```text
+sam3d_body_results/person/<id>/face/*.npz
+sam3d_body_results/person/<id>/side/*.npz
+```
+
+Output:
+
+```text
+sam3d_triangulated/person/person_<id>/cycle_<idx>/
+```
+
+Configuration: `configs/sam3d_triangulation.yaml`
+
 ### `project/train/`
 
 Contains dataloaders, models, trainers, and evaluation logic for classification
