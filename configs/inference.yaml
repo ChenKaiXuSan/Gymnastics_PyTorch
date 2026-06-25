@@ -5,14 +5,14 @@ hydra:
     dir: ${log_path}
   sweep:
     dir: ${log_path}
-    # subdir: 
+    # subdir:
   job:
-    chdir: false 
+    chdir: false
 
 log_path: logs/
 
 data:
-  path: /workspace/data/
+  path: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}
   frame_path: ${data.path}/frames
   res_path: ${data.path}/results
   npz_path: ${data.path}/npz
@@ -24,6 +24,6 @@ cfg: COCO-Keypoints/keypoint_rcnn_R_101_FPN_3x.yaml
 
 gpu: 0
 
-generate_3d_pose: 
+generate_3d_pose:
   ckpt: checkpoint
   render: True

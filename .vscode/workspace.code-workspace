@@ -2,11 +2,11 @@
 	"folders": [
 		{
 			"name": "code",
-			"path": "/workspace/code"
+			"path": "/home/workspace/kaixu/code/Gymnastics_PyTorch"
 		},
 		{
 			"name": "data",
-			"path": "/workspace/data"
+			"path": "/home/data/xchen/gymnastics"
 		},
 	]
 }

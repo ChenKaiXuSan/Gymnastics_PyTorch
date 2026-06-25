@@ -17,7 +17,8 @@ camera_K:
 
 paths:
   log_path: logs/triangulated/${now:%Y-%m-%d}/${now:%H-%M-%S}
-  input_path: /workspace/data/pt/suwabe
+  data_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}
+  input_path: ${paths.data_root}/pt/suwabe
 
 camera_position:
   # 相机布局
@@ -31,7 +32,7 @@ camera_position:
     3: 0.0
     4: -135.0
 
-COCO_SKELETON: 
+COCO_SKELETON:
   - (0, 1),
   - (0, 2),
   - (1, 3),

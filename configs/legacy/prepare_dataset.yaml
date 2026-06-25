@@ -24,9 +24,11 @@ depth_estimator:
 
 # Path
 # use YOLOv11 detection with tracking.
+data_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}
+
 extract_dataset:
-  data_path: "/workspace/data/raw"
-  save_path: "/workspace/data/" # this is extracted video path.
+  data_path: ${data_root}/raw
+  save_path: ${data_root} # this is extracted video path.
   overwrite: true
   embed_frames_in_pt: true
 

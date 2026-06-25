@@ -23,13 +23,13 @@ A comprehensive PyTorch-based pipeline for 3D human pose estimation and motion a
 
 The project consists of several interconnected modules that form a complete 3D motion analysis pipeline:
 
-1. **prepare_dataset**: Extract frames, detect persons, and perform pose estimation using YOLO and Detectron2
-2. **SAM3Dbody**: 3D body mesh reconstruction and keypoint extraction from video frames
-3. **triangulation**: Triangulate 3D joint positions from multi-view 2D keypoints
-4. **split_cycle**: Segment motion sequences into individual cycles using DTW and feature analysis
-5. **videopose3d**: 3D pose estimation using temporal convolution networks
-6. **camera_calibration**: Calibrate multi-camera setups for accurate 3D reconstruction
-7. **analysis**: Data analysis and visualization tools
+1. **SAM3Dbody**: 3D body mesh reconstruction and keypoint extraction from video frames
+2. **fuse**: Align and fuse SAM3D-Body results from face and side views
+3. **split_cycle**: Segment motion sequences into individual cycles using DTW and feature analysis
+4. **project/train**: Train and evaluate motion classification models
+5. **analysis**: Data analysis and visualization tools
+6. **triangulation**: Legacy/support path for 3D joint position estimation from multi-view 2D keypoints
+7. **camera_calibration**: Calibrate multi-camera setups for accurate 3D reconstruction
 
 ## Installation
 
@@ -51,56 +51,62 @@ pip install -r requirements.txt
 - Python 3.6+
 - PyTorch (latest version)
 - CUDA (for GPU acceleration)
-- Required model checkpoints (YOLO, SAM-3D-Body, etc.)
+- Required model checkpoints (SAM-3D-Body, etc.)
 
 ## Usage
 
-The project uses Hydra for configuration management. Each module can be run independently:
+The project uses Hydra for configuration management. The active data preparation
+path uses SAM3D-Body directly. See `docs/current_pipeline.md` for the current
+pipeline and `docs/modules.md` for module responsibilities.
 
-### 1. Prepare Dataset (Pose Detection)
-Extract keypoints and bounding boxes from videos using YOLO and Detectron2:
-
-```bash
-cd prepare_dataset
-python main.py
-```
-
-Configuration: `configs/prepare_dataset.yaml`
-
-### 2. SAM-3D-Body (3D Mesh Reconstruction)
+### 1. SAM-3D-Body (Dataset Preparation)
 Generate 3D body meshes and keypoints from video frames:
 
 ```bash
-cd SAM3Dbody
-python main.py
+python -m SAM3Dbody.main
 ```
 
 Configuration: `configs/sam3d_body.yaml`
 
-### 3. Triangulation (3D Pose from Multi-view)
-Triangulate 3D joint positions from synchronized multi-view videos:
+The previous YOLO/Detectron2/DPT/RAFT preprocessing flow is kept under
+`legacy/prepare_dataset/` with configuration in `configs/legacy/prepare_dataset.yaml`.
+
+### 2. Fuse Multi-View Results
+Align and fuse SAM3D-Body outputs from face and side views:
 
 ```bash
-cd triangulation
-python main.py
+python -m fuse.main
+```
+
+### 3. Split Cycle (Motion Segmentation)
+Segment continuous motion into individual cycles:
+
+```bash
+python -m split_cycle.main
+```
+
+### 4. Train Classifiers
+Train and evaluate motion classification models:
+
+```bash
+python -m project.train.train
+```
+
+Configuration: `configs/train.yaml`
+
+### 5. Optional Support Modules
+Triangulation and camera calibration are kept as support workflows:
+
+```bash
+python -m triangulation.main
 ```
 
 Configuration: `configs/triangulation.yaml`
 
-### 4. Split Cycle (Motion Segmentation)
-Segment continuous motion into individual cycles:
-
-```bash
-cd split_cycle
-python main.py
-```
-
-### 5. Camera Calibration
 Calibrate multi-camera setup:
 
 ```bash
-cd camera_calibration
-python main.py
+python -m camera_calibration.main
 ```
 
 ## Project Organization
@@ -113,18 +119,20 @@ python main.py
 │
 ├── configs/              <- Hydra configuration files
 │   ├── config.yaml
-│   ├── prepare_dataset.yaml
+│   ├── inference.yaml
 │   ├── sam3d_body.yaml
-│   └── triangulation.yaml
-│
-├── prepare_dataset/      <- Video preprocessing and keypoint extraction
-│   ├── main.py           <- Main entry point
-│   └── process/          <- Processing modules
+│   ├── train.yaml
+│   ├── triangulation.yaml
+│   └── legacy/
+│       └── prepare_dataset.yaml
 │
 ├── SAM3Dbody/           <- 3D body mesh reconstruction
 │   ├── main.py          <- Main entry point
 │   ├── infer.py         <- Inference logic
 │   └── sam_3d_body/     <- Model implementation
+│
+├── legacy/
+│   └── prepare_dataset/  <- Previous YOLO/Detectron2/DPT/RAFT preprocessing flow
 │
 ├── triangulation/       <- 3D pose triangulation from multi-view
 │   ├── main.py          <- Main entry point
@@ -134,6 +142,13 @@ python main.py
 ├── split_cycle/         <- Motion cycle segmentation
 │   └── main.py          <- Cycle detection and splitting
 │
+├── fuse/                <- Multi-view SAM3D-Body result alignment and fusion
+│   └── main.py          <- Main fusion entry point
+│
+├── project/             <- Training and cross-validation package
+│   ├── train/           <- Models, dataloaders, trainers, evaluation
+│   └── cross_validation/ <- Fold/index generation and CV entry points
+│
 ├── videopose3d/         <- Temporal 3D pose estimation
 │   ├── run.py           <- Training and inference
 │   └── common/          <- Common utilities
@@ -141,8 +156,11 @@ python main.py
 ├── camera_calibration/  <- Multi-camera calibration
 │   └── main.py          <- Calibration pipeline
 │
-└── analysis/            <- Analysis and visualization notebooks
-    └── load.ipynb       <- Data loading examples
+├── analysis/            <- Analysis and visualization scripts/notebooks
+│
+├── docs/                <- Current pipeline and module documentation
+│
+└── tests/               <- Lightweight checks and tests
 ```
 
 ## Configuration
@@ -153,7 +171,7 @@ Key configuration parameters:
 
 - **paths**: Input/output paths for data and results
 - **model**: Model checkpoints and parameters
-- **YOLO**: Detection and tracking settings
+- **model**: SAM3D-Body and training model parameters
 - **camera_K**: Camera intrinsic parameters
 - **camera_position**: Multi-camera setup geometry
 
@@ -161,12 +179,13 @@ Key configuration parameters:
 
 - **PyTorch & PyTorch Lightning**: Deep learning framework
 - **Hydra**: Configuration management
-- **YOLOv11**: Person detection and pose estimation
-- **Detectron2**: Instance segmentation and keypoint detection
 - **SAM-3D-Body**: 3D body mesh reconstruction
 - **VideoPose3D**: Temporal 3D pose estimation
 - **OpenCV**: Video processing and computer vision
 - **DTW (Dynamic Time Warping)**: Motion synchronization
+
+YOLOv11, Detectron2, DPT, and RAFT remain available only in the legacy
+`legacy/prepare_dataset/` preprocessing flow.
 
 ## Requirements
 

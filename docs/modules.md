@@ -1,0 +1,83 @@
+# Module Map
+
+This project is now organized around a SAM3D-Body-first data preparation flow.
+
+## Active Pipeline Modules
+
+### `SAM3Dbody/`
+
+Runs SAM3D-Body inference on raw multi-view videos. The active entry point is:
+
+```bash
+python -m SAM3Dbody.main
+```
+
+Input: `/home/data/xchen/gymnastics/raw/person`
+
+Output: `/home/data/xchen/gymnastics/sam3d_body_results/person`
+
+Configuration: `configs/sam3d_body.yaml`
+
+### `fuse/`
+
+Aligns face and side view SAM3D-Body results and writes fused 3D keypoints.
+
+Entry point:
+
+```bash
+python -m fuse.main
+```
+
+### `split_cycle/`
+
+Segments fused motion sequences into individual action cycles.
+
+Entry point:
+
+```bash
+python -m split_cycle.main
+```
+
+### `project/train/`
+
+Contains dataloaders, models, trainers, and evaluation logic for classification
+tasks.
+
+Entry point:
+
+```bash
+python -m project.train.train
+```
+
+Configuration: `configs/train.yaml`
+
+### `analysis/`
+
+Contains analysis, metrics, comparison, and visualization scripts/notebooks.
+
+## Support Modules
+
+### `triangulation/`
+
+Support path for 3D pose triangulation from multi-view 2D keypoints.
+
+Configuration: `configs/triangulation.yaml`
+
+### `camera_calibration/`
+
+Camera calibration utilities and scripts.
+
+### `videopose3d/`
+
+VideoPose3D code and utilities. This is currently a support/legacy-style module
+rather than the primary data preparation path.
+
+## Legacy Modules
+
+### `legacy/prepare_dataset/`
+
+Previous preprocessing pipeline based on DPT depth, RAFT optical flow, YOLOv11,
+and Detectron2. It is kept for reference and reuse but is no longer part of the
+active SAM3D-Body-only preparation flow.
+
+Configuration: `configs/legacy/prepare_dataset.yaml`

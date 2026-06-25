@@ -14,7 +14,7 @@ loss:
   weight_decay: 0.0001
 
 data:
-  root_path: /workspace/data
+  root_path: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}
 
   cross_validation:
     # 生成 index mapping 的配置（用于 cross_validation/generate_cv_index.py）
