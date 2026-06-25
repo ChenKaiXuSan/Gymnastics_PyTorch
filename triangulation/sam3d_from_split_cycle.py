@@ -73,18 +73,39 @@ def sam3d_frame_path(root: Path, person_id: str, view: str, frame_idx: int) -> P
     return root / person_id / view / f"{frame_idx:06d}_sam3d_body.npz"
 
 
+def load_calibration(path: Path) -> Dict[str, np.ndarray]:
+    data = np.load(path, allow_pickle=True)
+    return {
+        "path": np.asarray(str(path)),
+        "K": np.asarray(data["camera_matrix"], dtype=np.float32).reshape(3, 3),
+        "dist": np.asarray(data["dist_coeffs"], dtype=np.float32).reshape(-1),
+        "image_size": np.asarray(data["image_size"], dtype=np.int32),
+    }
+
+
+def undistort_keypoints(kpts: np.ndarray, calib: Dict[str, np.ndarray]) -> np.ndarray:
+    if len(kpts) == 0:
+        return np.empty((0, 2), dtype=np.float32)
+    return cv2.undistortPoints(
+        kpts.reshape(-1, 1, 2).astype(np.float32),
+        calib["K"],
+        calib["dist"],
+    ).reshape(-1, 2)
+
+
 def triangulate_keypoints(
     face_kpts: np.ndarray,
     side_kpts: np.ndarray,
-    K: np.ndarray,
+    face_calib: Dict[str, np.ndarray],
+    side_calib: Dict[str, np.ndarray],
     face_rt: Dict[str, np.ndarray],
     side_rt: Dict[str, np.ndarray],
 ) -> np.ndarray:
     if face_kpts.shape != side_kpts.shape:
         raise ValueError(f"Shape mismatch: {face_kpts.shape} vs {side_kpts.shape}")
 
-    P_face = K @ np.hstack([face_rt["R"], face_rt["t"].reshape(3, 1)])
-    P_side = K @ np.hstack([side_rt["R"], side_rt["t"].reshape(3, 1)])
+    P_face = np.hstack([face_rt["R"], face_rt["t"].reshape(3, 1)]).astype(np.float32)
+    P_side = np.hstack([side_rt["R"], side_rt["t"].reshape(3, 1)]).astype(np.float32)
 
     valid = np.isfinite(face_kpts).all(axis=1) & np.isfinite(side_kpts).all(axis=1)
     valid &= ~((face_kpts == 0).all(axis=1) | (side_kpts == 0).all(axis=1))
@@ -93,11 +114,37 @@ def triangulate_keypoints(
     if valid.sum() < 2:
         return joints_3d
 
-    pts4d = cv2.triangulatePoints(P_face, P_side, face_kpts[valid].T, side_kpts[valid].T)
+    face_norm = undistort_keypoints(face_kpts[valid], face_calib)
+    side_norm = undistort_keypoints(side_kpts[valid], side_calib)
+    pts4d = cv2.triangulatePoints(P_face, P_side, face_norm.T, side_norm.T)
     pts3d = (pts4d[:3] / pts4d[3]).T.astype(np.float32)
     pts3d[~np.isfinite(pts3d)] = np.nan
     joints_3d[valid] = pts3d
     return joints_3d
+
+
+def reprojection_errors(
+    joints_3d: np.ndarray,
+    kpts_2d: np.ndarray,
+    calib: Dict[str, np.ndarray],
+    rt: Dict[str, np.ndarray],
+) -> np.ndarray:
+    valid = np.isfinite(joints_3d).all(axis=1) & np.isfinite(kpts_2d).all(axis=1)
+    errors = np.full((joints_3d.shape[0],), np.nan, dtype=np.float32)
+    if not valid.any():
+        return errors
+
+    rvec, _ = cv2.Rodrigues(np.asarray(rt["R"], dtype=np.float32))
+    projected, _ = cv2.projectPoints(
+        joints_3d[valid].astype(np.float32),
+        rvec,
+        np.asarray(rt["t"], dtype=np.float32).reshape(3, 1),
+        calib["K"],
+        calib["dist"],
+    )
+    projected = projected.reshape(-1, 2)
+    errors[valid] = np.linalg.norm(projected - kpts_2d[valid], axis=1)
+    return errors
 
 
 def save_frame_json(
@@ -170,7 +217,8 @@ def process_cycle(
     cycle: Dict[str, Any],
     sam3d_root: Path,
     output_person_root: Path,
-    K: np.ndarray,
+    face_calib: Dict[str, np.ndarray],
+    side_calib: Dict[str, np.ndarray],
     face_rt: Dict[str, np.ndarray],
     side_rt: Dict[str, np.ndarray],
     vis_stride: int,
@@ -194,6 +242,8 @@ def process_cycle(
     joints_seq: List[np.ndarray] = []
     frame_records: List[Dict[str, Any]] = []
     missing = 0
+    face_error_means: List[float] = []
+    side_error_means: List[float] = []
 
     for local_idx in range(length):
         face_idx = face_start + local_idx
@@ -207,7 +257,20 @@ def process_cycle(
 
         face_kpts = load_keypoints_2d(face_path)
         side_kpts = load_keypoints_2d(side_path)
-        joints_3d = triangulate_keypoints(face_kpts, side_kpts, K, face_rt, side_rt)
+        joints_3d = triangulate_keypoints(
+            face_kpts,
+            side_kpts,
+            face_calib=face_calib,
+            side_calib=side_calib,
+            face_rt=face_rt,
+            side_rt=side_rt,
+        )
+        face_errors = reprojection_errors(joints_3d, face_kpts, face_calib, face_rt)
+        side_errors = reprojection_errors(joints_3d, side_kpts, side_calib, side_rt)
+        if np.isfinite(face_errors).any():
+            face_error_means.append(float(np.nanmean(face_errors)))
+        if np.isfinite(side_errors).any():
+            side_error_means.append(float(np.nanmean(side_errors)))
         joints_seq.append(joints_3d)
 
         record = {
@@ -220,6 +283,14 @@ def process_cycle(
             "side_sam3d_path": str(side_path),
             "num_joints": int(joints_3d.shape[0]),
             "valid_joints": int(np.isfinite(joints_3d).all(axis=1).sum()),
+            "face_reprojection_error_px": face_errors.tolist(),
+            "side_reprojection_error_px": side_errors.tolist(),
+            "face_reprojection_error_mean_px": (
+                float(np.nanmean(face_errors)) if np.isfinite(face_errors).any() else None
+            ),
+            "side_reprojection_error_mean_px": (
+                float(np.nanmean(side_errors)) if np.isfinite(side_errors).any() else None
+            ),
             "joints_3d": joints_3d.tolist(),
         }
         frame_records.append(record)
@@ -248,6 +319,12 @@ def process_cycle(
         "processed_frames": int(sequence.shape[0]),
         "missing_pairs": int(missing),
         "num_joints": int(sequence.shape[1]) if sequence.size else 70,
+        "face_reprojection_error_mean_px": (
+            float(np.mean(face_error_means)) if face_error_means else None
+        ),
+        "side_reprojection_error_mean_px": (
+            float(np.mean(side_error_means)) if side_error_means else None
+        ),
     }
     save_frame_json(cycle_root / "summary.json", summary)
 
@@ -261,7 +338,8 @@ def process_person(
     record_path: Path,
     sam3d_root: Path,
     output_root: Path,
-    K: np.ndarray,
+    face_calib: Dict[str, np.ndarray],
+    side_calib: Dict[str, np.ndarray],
     rt_info: Dict[int, Dict[str, np.ndarray]],
     face_camera_id: int,
     side_camera_id: int,
@@ -287,7 +365,8 @@ def process_person(
             cycle=cycle,
             sam3d_root=sam3d_root,
             output_person_root=output_person_root,
-            K=K,
+            face_calib=face_calib,
+            side_calib=side_calib,
             face_rt=rt_info[face_camera_id],
             side_rt=rt_info[side_camera_id],
             vis_stride=vis_stride,
@@ -304,6 +383,8 @@ def process_person(
         "alignment_record": str(record_path),
         "face_camera_id": face_camera_id,
         "side_camera_id": side_camera_id,
+        "face_calibration": str(face_calib["path"]),
+        "side_calibration": str(side_calib["path"]),
         "cycles": summaries,
     }
     save_frame_json(output_person_root / "summary.json", person_summary)
@@ -331,17 +412,31 @@ def main() -> None:
     sam3d_root = Path(cfg["paths"]["sam3d_person_root"])
     split_root = Path(cfg["paths"]["split_cycle_root"])
     output_root = Path(cfg["paths"]["output_root"])
-    K = np.asarray(cfg["camera_K"]["K"], dtype=np.float32).reshape(3, 3)
+    calibration_cfg = cfg.get("calibration", {})
+    if calibration_cfg:
+        face_calib = load_calibration(Path(calibration_cfg["face"]))
+        side_calib = load_calibration(Path(calibration_cfg["side"]))
+        K_for_camera_vis = face_calib["K"]
+        image_size = face_calib["image_size"].tolist()
+    else:
+        K_for_camera_vis = np.asarray(cfg["camera_K"]["K"], dtype=np.float32).reshape(3, 3)
+        dist = np.asarray(
+            cfg["camera_K"].get("distortion_coefficients", np.zeros(5)),
+            dtype=np.float32,
+        ).reshape(-1)
+        face_calib = {"path": np.asarray("camera_K"), "K": K_for_camera_vis, "dist": dist}
+        side_calib = {"path": np.asarray("camera_K"), "K": K_for_camera_vis, "dist": dist}
+        image_size = cfg["camera_K"]["image_size"]
 
     camera_output = output_root / "_camera"
     cam = prepare_camera_position(
-        K=K,
+        K=K_for_camera_vis,
         yaws=cfg["camera_position"]["yaws"],
         T=cfg["camera_position"]["T"],
         r=cfg["camera_position"]["r"],
         z=cfg["camera_position"]["z"],
         output_path=str(camera_output),
-        img_size=cfg["camera_K"]["image_size"],
+        img_size=image_size,
     )
 
     wanted = set(str(p) for p in args.person) if args.person else None
@@ -361,7 +456,8 @@ def main() -> None:
                 record_path=record_path,
                 sam3d_root=sam3d_root,
                 output_root=output_root,
-                K=K,
+                face_calib=face_calib,
+                side_calib=side_calib,
                 rt_info=cam["rt_info"],
                 face_camera_id=int(cfg["view_camera"]["face"]),
                 side_camera_id=int(cfg["view_camera"]["side"]),
@@ -381,6 +477,8 @@ def main() -> None:
             "sam3d_person_root": str(sam3d_root),
             "split_cycle_root": str(split_root),
             "output_root": str(output_root),
+            "face_calibration": str(face_calib["path"]),
+            "side_calibration": str(side_calib["path"]),
             "num_persons": len(summaries),
             "persons": summaries,
         },

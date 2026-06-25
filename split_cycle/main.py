@@ -63,7 +63,7 @@ import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, List, Literal, Tuple, Union
+from typing import Dict, List, Literal, Optional, Tuple, Union
 
 import cv2
 import librosa
@@ -199,6 +199,101 @@ def estimate_offset_by_dtw(a: np.ndarray, b: np.ndarray):
     best_s = int(np.median(offsets))
 
     return best_s
+
+
+def _normalize_audio_envelope(env: np.ndarray) -> np.ndarray:
+    env = np.asarray(env, dtype=np.float32).reshape(-1)
+    if len(env) == 0:
+        return env
+    env = np.nan_to_num(env, nan=0.0, posinf=0.0, neginf=0.0)
+    env = env - np.mean(env)
+    std = np.std(env)
+    if std < 1e-8:
+        return np.zeros_like(env, dtype=np.float32)
+    return (env / std).astype(np.float32)
+
+
+def estimate_offset_from_audio_envelopes(
+    face_env: np.ndarray,
+    side_env: np.ndarray,
+    *,
+    hop_seconds: float,
+    fps: float,
+) -> Tuple[int, float]:
+    """
+    Estimate side-to-face frame offset from two audio envelopes.
+
+    Positive offset keeps the same convention as keypoint DTW:
+      side_idx[t] = t + offset
+    """
+    face_norm = _normalize_audio_envelope(face_env)
+    side_norm = _normalize_audio_envelope(side_env)
+    if len(face_norm) == 0 or len(side_norm) == 0:
+        raise ValueError("audio envelope is empty")
+
+    denom = float(np.linalg.norm(face_norm) * np.linalg.norm(side_norm))
+    if denom < 1e-8:
+        raise ValueError("audio envelope has too little energy variation")
+
+    corr = np.correlate(side_norm, face_norm, mode="full") / denom
+    lags = np.arange(-(len(face_norm) - 1), len(side_norm), dtype=np.int32)
+    best = int(np.argmax(corr))
+    lag_env = int(lags[best])
+    confidence = float(np.clip(corr[best], 0.0, 1.0))
+    offset_frames = int(round(lag_env * float(hop_seconds) * float(fps)))
+    return offset_frames, confidence
+
+
+def extract_audio_envelope(
+    video_path: Union[str, Path],
+    *,
+    sr: int = 16000,
+    frame_length: int = 1024,
+    hop_length: int = 256,
+) -> Tuple[np.ndarray, float]:
+    """
+    Load video audio and return a short-time RMS energy envelope.
+
+    librosa/audioread will use the system media backend for MOV audio.
+    """
+    y, _ = librosa.load(str(video_path), sr=sr, mono=True)
+    if y is None or len(y) == 0:
+        raise ValueError(f"no audio samples loaded from {video_path}")
+    env = librosa.feature.rms(
+        y=y, frame_length=frame_length, hop_length=hop_length, center=True
+    )[0]
+    return env.astype(np.float32), float(hop_length) / float(sr)
+
+
+def estimate_offset_by_audio_xcorr(
+    face_video: Union[str, Path],
+    side_video: Union[str, Path],
+    *,
+    fps: float,
+    sr: int = 16000,
+) -> Tuple[int, float]:
+    face_env, hop_seconds = extract_audio_envelope(face_video, sr=sr)
+    side_env, side_hop_seconds = extract_audio_envelope(side_video, sr=sr)
+    if abs(hop_seconds - side_hop_seconds) > 1e-9:
+        raise ValueError("face/side audio envelopes use different hop sizes")
+    return estimate_offset_from_audio_envelopes(
+        face_env, side_env, hop_seconds=hop_seconds, fps=fps
+    )
+
+
+def choose_alignment_offset(
+    *,
+    offset_kpt: int,
+    offset_audio: Optional[int],
+    audio_confidence: float = 0.0,
+    tolerance_frames: int = 10,
+    min_audio_confidence: float = 0.15,
+) -> Tuple[int, str]:
+    if offset_audio is None or audio_confidence < min_audio_confidence:
+        return int(offset_kpt), "kpt"
+    if abs(int(offset_audio) - int(offset_kpt)) <= int(tolerance_frames):
+        return int(round((int(offset_kpt) + int(offset_audio)) / 2.0)), "kpt_audio_avg"
+    return int(offset_kpt), "kpt"
 
 
 # -------------------- 先对齐（union）再裁剪（overlap） --------------------
@@ -518,12 +613,36 @@ def process_person(person_id: str, raw_root: Path, kpt_root: Path, log_root: Pat
 
         print(f"✓ [load] person_{person_id}: face {face_k.shape}, side {side_k.shape}")
 
-        # 2) estimate offset using theta in body frame
+        fps_kpt = 60.0
+
+        # 2) estimate offset using theta in body frame, optionally assisted by audio
         theta_face = compute_theta_unwrap_from_world(face_k, IDX)
         theta_side = compute_theta_unwrap_from_world(side_k, IDX)
 
-        offset = estimate_offset_by_dtw(theta_face, theta_side)
-        print(f"✓ [align] person_{person_id}: offset_side_to_face = {offset}")
+        offset_kpt = estimate_offset_by_dtw(theta_face, theta_side)
+        offset_audio = None
+        audio_confidence = 0.0
+        try:
+            offset_audio, audio_confidence = estimate_offset_by_audio_xcorr(
+                face_video, side_video, fps=fps_kpt
+            )
+            print(
+                f"✓ [align-audio] person_{person_id}: "
+                f"offset_audio={offset_audio}, confidence={audio_confidence:.3f}"
+            )
+        except Exception as e:
+            print(f"⚠ [align-audio] person_{person_id}: audio offset unavailable - {e}")
+
+        offset, offset_source = choose_alignment_offset(
+            offset_kpt=offset_kpt,
+            offset_audio=offset_audio,
+            audio_confidence=audio_confidence,
+            tolerance_frames=10,
+        )
+        print(
+            f"✓ [align] person_{person_id}: offset_side_to_face = {offset} "
+            f"(source={offset_source}, kpt={offset_kpt}, audio={offset_audio})"
+        )
 
         # 2-1) 先对齐到同一时间轴（union）
         face_u, side_u, face_map_u, side_map_u = align_to_common_timeline(
@@ -564,7 +683,6 @@ def process_person(person_id: str, raw_root: Path, kpt_root: Path, log_root: Pat
         print(f"✓ [fuse] person_{person_id}: fused shape {fused_body.shape}")
 
         # 4) segment cycles on fused
-        fps_kpt = 60.0
         print(f"  [cycle] person_{person_id}: segmenting cycles...")
         
         cycles_t, theta_ref_used = segment_cycles_from_fused_body(
@@ -620,6 +738,10 @@ def process_person(person_id: str, raw_root: Path, kpt_root: Path, log_root: Pat
             "metadata": {
                 "person_id": person_id,
                 "offset_side_to_face": int(offset),
+                "offset_source": offset_source,
+                "offset_keypoint_dtw": int(offset_kpt),
+                "offset_audio_xcorr": None if offset_audio is None else int(offset_audio),
+                "audio_confidence": float(audio_confidence),
                 "fps": fps_kpt,
                 "overlap_union_range": [t0, t1],
             },

@@ -7,6 +7,10 @@ paths:
   split_cycle_root: ${data_root}/split_cycle
   output_root: ${data_root}/sam3d_triangulated/person
 
+calibration:
+  face: logs/calibration_vis/IMG_2420/calibration_parameters.npz
+  side: logs/calibration_vis/IMG_2676/calibration_parameters.npz
+
 camera_K:
   K:
     - [1710.4629148432577, 0.0, 550.11524355156632]
