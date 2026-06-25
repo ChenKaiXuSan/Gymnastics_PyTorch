@@ -24,6 +24,7 @@ Date      	By	Comments
 import logging
 import multiprocessing as mp
 import os
+import signal
 from pathlib import Path
 from typing import Dict, List
 
@@ -62,6 +63,25 @@ def maybe_rotate_frames(frames: List[np.ndarray], cfg: DictConfig) -> List[np.nd
         )
 
     return [cv2.rotate(frame, ROTATE_CODES[rotate_code_name]) for frame in frames]
+
+
+def terminate_processes(processes: List[mp.Process], join_timeout: float = 10.0) -> None:
+    """Terminate child workers and wait briefly for GPU resources to be released."""
+    for process in processes:
+        if process.is_alive():
+            pid = getattr(process, "pid", "unknown")
+            logger.warning(f"Terminating worker process pid={pid}")
+            process.terminate()
+            process.join(timeout=join_timeout)
+
+            if process.is_alive():
+                logger.warning(f"Killing unresponsive worker process pid={pid}")
+                process.kill()
+                process.join(timeout=join_timeout)
+
+
+def _raise_keyboard_interrupt(signum, frame):
+    raise KeyboardInterrupt(f"Received signal {signum}")
 
 
 # ---------------------------------------------------------------------
@@ -187,6 +207,9 @@ def gpu_worker(
 # ---------------------------------------------------------------------
 @hydra.main(config_path="../configs", config_name="sam3d_body", version_base=None)
 def main(cfg: DictConfig) -> None:
+    signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
+    signal.signal(signal.SIGINT, _raise_keyboard_interrupt)
+
     # 1. 経路準備
     out_root = Path(cfg.paths.log_path).resolve()
     infer_root = Path(cfg.paths.result_output_path).resolve()
@@ -229,30 +252,35 @@ def main(cfg: DictConfig) -> None:
     mp.set_start_method("spawn", force=True)
 
     processes = []
-    for i, gpu_id in enumerate(expanded_gpu_ids):
-        person_list = chunks[i].tolist()
-        if not person_list:
-            continue
+    try:
+        for i, gpu_id in enumerate(expanded_gpu_ids):
+            person_list = chunks[i].tolist()
+            if not person_list:
+                continue
 
-        logger.info(f"  - Worker {i} (GPU {gpu_id}) 分配任务数: {len(person_list)}")
+            logger.info(f"  - Worker {i} (GPU {gpu_id}) 分配任务数: {len(person_list)}")
 
-        p = mp.Process(
-            target=gpu_worker,
-            args=(
-                gpu_id,
-                person_list,
-                source_root,
-                out_root,
-                infer_root,
-                cfg_dict,
-            ),
-        )
-        p.start()
-        processes.append(p)
+            p = mp.Process(
+                target=gpu_worker,
+                args=(
+                    gpu_id,
+                    person_list,
+                    source_root,
+                    out_root,
+                    infer_root,
+                    cfg_dict,
+                ),
+            )
+            p.start()
+            processes.append(p)
 
-    # 4. 等待所有进程完成
-    for p in processes:
-        p.join()
+        # 4. 等待所有进程完成
+        for p in processes:
+            p.join()
+    except KeyboardInterrupt:
+        logger.warning("Main process interrupted; shutting down worker processes.")
+        terminate_processes(processes)
+        raise
 
     logger.info("🎉 [SUCCESS] 所有 GPU 任务已圆满完成！")
 
