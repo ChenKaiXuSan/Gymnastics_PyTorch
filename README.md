@@ -28,7 +28,7 @@ The project consists of several interconnected modules that form a complete 3D m
 3. **split_cycle**: Segment motion sequences into individual cycles using DTW and feature analysis
 4. **project/train**: Train and evaluate motion classification models
 5. **analysis**: Data analysis and visualization tools
-6. **triangulation**: Legacy/support path for 3D joint position estimation from multi-view 2D keypoints
+6. **triangulation**: SAM3D face/side triangulation, result reports, and support 3D joint estimation tools
 7. **camera_calibration**: Calibrate multi-camera setups for accurate 3D reconstruction
 
 ## Installation
@@ -72,10 +72,12 @@ The previous YOLO/Detectron2/DPT/RAFT preprocessing flow is kept under
 `legacy/prepare_dataset/` with configuration in `configs/legacy/prepare_dataset.yaml`.
 
 ### 2. Fuse Multi-View Results
-Align and fuse SAM3D-Body outputs from face and side views:
+Run the default fusion experiment matrix. It rebuilds face/side temporal
+alignment from SAM3D-Body outputs, runs the configured fusion variants, and
+reports metrics against the triangulated reference:
 
 ```bash
-python -m fuse.main
+python -m fuse
 ```
 
 ### 3. Split Cycle (Motion Segmentation)
@@ -98,10 +100,18 @@ Configuration: `configs/train.yaml`
 Triangulation and camera calibration are kept as support workflows:
 
 ```bash
-python -m triangulation.main
+python -m triangulation.sam3d_from_split_cycle
 ```
 
-Configuration: `configs/triangulation.yaml`
+Main guide: `triangulation/README.md`
+
+Configuration: `configs/sam3d_triangulation.yaml`
+
+Generate the triangulated-result report:
+
+```bash
+python triangulation/tools/generate_results_report.py
+```
 
 Calibrate multi-camera setup:
 
@@ -135,8 +145,11 @@ python -m camera_calibration.main
 │   └── prepare_dataset/  <- Previous YOLO/Detectron2/DPT/RAFT preprocessing flow
 │
 ├── triangulation/       <- 3D pose triangulation from multi-view
+│   ├── README.md        <- Triangulation workflow, outputs, reports, and tests
 │   ├── main.py          <- Main entry point
+│   ├── sam3d_from_split_cycle.py <- Active SAM3D split-cycle triangulation
 │   ├── load.py          <- Data loading utilities
+│   ├── tools/           <- Triangulated output report tooling
 │   └── vis/             <- Visualization tools
 │
 ├── split_cycle/         <- Motion cycle segmentation

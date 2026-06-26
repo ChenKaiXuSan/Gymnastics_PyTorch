@@ -16,12 +16,21 @@ import numpy as np
 from fuse.save import save_fused_kpts
 
 DEFAULT_SAM3D_ROOT = Path("/home/data/xchen/gymnastics/sam3d_body_results")
-DEFAULT_FUSED_ROOT = Path("/home/data/xchen/gymnastics/fused_kpt")
 DEFAULT_TRIANGULATED_ROOT = Path("/home/data/xchen/gymnastics/sam3d_triangulated/person")
 DEFAULT_OUT_DIR = Path("logs/fuse_experiments")
 
 PELVIS_INDICES = (9, 10)
 BODY_IDX = {"lhip": 9, "rhip": 10, "lsho": 5, "rsho": 6}
+IDX = {
+    "lhip": 9,
+    "rhip": 10,
+    "lsho": 5,
+    "rsho": 6,
+    "rwrist": 41,
+    "rindex_tip": 25,
+    "rmiddle_tip": 29,
+    "rpinky_tip": 37,
+}
 STABLE_SIM3_JOINTS = (5, 6, 9, 10, 11, 12, 13, 14, 15, 16)
 ALL_METHODS = (
     "avg_body_current",
@@ -30,6 +39,9 @@ ALL_METHODS = (
     "sim3_face_all",
     "sim3_face_stable",
     "sim3_face_stable_joint_weight",
+    "sim3_face_stable_bodypart_weight",
+    "sim3_face_stable_smooth_transform",
+    "sim3_face_stable_smooth_kpt",
 )
 
 
@@ -94,26 +106,119 @@ def kpts_body_to_world(kpts_body: np.ndarray, pelvis_world: np.ndarray, rotation
     return (np.einsum("tij,tbj->tbi", rotation, kpts_body) + pelvis_world[:, None, :]).astype(np.float32)
 
 
+def smooth_1d(x: np.ndarray, win: int = 11) -> np.ndarray:
+    win = max(3, int(win) | 1)
+    pad = win // 2
+    xp = np.pad(x, (pad, pad), mode="edge")
+    kernel = np.ones(win, dtype=np.float32) / win
+    return np.convolve(xp, kernel, mode="valid")
+
+
+def smooth_sequence(seq: np.ndarray, win: int = 5) -> np.ndarray:
+    win = max(3, int(win) | 1)
+    pad = win // 2
+    padded = np.pad(seq, ((pad, pad), (0, 0), (0, 0)), mode="edge")
+    out = np.empty_like(seq, dtype=np.float32)
+    for idx in range(len(seq)):
+        out[idx] = np.nanmean(padded[idx : idx + win], axis=0)
+    return out
+
+
+def right_hand_point_world(kpts_world: np.ndarray) -> np.ndarray:
+    wrist = kpts_world[:, IDX["rwrist"], :]
+    index_tip = kpts_world[:, IDX["rindex_tip"], :]
+    middle_tip = kpts_world[:, IDX["rmiddle_tip"], :]
+    pinky_tip = kpts_world[:, IDX["rpinky_tip"], :]
+    return 0.25 * (wrist + index_tip + middle_tip + pinky_tip)
+
+
+def world_to_body_point(points_world: np.ndarray, pelvis_world: np.ndarray, rotation: np.ndarray) -> np.ndarray:
+    centered = points_world - pelvis_world
+    return np.einsum("tij,tj->ti", np.transpose(rotation, (0, 2, 1)), centered)
+
+
+def compute_theta_unwrap_from_world(kpts_world: np.ndarray, idx: Mapping[str, int] | None = None) -> np.ndarray:
+    del idx
+    pelvis, rotation = build_body_frame(kpts_world)
+    hand_body = world_to_body_point(right_hand_point_world(kpts_world), pelvis, rotation)
+    theta = np.arctan2(hand_body[:, 2], hand_body[:, 0]).astype(np.float32)
+    return np.unwrap(smooth_1d(theta, 11))
+
+
+def estimate_offset_by_dtw(a: np.ndarray, b: np.ndarray) -> int:
+    """Estimate global b-to-a offset from a simple DTW path."""
+    a_norm = (a - np.nanmean(a)) / (np.nanstd(a) + 1e-8)
+    b_norm = (b - np.nanmean(b)) / (np.nanstd(b) + 1e-8)
+    n = len(a_norm)
+    m = len(b_norm)
+    cost = np.abs(a_norm[:, None] - b_norm[None, :]).astype(np.float32)
+    dp = np.full((n + 1, m + 1), np.inf, dtype=np.float32)
+    dp[0, 0] = 0.0
+    for i in range(1, n + 1):
+        prev = dp[i - 1]
+        cur = dp[i]
+        for j in range(1, m + 1):
+            cur[j] = cost[i - 1, j - 1] + min(prev[j], cur[j - 1], prev[j - 1])
+
+    i, j = n, m
+    offsets: List[int] = []
+    while i > 0 and j > 0:
+        offsets.append((j - 1) - (i - 1))
+        choices = (dp[i - 1, j], dp[i, j - 1], dp[i - 1, j - 1])
+        step = int(np.argmin(choices))
+        if step == 0:
+            i -= 1
+        elif step == 1:
+            j -= 1
+        else:
+            i -= 1
+            j -= 1
+    return int(np.median(offsets)) if offsets else 0
+
+
+def align_to_common_timeline(
+    face: np.ndarray,
+    side: np.ndarray,
+    offset_side_to_face: int,
+    *,
+    pad_value: float = np.nan,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    s = int(offset_side_to_face)
+    tf = len(face)
+    ts = len(side)
+    t_min = min(0, -s)
+    t_max = max(tf, ts - s)
+    t = np.arange(t_min, t_max, dtype=np.int32)
+    face_idx = t.copy()
+    side_idx = t + s
+    face_valid = (face_idx >= 0) & (face_idx < tf)
+    side_valid = (side_idx >= 0) & (side_idx < ts)
+    face_map = np.where(face_valid, face_idx, -1).astype(np.int32)
+    side_map = np.where(side_valid, side_idx, -1).astype(np.int32)
+    out_dtype = np.float32 if np.isnan(pad_value) else face.dtype
+    face_aligned = np.full((len(t),) + face.shape[1:], pad_value, dtype=out_dtype)
+    side_aligned = np.full((len(t),) + side.shape[1:], pad_value, dtype=out_dtype)
+    face_aligned[face_valid] = face.astype(out_dtype, copy=False)[face_idx[face_valid]]
+    side_aligned[side_valid] = side.astype(out_dtype, copy=False)[side_idx[side_valid]]
+    return face_aligned, side_aligned, face_map, side_map
+
+
+def crop_to_overlap(
+    face_aligned: np.ndarray,
+    side_aligned: np.ndarray,
+    face_map: np.ndarray,
+    side_map: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int, int]:
+    valid = (face_map >= 0) & (side_map >= 0)
+    if not np.any(valid):
+        return face_aligned[:0], side_aligned[:0], face_map[:0], side_map[:0], 0, 0
+    t0 = int(np.argmax(valid))
+    t1 = int(len(valid) - np.argmax(valid[::-1]))
+    return face_aligned[t0:t1], side_aligned[t0:t1], face_map[t0:t1], side_map[t0:t1], t0, t1
+
+
 def person_id_from_dir(path: Path) -> str:
     return path.name.removeprefix("person_")
-
-
-def load_fused_metadata(fused_root: Path, person_id: str) -> Dict[str, Any]:
-    metadata_path = fused_root / f"person_{person_id}" / f"fused_kpts_metadata_{person_id}.json"
-    if not metadata_path.exists():
-        raise FileNotFoundError(f"Missing fused metadata: {metadata_path}")
-    return json.loads(metadata_path.read_text(encoding="utf-8"))
-
-
-def load_existing_fused_world(fused_root: Path, person_id: str, metadata: Mapping[str, Any]) -> np.ndarray:
-    person_root = fused_root / f"person_{person_id}"
-    frames_dir = person_root / str(metadata["frames_dir"])
-    frames = []
-    for idx in range(int(metadata["n_frames"])):
-        frame_path = frames_dir / f"frame_{idx:06d}.npz"
-        with np.load(frame_path) as data:
-            frames.append(np.asarray(data["kpts_world"], dtype=np.float32))
-    return np.stack(frames, axis=0)
 
 
 def sam3d_view_dir(sam3d_root: Path, person_id: str, view: str) -> Path:
@@ -136,30 +241,40 @@ def load_sam3d_world_by_frame(sam3d_root: Path, person_id: str, view: str) -> Di
     return frames
 
 
-def align_sam3d_to_fused_timeline(
+def build_aligned_timeline(
     face_by_frame: Mapping[int, np.ndarray],
     side_by_frame: Mapping[int, np.ndarray],
-    face_map: np.ndarray,
-    side_map: np.ndarray,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    face_seq = []
-    side_seq = []
-    keep = []
-    for idx, (face_idx, side_idx) in enumerate(zip(face_map, side_map)):
-        face = face_by_frame.get(int(face_idx))
-        side = side_by_frame.get(int(side_idx))
-        if face is None or side is None:
-            keep.append(False)
-            continue
-        face_seq.append(face)
-        side_seq.append(side)
-        keep.append(True)
-    if not face_seq:
-        raise ValueError("No overlapping face/side SAM3D frames matched fused metadata")
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
+    """Estimate time offset from SAM3D 3D sequences and return overlap in original frame ids."""
+    face_ids = np.asarray(sorted(face_by_frame), dtype=np.int32)
+    side_ids = np.asarray(sorted(side_by_frame), dtype=np.int32)
+    if len(face_ids) == 0 or len(side_ids) == 0:
+        raise ValueError("Cannot align empty face/side sequences")
+
+    face_seq = np.stack([face_by_frame[int(frame_id)] for frame_id in face_ids], axis=0).astype(np.float32)
+    side_seq = np.stack([side_by_frame[int(frame_id)] for frame_id in side_ids], axis=0).astype(np.float32)
+
+    theta_face = compute_theta_unwrap_from_world(face_seq, IDX)
+    theta_side = compute_theta_unwrap_from_world(side_seq, IDX)
+    offset = estimate_offset_by_dtw(theta_face, theta_side)
+
+    face_u, side_u, face_pos_u, side_pos_u = align_to_common_timeline(
+        face_seq, side_seq, offset, pad_value=np.nan
+    )
+    face_aligned, side_aligned, face_pos, side_pos, _, _ = crop_to_overlap(
+        face_u, side_u, face_pos_u, side_pos_u
+    )
+    if len(face_aligned) == 0:
+        raise ValueError("No overlap segment found after temporal alignment")
+
+    face_map = np.where(face_pos >= 0, face_ids[face_pos], -1).astype(np.int32)
+    side_map = np.where(side_pos >= 0, side_ids[side_pos], -1).astype(np.int32)
     return (
-        np.stack(face_seq, axis=0).astype(np.float32),
-        np.stack(side_seq, axis=0).astype(np.float32),
-        np.asarray(keep, dtype=bool),
+        face_aligned.astype(np.float32),
+        side_aligned.astype(np.float32),
+        face_map,
+        side_map,
+        int(offset),
     )
 
 
@@ -257,6 +372,29 @@ def estimate_joint_weights(
     return weights.astype(np.float32)
 
 
+def bodypart_weights(n_joints: int) -> np.ndarray:
+    """Fixed face/side weights by coarse body parts.
+
+    The weights are intentionally conservative: torso/pelvis stays 50/50, while
+    hands and distal limbs lean slightly toward face after side is Sim3-aligned.
+    """
+    weights = np.full((n_joints, 2), 0.5, dtype=np.float32)
+    face_preferred = [
+        23, 24, 25, 26, 27, 28, 29, 30,
+        31, 32, 33, 34, 35, 36, 37, 38,
+        39, 40, 41, 42, 43, 44, 45, 46,
+    ]
+    side_preferred = [11, 12, 13, 14, 15, 16, 17, 18]
+    for joint in face_preferred:
+        if joint < n_joints:
+            weights[joint] = (0.6, 0.4)
+    for joint in side_preferred:
+        if joint < n_joints:
+            weights[joint] = (0.45, 0.55)
+    weights /= weights.sum(axis=1, keepdims=True)
+    return weights
+
+
 def current_body_average(face: np.ndarray, side: np.ndarray) -> np.ndarray:
     face_body = kpts_world_to_body(face)
     side_body = kpts_world_to_body(side)
@@ -265,15 +403,11 @@ def current_body_average(face: np.ndarray, side: np.ndarray) -> np.ndarray:
     return kpts_body_to_world(fused_body, pelvis_ref, rotation_ref)
 
 
-def build_pair_index(face_map: np.ndarray, side_map: np.ndarray, keep_mask: np.ndarray | None = None) -> Dict[Tuple[int, int], int]:
+def build_pair_index(face_map: np.ndarray, side_map: np.ndarray) -> Dict[Tuple[int, int], int]:
     index: Dict[Tuple[int, int], int] = {}
-    timeline_idx = 0
-    for original_idx, (face_idx, side_idx) in enumerate(zip(face_map, side_map)):
-        if keep_mask is not None and not bool(keep_mask[original_idx]):
-            continue
+    for timeline_idx, (face_idx, side_idx) in enumerate(zip(face_map, side_map)):
         if int(face_idx) >= 0 and int(side_idx) >= 0:
             index[(int(face_idx), int(side_idx))] = timeline_idx
-        timeline_idx += 1 if keep_mask is None or bool(keep_mask[original_idx]) else 0
     return index
 
 
@@ -336,10 +470,9 @@ def evaluate_sequence(
     fused_world: np.ndarray,
     face_map: np.ndarray,
     side_map: np.ndarray,
-    keep_mask: np.ndarray,
     triangulated_person_root: Path,
 ) -> Tuple[PersonMetric, List[JointMetric]]:
-    pair_index = build_pair_index(face_map, side_map, keep_mask)
+    pair_index = build_pair_index(face_map, side_map)
     all_values: List[np.ndarray] = []
     joint_values: List[List[np.ndarray]] = []
     eval_frames = 0
@@ -401,10 +534,9 @@ def estimate_weights_from_triangulated(
     side_aligned: np.ndarray,
     face_map: np.ndarray,
     side_map: np.ndarray,
-    keep_mask: np.ndarray,
     triangulated_person_root: Path,
 ) -> np.ndarray:
-    pair_index = build_pair_index(face_map, side_map, keep_mask)
+    pair_index = build_pair_index(face_map, side_map)
     face_errors_by_joint: List[List[np.ndarray]] = [[] for _ in range(face.shape[1])]
     side_errors_by_joint: List[List[np.ndarray]] = [[] for _ in range(face.shape[1])]
     for cycle_root in sorted(triangulated_person_root.glob("cycle_*")):
@@ -474,36 +606,30 @@ def process_person(
     person_id: str,
     methods: Sequence[str],
     sam3d_root: Path,
-    fused_root: Path,
     triangulated_root: Path,
     out_root: Path,
     save_frame_npz: bool,
 ) -> Tuple[List[PersonMetric], List[JointMetric]]:
-    metadata = load_fused_metadata(fused_root, person_id)
-    face_map_full = np.asarray(metadata["face_map"], dtype=np.int32)
-    side_map_full = np.asarray(metadata["side_map"], dtype=np.int32)
     face_by_frame = load_sam3d_world_by_frame(sam3d_root, person_id, "face")
     side_by_frame = load_sam3d_world_by_frame(sam3d_root, person_id, "side")
-    face, side, keep_mask = align_sam3d_to_fused_timeline(
-        face_by_frame, side_by_frame, face_map_full, side_map_full
-    )
-    face_map = face_map_full[keep_mask]
-    side_map = side_map_full[keep_mask]
+    face, side, face_map, side_map, offset = build_aligned_timeline(face_by_frame, side_by_frame)
     triangulated_person_root = triangulated_root / f"person_{person_id}"
 
-    existing_fused = None
     sim3_all = None
     sim3_stable = None
     sim3_stable_scales = None
+    sim3_stable_smooth = None
     metrics: List[PersonMetric] = []
     joint_metrics: List[JointMetric] = []
 
     for method in methods:
-        extra: Dict[str, Any] = {"face_map_source": str(fused_root), "fusion_method": method}
+        extra: Dict[str, Any] = {
+            "time_alignment": "right_hand_theta_dtw",
+            "offset_side_to_face": int(offset),
+            "fusion_method": method,
+        }
         if method == "avg_body_current":
-            if existing_fused is None:
-                existing_fused = load_existing_fused_world(fused_root, person_id, metadata)[keep_mask]
-            fused_world = existing_fused
+            fused_world = current_body_average(face, side)
         elif method == "avg_world_face_ref":
             fused_world = 0.5 * (face + side)
         elif method == "root_face_stable":
@@ -524,12 +650,38 @@ def process_person(
             if sim3_stable is None:
                 sim3_stable, sim3_stable_scales = sim3_align_to_reference(side, face, STABLE_SIM3_JOINTS)
             weights = estimate_weights_from_triangulated(
-                face, sim3_stable, face_map_full, side_map_full, keep_mask, triangulated_person_root
+                face, sim3_stable, face_map, side_map, triangulated_person_root
             )
             extra["sim3_joints"] = list(STABLE_SIM3_JOINTS)
             extra["joint_weights"] = weights.tolist()
             extra["scale_mean"] = float(np.mean(sim3_stable_scales))
             fused_world = fuse_weighted(face, sim3_stable, weights)
+        elif method == "sim3_face_stable_bodypart_weight":
+            if sim3_stable is None:
+                sim3_stable, sim3_stable_scales = sim3_align_to_reference(side, face, STABLE_SIM3_JOINTS)
+            weights = bodypart_weights(face.shape[1])
+            extra["sim3_joints"] = list(STABLE_SIM3_JOINTS)
+            extra["joint_weights"] = weights.tolist()
+            extra["scale_mean"] = float(np.mean(sim3_stable_scales))
+            fused_world = fuse_weighted(face, sim3_stable, weights)
+        elif method == "sim3_face_stable_smooth_transform":
+            if sim3_stable is None:
+                sim3_stable, sim3_stable_scales = sim3_align_to_reference(side, face, STABLE_SIM3_JOINTS)
+            if sim3_stable_smooth is None:
+                sim3_stable_smooth = smooth_sequence(sim3_stable, win=5)
+            extra["sim3_joints"] = list(STABLE_SIM3_JOINTS)
+            extra["smooth_target"] = "side_after_sim3"
+            extra["smooth_window"] = 5
+            extra["scale_mean"] = float(np.mean(sim3_stable_scales))
+            fused_world = 0.5 * (face + sim3_stable_smooth)
+        elif method == "sim3_face_stable_smooth_kpt":
+            if sim3_stable is None:
+                sim3_stable, sim3_stable_scales = sim3_align_to_reference(side, face, STABLE_SIM3_JOINTS)
+            extra["sim3_joints"] = list(STABLE_SIM3_JOINTS)
+            extra["smooth_target"] = "fused_world"
+            extra["smooth_window"] = 5
+            extra["scale_mean"] = float(np.mean(sim3_stable_scales))
+            fused_world = smooth_sequence(0.5 * (face + sim3_stable), win=5)
         else:
             raise ValueError(f"Unsupported method: {method}")
 
@@ -551,9 +703,8 @@ def process_person(
             person_id=person_id,
             method=method,
             fused_world=fused_world,
-            face_map=face_map_full,
-            side_map=side_map_full,
-            keep_mask=keep_mask,
+            face_map=face_map,
+            side_map=side_map,
             triangulated_person_root=triangulated_person_root,
         )
         metrics.append(person_metric)
@@ -583,7 +734,6 @@ def write_csv(path: Path, rows: Sequence[Any], fieldnames: Sequence[str]) -> Non
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run face/side/fuse experiment matrix.")
     parser.add_argument("--sam3d-root", type=Path, default=DEFAULT_SAM3D_ROOT)
-    parser.add_argument("--fused-root", type=Path, default=DEFAULT_FUSED_ROOT)
     parser.add_argument("--triangulated-root", type=Path, default=DEFAULT_TRIANGULATED_ROOT)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--person", nargs="*", default=None, help="Optional person ids, e.g. 27 29")
@@ -599,7 +749,6 @@ def main() -> None:
     all_joint_metrics: List[JointMetric] = []
     config = {
         "sam3d_root": str(args.sam3d_root),
-        "fused_root": str(args.fused_root),
         "triangulated_root": str(args.triangulated_root),
         "methods": list(args.methods),
         "stable_sim3_joints": list(STABLE_SIM3_JOINTS),
@@ -616,7 +765,6 @@ def main() -> None:
             person_id=person_id,
             methods=args.methods,
             sam3d_root=args.sam3d_root,
-            fused_root=args.fused_root,
             triangulated_root=args.triangulated_root,
             out_root=args.out_dir,
             save_frame_npz=args.save_frame_npz,

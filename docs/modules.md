@@ -20,12 +20,14 @@ Configuration: `configs/sam3d_body.yaml`
 
 ### `fuse/`
 
-Aligns face and side view SAM3D-Body results and writes fused 3D keypoints.
+Runs the default fusion experiment matrix for face and side view SAM3D-Body
+results. The matrix rebuilds temporal alignment, writes fused 3D keypoints, and
+exports metrics.
 
 Entry point:
 
 ```bash
-python -m fuse.main
+python -m fuse
 ```
 
 ### `split_cycle/`
@@ -56,6 +58,10 @@ sam3d_triangulated/person/person_<id>/cycle_<idx>/
 
 Configuration: `configs/sam3d_triangulation.yaml`
 
+Central guide: `triangulation/README.md`
+
+Report tooling: `triangulation/tools/generate_results_report.py`
+
 ### `project/train/`
 
 Contains dataloaders, models, trainers, and evaluation logic for classification
@@ -80,6 +86,9 @@ Contains analysis, metrics, comparison, and visualization scripts/notebooks.
 Support path for 3D pose triangulation from multi-view 2D keypoints.
 
 Configuration: `configs/triangulation.yaml`
+
+See `triangulation/README.md` for the active SAM3D triangulation workflow,
+output structure, result reports, related consumers, and focused tests.
 
 ### `camera_calibration/`
 

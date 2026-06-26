@@ -22,10 +22,10 @@ Run SAM3D-Body dataset preparation:
 conda run -n drivefusion python -m SAM3Dbody.main
 ```
 
-Run multi-view fusion:
+Run the default multi-view fusion experiment matrix:
 
 ```bash
-conda run -n drivefusion python -m fuse.main
+conda run -n drivefusion python -m fuse
 ```
 
 Run cycle segmentation:
@@ -38,7 +38,7 @@ Triangulate SAM3D-Body 2D keypoints using the `split_cycle` face/side alignment
 records:
 
 ```bash
-conda run -n drivefusion python -m triangulation.sam3d_from_split_cycle
+conda run -n gymnastic python -m triangulation.sam3d_from_split_cycle
 ```
 
 The output is written under:
@@ -59,7 +59,19 @@ person_<id>/cycle_<idx>/cycle_<idx>_3d.mp4
 Quick smoke test on one person/cycle:
 
 ```bash
-conda run -n drivefusion python -m triangulation.sam3d_from_split_cycle --person 1 --max-cycles 1 --max-frames 2
+conda run -n gymnastic python -m triangulation.sam3d_from_split_cycle --person 1 --max-cycles 1 --max-frames 2
+```
+
+Regenerate the triangulated-result quality report:
+
+```bash
+conda run -n gymnastic python triangulation/tools/generate_results_report.py
+```
+
+The consolidated triangulation guide is:
+
+```text
+triangulation/README.md
 ```
 
 Run classifier training:

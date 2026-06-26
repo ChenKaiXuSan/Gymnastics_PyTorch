@@ -2,10 +2,13 @@ import numpy as np
 
 from fuse.experiment_matrix import (
     apply_sim3,
+    build_aligned_timeline,
+    bodypart_weights,
     estimate_joint_weights,
     estimate_sim3,
     fuse_weighted,
     root_align_to_reference,
+    smooth_sequence,
 )
 
 
@@ -67,3 +70,53 @@ def test_fuse_weighted_uses_joint_weights():
 
     np.testing.assert_allclose(fused[0, 0], np.array([2.5, 2.5, 2.5]))
     np.testing.assert_allclose(fused[0, 1], np.array([7.5, 7.5, 7.5]))
+
+
+def test_build_aligned_timeline_converts_positions_to_frame_ids(monkeypatch):
+    def fake_theta(kpts, idx):
+        return np.arange(len(kpts), dtype=np.float32)
+
+    def fake_offset(face_theta, side_theta):
+        return -1
+
+    monkeypatch.setattr("fuse.experiment_matrix.compute_theta_unwrap_from_world", fake_theta)
+    monkeypatch.setattr("fuse.experiment_matrix.estimate_offset_by_dtw", fake_offset)
+
+    face_by_frame = {
+        10: np.full((2, 3), 10.0, dtype=np.float32),
+        11: np.full((2, 3), 11.0, dtype=np.float32),
+        12: np.full((2, 3), 12.0, dtype=np.float32),
+    }
+    side_by_frame = {
+        20: np.full((2, 3), 20.0, dtype=np.float32),
+        21: np.full((2, 3), 21.0, dtype=np.float32),
+        22: np.full((2, 3), 22.0, dtype=np.float32),
+    }
+
+    face, side, face_map, side_map, offset = build_aligned_timeline(face_by_frame, side_by_frame)
+
+    assert offset == -1
+    assert face_map.tolist() == [11, 12]
+    assert side_map.tolist() == [20, 21]
+    np.testing.assert_allclose(face[:, 0, 0], np.array([11.0, 12.0]))
+    np.testing.assert_allclose(side[:, 0, 0], np.array([20.0, 21.0]))
+
+
+def test_smooth_sequence_reduces_center_spike():
+    seq = np.zeros((5, 1, 3), dtype=np.float32)
+    seq[2, 0, 0] = 10.0
+
+    smoothed = smooth_sequence(seq, win=3)
+
+    assert smoothed.shape == seq.shape
+    assert smoothed[2, 0, 0] < 10.0
+    assert smoothed[2, 0, 0] > 0.0
+
+
+def test_bodypart_weights_are_valid_joint_weights():
+    weights = bodypart_weights(70)
+
+    assert weights.shape == (70, 2)
+    np.testing.assert_allclose(weights.sum(axis=1), np.ones(70))
+    assert weights[41, 0] > weights[41, 1]
+    assert weights[9, 0] == weights[9, 1]
