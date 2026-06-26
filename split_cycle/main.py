@@ -59,15 +59,19 @@ Date      	By	Comments
 
 from __future__ import annotations
 
+import argparse
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Tuple, Union
+from typing import Dict, List, Literal, Optional, Sequence, Tuple, Union
 
 import cv2
-import librosa
 import numpy as np
+try:
+    import librosa
+except Exception:
+    librosa = None
 try:
     import matplotlib
     matplotlib.use("Agg")
@@ -185,10 +189,16 @@ def estimate_offset_by_dtw(a: np.ndarray, b: np.ndarray):
     a_norm = (a - np.nanmean(a)) / (np.nanstd(a) + 1e-8)
     b_norm = (b - np.nanmean(b)) / (np.nanstd(b) + 1e-8)
 
+    if librosa is None:
+        offset, _ = estimate_offset_from_audio_envelopes(
+            a_norm, b_norm, hop_seconds=1.0, fps=1.0
+        )
+        return offset
+
     # 2. 计算 DTW 路径
     # D: 累计距离矩阵, wp: 匹配路径 (warp path)
     # wp 是一个形状为 (N, 2) 的数组，每一行是 [index_a, index_b]
-    D, wp = librosa.sequence.dtw(a_norm, b_norm, backtrack=True)
+    _, wp = librosa.sequence.dtw(a_norm, b_norm, backtrack=True)
 
     # 3. 从路径中估算偏移
     # 路径中的每一对 [i, j] 代表 a[i] 和 b[j] 是匹配的
@@ -256,6 +266,8 @@ def extract_audio_envelope(
 
     librosa/audioread will use the system media backend for MOV audio.
     """
+    if librosa is None:
+        raise ImportError("librosa is not installed; audio alignment is unavailable")
     y, _ = librosa.load(str(video_path), sr=sr, mono=True)
     if y is None or len(y) == 0:
         raise ValueError(f"no audio samples loaded from {video_path}")
@@ -768,17 +780,74 @@ def process_person(person_id: str, raw_root: Path, kpt_root: Path, log_root: Pat
         return False
 
 
+def resolve_person_ids(person_root: Path, wanted: Optional[Sequence[str]]) -> List[str]:
+    person_ids = sorted([d.name for d in person_root.iterdir() if d.is_dir()], key=int)
+    if wanted is None:
+        return person_ids
+    wanted_set = {str(person_id) for person_id in wanted}
+    return [person_id for person_id in person_ids if person_id in wanted_set]
+
+
+def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Align face/side SAM3D-Body sequences and split motion cycles."
+    )
+    parser.add_argument(
+        "legacy_threads",
+        nargs="?",
+        type=int,
+        help="Legacy positional thread count, e.g. python -m split_cycle.main 11",
+    )
+    parser.add_argument("--threads", type=int, default=None)
+    parser.add_argument("--person", nargs="*", default=None, help="Person ids to process")
+    parser.add_argument(
+        "--raw-root",
+        type=Path,
+        default=Path("/home/data/xchen/gymnastics/raw"),
+        help="Root that contains person/<id>/ID<id>_<view>.MOV",
+    )
+    parser.add_argument(
+        "--kpt-root",
+        type=Path,
+        default=Path("/home/data/xchen/gymnastics/sam3d_body_results"),
+        help="Root that contains person/<id>/<view>/*_sam3d_body.npz",
+    )
+    parser.add_argument(
+        "--log-root",
+        type=Path,
+        default=Path("/home/data/xchen/gymnastics/split_cycle"),
+        help="Output root for person_<id>/alignment_record_<id>.json",
+    )
+    args = parser.parse_args(argv)
+    args.threads = (
+        args.threads
+        if args.threads is not None
+        else args.legacy_threads
+        if args.legacy_threads is not None
+        else 11
+    )
+    if args.threads < 1:
+        parser.error("--threads must be >= 1")
+    return args
+
+
 # -------------------- main --------------------
-def main(num_threads: int = 4):
+def main(
+    num_threads: int = 4,
+    raw_root: Path = Path("/home/data/xchen/gymnastics/raw"),
+    kpt_root: Path = Path("/home/data/xchen/gymnastics/sam3d_body_results"),
+    log_root: Path = Path("/home/data/xchen/gymnastics/split_cycle"),
+    person_ids: Optional[Sequence[str]] = None,
+):
     """
     主处理函数
     
     Args:
         num_threads: 并发线程数，默认为 4
     """
-    raw_root = Path("/workspace/data/raw")
-    kpt_root = Path("/workspace/data/sam3d_body_results")
-    log_root = Path("logs/split_cycle")
+    raw_root = Path(raw_root)
+    kpt_root = Path(kpt_root)
+    log_root = Path(log_root)
 
     # 获取所有人物文件夹
     person_root = kpt_root / "person"
@@ -786,9 +855,7 @@ def main(num_threads: int = 4):
         print(f"✗ Error: person directory not found at {person_root}")
         return
 
-    person_ids = sorted([d.name for d in person_root.iterdir() if d.is_dir()], key=int)
-    # person_ids = ['5', '9', '14', '18', '29', '37', '40', '44']
-    # person_ids = ['9', '29', '37', '40', '44']
+    person_ids = resolve_person_ids(person_root, person_ids)
     print(f"Found {len(person_ids)} persons: {person_ids}\n")
     print(f"Using {num_threads} threads for processing\n")
 
@@ -822,18 +889,11 @@ def main(num_threads: int = 4):
 
 
 if __name__ == "__main__":
-    import sys
-    
-    # 从命令行参数获取线程数，默认为 15
-    num_threads = 11
-    if len(sys.argv) > 1:
-        try:
-            num_threads = int(sys.argv[1])
-            if num_threads < 1:
-                print("Error: num_threads must be >= 1")
-                sys.exit(1)
-        except ValueError:
-            print(f"Error: invalid num_threads '{sys.argv[1]}', must be an integer")
-            sys.exit(1)
-    
-    main(num_threads=num_threads)
+    args = parse_args()
+    main(
+        num_threads=args.threads,
+        raw_root=args.raw_root,
+        kpt_root=args.kpt_root,
+        log_root=args.log_root,
+        person_ids=args.person,
+    )

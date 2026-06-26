@@ -221,10 +221,14 @@ def person_id_from_dir(path: Path) -> str:
     return path.name.removeprefix("person_")
 
 
-def sam3d_view_dir(sam3d_root: Path, person_id: str, view: str) -> Path:
+def sam3d_person_root(sam3d_root: Path) -> Path:
     if sam3d_root.name == "sam3d_body_results":
-        return sam3d_root / "person" / person_id / view
-    return sam3d_root / "sam3d_body_results" / "person" / person_id / view
+        return sam3d_root / "person"
+    return sam3d_root / "sam3d_body_results" / "person"
+
+
+def sam3d_view_dir(sam3d_root: Path, person_id: str, view: str) -> Path:
+    return sam3d_person_root(sam3d_root) / person_id / view
 
 
 def load_sam3d_world_by_frame(sam3d_root: Path, person_id: str, view: str) -> Dict[int, np.ndarray]:
@@ -614,6 +618,7 @@ def process_person(
     side_by_frame = load_sam3d_world_by_frame(sam3d_root, person_id, "side")
     face, side, face_map, side_map, offset = build_aligned_timeline(face_by_frame, side_by_frame)
     triangulated_person_root = triangulated_root / f"person_{person_id}"
+    has_triangulated = triangulated_person_root.exists() and any(triangulated_person_root.glob("cycle_*"))
 
     sim3_all = None
     sim3_stable = None
@@ -649,9 +654,14 @@ def process_person(
         elif method == "sim3_face_stable_joint_weight":
             if sim3_stable is None:
                 sim3_stable, sim3_stable_scales = sim3_align_to_reference(side, face, STABLE_SIM3_JOINTS)
-            weights = estimate_weights_from_triangulated(
-                face, sim3_stable, face_map, side_map, triangulated_person_root
-            )
+            if has_triangulated:
+                weights = estimate_weights_from_triangulated(
+                    face, sim3_stable, face_map, side_map, triangulated_person_root
+                )
+                extra["joint_weight_source"] = "triangulated"
+            else:
+                weights = np.full((face.shape[1], 2), 0.5, dtype=np.float32)
+                extra["joint_weight_source"] = "missing_triangulated_equal_fallback"
             extra["sim3_joints"] = list(STABLE_SIM3_JOINTS)
             extra["joint_weights"] = weights.tolist()
             extra["scale_mean"] = float(np.mean(sim3_stable_scales))
@@ -699,25 +709,33 @@ def process_person(
                 fps=60.0,
             )
 
-        person_metric, per_joint = evaluate_sequence(
-            person_id=person_id,
-            method=method,
-            fused_world=fused_world,
-            face_map=face_map,
-            side_map=side_map,
-            triangulated_person_root=triangulated_person_root,
-        )
-        metrics.append(person_metric)
-        joint_metrics.extend(per_joint)
-        print(f"[metric] person_{person_id} {method}: mpjpe={person_metric.mpjpe:.6g}")
+        if has_triangulated:
+            person_metric, per_joint = evaluate_sequence(
+                person_id=person_id,
+                method=method,
+                fused_world=fused_world,
+                face_map=face_map,
+                side_map=side_map,
+                triangulated_person_root=triangulated_person_root,
+            )
+            metrics.append(person_metric)
+            joint_metrics.extend(per_joint)
+            print(f"[metric] person_{person_id} {method}: mpjpe={person_metric.mpjpe:.6g}")
+        else:
+            print(f"[metric] person_{person_id} {method}: skipped missing triangulated GT")
 
     return metrics, joint_metrics
 
 
-def iter_person_ids(triangulated_root: Path, wanted: Sequence[str] | None) -> Iterable[str]:
+def iter_person_ids(sam3d_root: Path, wanted: Sequence[str] | None) -> Iterable[str]:
     wanted_set = {str(item) for item in wanted} if wanted else None
-    for person_dir in sorted(triangulated_root.glob("person_*"), key=lambda p: int(person_id_from_dir(p))):
-        person_id = person_id_from_dir(person_dir)
+    person_dirs = [
+        person_dir
+        for person_dir in sam3d_person_root(sam3d_root).iterdir()
+        if person_dir.is_dir() and person_dir.name.isdigit()
+    ]
+    for person_dir in sorted(person_dirs, key=lambda p: int(p.name)):
+        person_id = person_dir.name
         if wanted_set is None or person_id in wanted_set:
             yield person_id
 
@@ -759,7 +777,7 @@ def main() -> None:
         encoding="utf-8",
     )
 
-    for person_id in iter_person_ids(args.triangulated_root, args.person):
+    for person_id in iter_person_ids(args.sam3d_root, args.person):
         print(f"[person] {person_id}")
         person_metrics, joint_metrics = process_person(
             person_id=person_id,
@@ -785,7 +803,10 @@ def main() -> None:
 
     for method in args.methods:
         values = [row.mpjpe for row in all_person_metrics if row.method == method]
-        print(f"[summary] {method}: mean_person_mpjpe={np.nanmean(values):.6g}")
+        if values:
+            print(f"[summary] {method}: mean_person_mpjpe={np.nanmean(values):.6g}")
+        else:
+            print(f"[summary] {method}: no triangulated GT metrics")
     print(f"[save] {args.out_dir / 'metrics_by_person.csv'}")
     print(f"[save] {args.out_dir / 'metrics_by_joint.csv'}")
 

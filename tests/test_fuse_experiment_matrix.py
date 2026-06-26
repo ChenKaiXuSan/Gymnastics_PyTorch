@@ -7,7 +7,9 @@ from fuse.experiment_matrix import (
     estimate_joint_weights,
     estimate_sim3,
     fuse_weighted,
+    iter_person_ids,
     root_align_to_reference,
+    sam3d_person_root,
     smooth_sequence,
 )
 
@@ -120,3 +122,14 @@ def test_bodypart_weights_are_valid_joint_weights():
     np.testing.assert_allclose(weights.sum(axis=1), np.ones(70))
     assert weights[41, 0] > weights[41, 1]
     assert weights[9, 0] == weights[9, 1]
+
+
+def test_iter_person_ids_discovers_from_sam3d_person_root(tmp_path):
+    sam3d_root = tmp_path / "sam3d_body_results"
+    person_root = sam3d_root / "person"
+    for name in ["10", "2", "notes", "46"]:
+        (person_root / name).mkdir(parents=True)
+
+    assert sam3d_person_root(sam3d_root) == person_root
+    assert list(iter_person_ids(sam3d_root, None)) == ["2", "10", "46"]
+    assert list(iter_person_ids(sam3d_root, ["46", "99"])) == ["46"]
