@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -73,6 +74,7 @@ try:
 except Exception:
     librosa = None
 try:
+    os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -195,10 +197,9 @@ def estimate_offset_by_dtw(a: np.ndarray, b: np.ndarray):
         )
         return offset
 
-    # 2. 计算 DTW 路径
-    # D: 累计距离矩阵, wp: 匹配路径 (warp path)
-    # wp 是一个形状为 (N, 2) 的数组，每一行是 [index_a, index_b]
-    _, wp = librosa.sequence.dtw(a_norm, b_norm, backtrack=True)
+    # 2. 计算 DTW 路径。这里不用 librosa，避免运行环境里的 numba cache 问题
+    # 影响 cycle 切分主流程。
+    wp = dtw_warp_path_1d(a_norm, b_norm)
 
     # 3. 从路径中估算偏移
     # 路径中的每一对 [i, j] 代表 a[i] 和 b[j] 是匹配的
@@ -209,6 +210,54 @@ def estimate_offset_by_dtw(a: np.ndarray, b: np.ndarray):
     best_s = int(np.median(offsets))
 
     return best_s
+
+
+def dtw_warp_path_1d(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """
+    Return DTW warp path pairs [index_a, index_b] for two 1D sequences.
+    """
+    a = np.asarray(a, dtype=np.float32).reshape(-1)
+    b = np.asarray(b, dtype=np.float32).reshape(-1)
+    n, m = len(a), len(b)
+    if n == 0 or m == 0:
+        raise ValueError("DTW input sequences must be non-empty")
+
+    acc = np.full((n + 1, m + 1), np.inf, dtype=np.float32)
+    acc[0, 0] = 0.0
+
+    for i in range(1, n + 1):
+        ai = a[i - 1]
+        for j in range(1, m + 1):
+            cost = abs(ai - b[j - 1])
+            acc[i, j] = cost + min(acc[i - 1, j], acc[i, j - 1], acc[i - 1, j - 1])
+
+    i, j = n, m
+    path = []
+    while i > 0 and j > 0:
+        path.append((i - 1, j - 1))
+        candidates = (
+            acc[i - 1, j - 1],
+            acc[i - 1, j],
+            acc[i, j - 1],
+        )
+        step = int(np.argmin(candidates))
+        if step == 0:
+            i -= 1
+            j -= 1
+        elif step == 1:
+            i -= 1
+        else:
+            j -= 1
+
+    while i > 0:
+        path.append((i - 1, 0))
+        i -= 1
+    while j > 0:
+        path.append((0, j - 1))
+        j -= 1
+
+    path.reverse()
+    return np.asarray(path, dtype=np.int32)
 
 
 def _normalize_audio_envelope(env: np.ndarray) -> np.ndarray:
@@ -815,7 +864,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--log-root",
         type=Path,
-        default=Path("/home/data/xchen/gymnastics/split_cycle"),
+        default=Path("logs/split_cycle"),
         help="Output root for person_<id>/alignment_record_<id>.json",
     )
     args = parser.parse_args(argv)
@@ -836,7 +885,7 @@ def main(
     num_threads: int = 4,
     raw_root: Path = Path("/home/data/xchen/gymnastics/raw"),
     kpt_root: Path = Path("/home/data/xchen/gymnastics/sam3d_body_results"),
-    log_root: Path = Path("/home/data/xchen/gymnastics/split_cycle"),
+    log_root: Path = Path("logs/split_cycle"),
     person_ids: Optional[Sequence[str]] = None,
 ):
     """

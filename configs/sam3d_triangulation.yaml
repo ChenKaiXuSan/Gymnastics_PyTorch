@@ -4,7 +4,7 @@ data_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}
 
 paths:
   sam3d_person_root: ${data_root}/sam3d_body_results/person
-  split_cycle_root: ${data_root}/split_cycle
+  split_cycle_root: logs/split_cycle
   output_root: ${data_root}/sam3d_triangulated/person
 
 calibration:
