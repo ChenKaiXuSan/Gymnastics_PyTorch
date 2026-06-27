@@ -17,6 +17,7 @@ from fuse.save import save_fused_kpts
 
 DEFAULT_SAM3D_ROOT = Path("/home/data/xchen/gymnastics/sam3d_body_results")
 DEFAULT_TRIANGULATED_ROOT = Path("/home/data/xchen/gymnastics/sam3d_triangulated/person")
+DEFAULT_SPLIT_ROOT = Path("logs/split_cycle")
 DEFAULT_OUT_DIR = Path("logs/fuse_experiments")
 
 PELVIS_INDICES = (9, 10)
@@ -245,9 +246,22 @@ def load_sam3d_world_by_frame(sam3d_root: Path, person_id: str, view: str) -> Di
     return frames
 
 
+def load_split_alignment_offset(split_root: Path, person_id: str) -> Tuple[int, Dict[str, Any]]:
+    record_path = split_root / f"person_{person_id}" / f"alignment_record_{person_id}.json"
+    if not record_path.exists():
+        raise FileNotFoundError(f"Missing split alignment record: {record_path}")
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    metadata = dict(record.get("metadata", {}))
+    if "offset_side_to_face" not in metadata:
+        raise KeyError(f"Missing offset_side_to_face in split alignment record: {record_path}")
+    metadata["alignment_record"] = str(record_path)
+    return int(metadata["offset_side_to_face"]), metadata
+
+
 def build_aligned_timeline(
     face_by_frame: Mapping[int, np.ndarray],
     side_by_frame: Mapping[int, np.ndarray],
+    offset_override: int | None = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
     """Estimate time offset from SAM3D 3D sequences and return overlap in original frame ids."""
     face_ids = np.asarray(sorted(face_by_frame), dtype=np.int32)
@@ -258,9 +272,12 @@ def build_aligned_timeline(
     face_seq = np.stack([face_by_frame[int(frame_id)] for frame_id in face_ids], axis=0).astype(np.float32)
     side_seq = np.stack([side_by_frame[int(frame_id)] for frame_id in side_ids], axis=0).astype(np.float32)
 
-    theta_face = compute_theta_unwrap_from_world(face_seq, IDX)
-    theta_side = compute_theta_unwrap_from_world(side_seq, IDX)
-    offset = estimate_offset_by_dtw(theta_face, theta_side)
+    if offset_override is None:
+        theta_face = compute_theta_unwrap_from_world(face_seq, IDX)
+        theta_side = compute_theta_unwrap_from_world(side_seq, IDX)
+        offset = estimate_offset_by_dtw(theta_face, theta_side)
+    else:
+        offset = int(offset_override)
 
     face_u, side_u, face_pos_u, side_pos_u = align_to_common_timeline(
         face_seq, side_seq, offset, pad_value=np.nan
@@ -611,12 +628,18 @@ def process_person(
     methods: Sequence[str],
     sam3d_root: Path,
     triangulated_root: Path,
+    split_root: Path,
     out_root: Path,
     save_frame_npz: bool,
 ) -> Tuple[List[PersonMetric], List[JointMetric]]:
     face_by_frame = load_sam3d_world_by_frame(sam3d_root, person_id, "face")
     side_by_frame = load_sam3d_world_by_frame(sam3d_root, person_id, "side")
-    face, side, face_map, side_map, offset = build_aligned_timeline(face_by_frame, side_by_frame)
+    split_offset, split_metadata = load_split_alignment_offset(split_root, person_id)
+    face, side, face_map, side_map, offset = build_aligned_timeline(
+        face_by_frame,
+        side_by_frame,
+        offset_override=split_offset,
+    )
     triangulated_person_root = triangulated_root / f"person_{person_id}"
     has_triangulated = triangulated_person_root.exists() and any(triangulated_person_root.glob("cycle_*"))
 
@@ -629,8 +652,9 @@ def process_person(
 
     for method in methods:
         extra: Dict[str, Any] = {
-            "time_alignment": "right_hand_theta_dtw",
+            "time_alignment": "split_alignment_record",
             "offset_side_to_face": int(offset),
+            "split_alignment": split_metadata,
             "fusion_method": method,
         }
         if method == "avg_body_current":
@@ -753,6 +777,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run face/side/fuse experiment matrix.")
     parser.add_argument("--sam3d-root", type=Path, default=DEFAULT_SAM3D_ROOT)
     parser.add_argument("--triangulated-root", type=Path, default=DEFAULT_TRIANGULATED_ROOT)
+    parser.add_argument("--split-root", type=Path, default=DEFAULT_SPLIT_ROOT)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--person", nargs="*", default=None, help="Optional person ids, e.g. 27 29")
     parser.add_argument("--methods", nargs="*", default=list(ALL_METHODS), choices=ALL_METHODS)
@@ -768,6 +793,7 @@ def main() -> None:
     config = {
         "sam3d_root": str(args.sam3d_root),
         "triangulated_root": str(args.triangulated_root),
+        "split_root": str(args.split_root),
         "methods": list(args.methods),
         "stable_sim3_joints": list(STABLE_SIM3_JOINTS),
         "save_frame_npz": bool(args.save_frame_npz),
@@ -784,6 +810,7 @@ def main() -> None:
             methods=args.methods,
             sam3d_root=args.sam3d_root,
             triangulated_root=args.triangulated_root,
+            split_root=args.split_root,
             out_root=args.out_dir,
             save_frame_npz=args.save_frame_npz,
         )

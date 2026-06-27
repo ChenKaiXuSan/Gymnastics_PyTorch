@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from fuse.experiment_matrix import (
     apply_sim3,
@@ -8,6 +9,7 @@ from fuse.experiment_matrix import (
     estimate_sim3,
     fuse_weighted,
     iter_person_ids,
+    load_split_alignment_offset,
     root_align_to_reference,
     sam3d_person_root,
     smooth_sequence,
@@ -102,6 +104,69 @@ def test_build_aligned_timeline_converts_positions_to_frame_ids(monkeypatch):
     assert side_map.tolist() == [20, 21]
     np.testing.assert_allclose(face[:, 0, 0], np.array([11.0, 12.0]))
     np.testing.assert_allclose(side[:, 0, 0], np.array([20.0, 21.0]))
+
+
+def test_build_aligned_timeline_uses_split_offset_override(monkeypatch):
+    def fail_if_called(face_theta, side_theta):
+        raise AssertionError("DTW should not run when split offset is provided")
+
+    monkeypatch.setattr("fuse.experiment_matrix.estimate_offset_by_dtw", fail_if_called)
+
+    face_by_frame = {
+        10: np.full((2, 3), 10.0, dtype=np.float32),
+        11: np.full((2, 3), 11.0, dtype=np.float32),
+        12: np.full((2, 3), 12.0, dtype=np.float32),
+    }
+    side_by_frame = {
+        20: np.full((2, 3), 20.0, dtype=np.float32),
+        21: np.full((2, 3), 21.0, dtype=np.float32),
+        22: np.full((2, 3), 22.0, dtype=np.float32),
+    }
+
+    face, side, face_map, side_map, offset = build_aligned_timeline(
+        face_by_frame, side_by_frame, offset_override=-1
+    )
+
+    assert offset == -1
+    assert face_map.tolist() == [11, 12]
+    assert side_map.tolist() == [20, 21]
+    np.testing.assert_allclose(face[:, 0, 0], np.array([11.0, 12.0]))
+    np.testing.assert_allclose(side[:, 0, 0], np.array([20.0, 21.0]))
+
+
+def test_load_split_alignment_offset_reads_alignment_record(tmp_path):
+    split_root = tmp_path / "split_cycle"
+    person_root = split_root / "person_47"
+    person_root.mkdir(parents=True)
+    (person_root / "alignment_record_47.json").write_text(
+        '{"metadata": {"offset_side_to_face": -11, "offset_source": "kpt_audio_avg"}}',
+        encoding="utf-8",
+    )
+
+    offset, metadata = load_split_alignment_offset(split_root, "47")
+
+    assert offset == -11
+    assert metadata["offset_source"] == "kpt_audio_avg"
+
+
+def test_load_split_alignment_offset_requires_alignment_record(tmp_path):
+    split_root = tmp_path / "split_cycle"
+
+    with pytest.raises(FileNotFoundError):
+        load_split_alignment_offset(split_root, "47")
+
+
+def test_load_split_alignment_offset_requires_offset_value(tmp_path):
+    split_root = tmp_path / "split_cycle"
+    person_root = split_root / "person_47"
+    person_root.mkdir(parents=True)
+    (person_root / "alignment_record_47.json").write_text(
+        '{"metadata": {"offset_source": "kpt_audio_avg"}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(KeyError):
+        load_split_alignment_offset(split_root, "47")
 
 
 def test_smooth_sequence_reduces_center_spike():
