@@ -131,3 +131,4 @@ MNIST
 logs
 camera_calibration/input_video
 ckpt/
+.worktrees/
