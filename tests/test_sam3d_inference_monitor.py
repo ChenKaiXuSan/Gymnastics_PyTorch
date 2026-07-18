@@ -1,6 +1,18 @@
 import pytest
+from types import SimpleNamespace
 
 from scripts import monitor_sam3d_inference as monitor
+
+
+def _write_completed_person(result_root, log_root, person_id):
+    for view in ("face", "side"):
+        view_dir = result_root / str(person_id) / view
+        view_dir.mkdir(parents=True, exist_ok=True)
+        (view_dir / "000000_sam3d_body.npz").write_bytes(view.encode("ascii"))
+    log_root.mkdir(parents=True, exist_ok=True)
+    (log_root / f"{person_id}.log").write_text(
+        f"==== Finished Person: {person_id} ====\n", encoding="utf-8"
+    )
 
 
 def test_parse_person_ids_supports_ranges_and_gap():
@@ -245,3 +257,232 @@ def test_send_once_does_not_record_failed_delivery():
 
     assert not monitor.send_once(notification, state, lambda _: False)
     assert state.sent_fingerprints == []
+
+
+def test_parse_args_has_current_run_defaults():
+    args = monitor.parse_args([])
+
+    assert args.person_ids == "69-134,136-138"
+    assert args.poll_seconds == 60
+    assert args.stall_seconds == 1800
+    assert args.process_match == "infer.workers_per_gpu=2"
+
+
+def test_poll_once_sends_completion_and_returns_zero(tmp_path):
+    result_root = tmp_path / "person"
+    person_logs = tmp_path / "person_logs"
+    run_log = tmp_path / "run.log"
+    state_path = tmp_path / "state.json"
+    _write_completed_person(result_root, person_logs, 69)
+    run_log.write_text("", encoding="utf-8")
+    args = monitor.parse_args(
+        [
+            "--person-ids",
+            "69",
+            "--result-root",
+            str(result_root),
+            "--person-log-root",
+            str(person_logs),
+            "--run-log",
+            str(run_log),
+            "--state-file",
+            str(state_path),
+            "--once",
+        ]
+    )
+    state = monitor.MonitorState.new(now=100.0)
+    sent = []
+
+    def sender(notification):
+        sent.append(notification)
+        return True
+
+    exit_code = monitor.poll_once(args, state, sender, 120.0, [])
+
+    assert exit_code == 0
+    assert [notification.kind for notification in sent] == ["COMPLETED"]
+    assert "Elapsed monitor seconds: 20" in sent[0].body
+    assert f"Output path: {result_root}" in sent[0].body
+    assert state_path.exists()
+
+
+def test_poll_once_retries_completion_when_delivery_fails(tmp_path):
+    result_root = tmp_path / "person"
+    person_logs = tmp_path / "person_logs"
+    _write_completed_person(result_root, person_logs, 69)
+    args = monitor.parse_args(
+        [
+            "--person-ids",
+            "69",
+            "--result-root",
+            str(result_root),
+            "--person-log-root",
+            str(person_logs),
+            "--run-log",
+            str(tmp_path / "run.log"),
+            "--state-file",
+            str(tmp_path / "state.json"),
+        ]
+    )
+    state = monitor.MonitorState.new(now=100.0)
+
+    exit_code = monitor.poll_once(args, state, lambda _: False, 120.0, [])
+
+    assert exit_code is None
+    assert state.sent_fingerprints == []
+
+
+def test_poll_once_reports_stopped_incomplete_run(tmp_path):
+    args = monitor.parse_args(
+        [
+            "--person-ids",
+            "69",
+            "--result-root",
+            str(tmp_path / "person"),
+            "--person-log-root",
+            str(tmp_path / "person_logs"),
+            "--run-log",
+            str(tmp_path / "run.log"),
+            "--state-file",
+            str(tmp_path / "state.json"),
+            "--once",
+        ]
+    )
+    state = monitor.MonitorState.new(now=100.0)
+    sent = []
+
+    def sender(notification):
+        sent.append(notification)
+        return True
+
+    exit_code = monitor.poll_once(args, state, sender, 120.0, [])
+
+    assert exit_code == 1
+    assert [notification.kind for notification in sent] == ["STOPPED"]
+
+
+def test_poll_once_retries_fatal_log_when_delivery_fails(tmp_path):
+    run_log = tmp_path / "run.log"
+    run_log.write_text("CUDA error: device unavailable\n", encoding="utf-8")
+    args = monitor.parse_args(
+        [
+            "--person-ids",
+            "69",
+            "--result-root",
+            str(tmp_path / "person"),
+            "--person-log-root",
+            str(tmp_path / "person_logs"),
+            "--run-log",
+            str(run_log),
+            "--state-file",
+            str(tmp_path / "state.json"),
+        ]
+    )
+    state = monitor.MonitorState.new(now=100.0)
+    active = ["python -m SAM3Dbody.main infer.workers_per_gpu=2"]
+
+    exit_code = monitor.poll_once(args, state, lambda _: False, 120.0, active)
+
+    assert exit_code is None
+    assert state.log_offset == 0
+    assert state.sent_fingerprints == []
+
+
+def test_poll_once_reports_stall_and_recovery(tmp_path):
+    result_root = tmp_path / "person"
+    args = monitor.parse_args(
+        [
+            "--person-ids",
+            "69",
+            "--result-root",
+            str(result_root),
+            "--person-log-root",
+            str(tmp_path / "person_logs"),
+            "--run-log",
+            str(tmp_path / "run.log"),
+            "--state-file",
+            str(tmp_path / "state.json"),
+            "--stall-seconds",
+            "1800",
+        ]
+    )
+    state = monitor.MonitorState.new(now=0.0)
+    active = ["python -m SAM3Dbody.main infer.workers_per_gpu=2"]
+    sent = []
+
+    def sender(notification):
+        sent.append(notification)
+        return True
+
+    assert monitor.poll_once(args, state, sender, 1800.0, active) is None
+    assert state.stalled
+    assert [notification.kind for notification in sent] == ["STALLED"]
+
+    face_dir = result_root / "69" / "face"
+    face_dir.mkdir(parents=True)
+    (face_dir / "000000_sam3d_body.npz").write_bytes(b"face")
+
+    assert monitor.poll_once(args, state, sender, 1810.0, active) is None
+    assert not state.stalled
+    assert [notification.kind for notification in sent] == ["STALLED", "RECOVERED"]
+
+
+def test_list_process_commands_uses_ps_runner():
+    calls = []
+
+    def runner(command, **kwargs):
+        calls.append((command, kwargs))
+        return SimpleNamespace(stdout="python -m SAM3Dbody.main\n")
+
+    commands = monitor.list_process_commands(runner=runner)
+
+    assert commands == ["python -m SAM3Dbody.main"]
+    assert calls[0][0] == ["ps", "-eo", "args="]
+    assert calls[0][1]["check"] is True
+
+
+def test_main_once_sends_with_private_config_without_real_network(tmp_path, monkeypatch):
+    result_root = tmp_path / "person"
+    person_logs = tmp_path / "person_logs"
+    state_path = tmp_path / "state.json"
+    run_log = tmp_path / "run.log"
+    smtp_config = tmp_path / "smtp.env"
+    _write_completed_person(result_root, person_logs, 69)
+    run_log.write_text("", encoding="utf-8")
+    smtp_config.write_text(
+        "SMTP_HOST=smtp.gmail.com\n"
+        "SMTP_PORT=465\n"
+        "SMTP_USER=chenkaixusan@gmail.com\n"
+        "SMTP_APP_PASSWORD=abcdefghijklmnop\n"
+        "EMAIL_TO=chenkaixusan@gmail.com\n",
+        encoding="utf-8",
+    )
+    smtp_config.chmod(0o600)
+    deliveries = []
+
+    def fake_send_email(settings, notification):
+        deliveries.append((settings.recipient, notification.kind))
+
+    monkeypatch.setattr(monitor, "send_email", fake_send_email)
+
+    exit_code = monitor.main(
+        [
+            "--person-ids",
+            "69",
+            "--result-root",
+            str(result_root),
+            "--person-log-root",
+            str(person_logs),
+            "--run-log",
+            str(run_log),
+            "--state-file",
+            str(state_path),
+            "--smtp-config",
+            str(smtp_config),
+            "--once",
+        ]
+    )
+
+    assert exit_code == 0
+    assert deliveries == [("chenkaixusan@gmail.com", "COMPLETED")]
+    assert state_path.exists()

@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 
+import argparse
 import hashlib
 import json
+import logging
 import os
 import smtplib
 import stat
+import subprocess
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -21,6 +25,12 @@ FATAL_MARKERS = (
     "CUDA error",
     "Killed",
     "No module named",
+)
+
+DEFAULT_RESULT_ROOT = Path("/home/data/xchen/gymnastics/sam3d_body_results/person")
+DEFAULT_LOG_ROOT = Path("/home/data/xchen/gymnastics/sam3d_body_results/logs")
+DEFAULT_SMTP_CONFIG = Path(
+    "/home/workspace/kaixu/.config/gymnastics/sam3d_monitor.env"
 )
 
 
@@ -257,3 +267,142 @@ def send_once(
         return False
     state.sent_fingerprints.append(notification.fingerprint)
     return True
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Monitor SAM3D-Body inference")
+    parser.add_argument("--person-ids", default="69-134,136-138")
+    parser.add_argument("--result-root", type=Path, default=DEFAULT_RESULT_ROOT)
+    parser.add_argument(
+        "--person-log-root", type=Path, default=DEFAULT_LOG_ROOT / "person_logs"
+    )
+    parser.add_argument(
+        "--run-log",
+        type=Path,
+        default=DEFAULT_LOG_ROOT / "sam3dbody_new_20260718_w2.stdout.log",
+    )
+    parser.add_argument(
+        "--state-file",
+        type=Path,
+        default=DEFAULT_LOG_ROOT / "sam3dbody_monitor_state.json",
+    )
+    parser.add_argument("--smtp-config", type=Path, default=DEFAULT_SMTP_CONFIG)
+    parser.add_argument("--poll-seconds", type=int, default=60)
+    parser.add_argument("--stall-seconds", type=int, default=1800)
+    parser.add_argument("--process-match", default="infer.workers_per_gpu=2")
+    parser.add_argument("--once", action="store_true")
+    return parser.parse_args(argv)
+
+
+def list_process_commands(runner=subprocess.run) -> list[str]:
+    result = runner(
+        ["ps", "-eo", "args="], check=True, capture_output=True, text=True
+    )
+    return result.stdout.splitlines()
+
+
+def poll_once(
+    args: argparse.Namespace,
+    state: MonitorState,
+    sender: Callable[[Notification], bool],
+    now: float,
+    process_commands: Sequence[str],
+) -> int | None:
+    person_ids = parse_person_ids(args.person_ids)
+    snapshot = collect_progress(person_ids, args.result_root, args.person_log_root)
+    progressed = update_progress_state(state, snapshot, now)
+
+    previous_log_offset = state.log_offset
+    errors, new_log_offset = scan_new_fatal_errors(args.run_log, state.log_offset)
+    errors_delivered = True
+    for error in errors:
+        if not send_once(make_notification("ERROR", error, snapshot), state, sender):
+            errors_delivered = False
+            break
+    state.log_offset = new_log_offset if errors_delivered else previous_log_offset
+
+    if not snapshot.incomplete_ids:
+        elapsed_seconds = max(0, int(now - state.started_at))
+        detail = (
+            f"All {len(person_ids)} target persons completed.\n"
+            f"Elapsed monitor seconds: {elapsed_seconds}\n"
+            f"Output path: {args.result_root}"
+        )
+        delivered = send_once(
+            make_notification("COMPLETED", detail, snapshot), state, sender
+        )
+        save_state(args.state_file, state)
+        return 0 if delivered else None
+
+    active = process_is_active(process_commands, args.process_match)
+    if not active:
+        detail = "Inference exited with incomplete persons: " + ",".join(
+            map(str, snapshot.incomplete_ids)
+        )
+        delivered = send_once(
+            make_notification("STOPPED", detail, snapshot), state, sender
+        )
+        save_state(args.state_file, state)
+        return 1 if delivered else None
+
+    if progressed and state.stalled:
+        delivered = send_once(
+            make_notification("RECOVERED", "Output resumed after a stall.", snapshot),
+            state,
+            sender,
+        )
+        if delivered:
+            state.stalled = False
+    elif is_stalled(state, now, args.stall_seconds) and not state.stalled:
+        delivered = send_once(
+            make_notification(
+                "STALLED",
+                f"No NPZ progress for at least {args.stall_seconds} seconds.",
+                snapshot,
+            ),
+            state,
+            sender,
+        )
+        if delivered:
+            state.stalled = True
+
+    save_state(args.state_file, state)
+    logging.info(
+        "completed=%d/%d npz=%d active=%s",
+        len(snapshot.completed_ids),
+        len(person_ids),
+        snapshot.npz_count,
+        active,
+    )
+    return None
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(argv)
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+    )
+    settings = load_smtp_settings(args.smtp_config)
+    state = load_state(args.state_file, now=time.time())
+
+    def sender(notification: Notification) -> bool:
+        try:
+            send_email(settings, notification)
+        except (OSError, smtplib.SMTPException):
+            logging.exception("email delivery failed; the next poll will retry")
+            return False
+        return True
+
+    while True:
+        exit_code = poll_once(
+            args, state, sender, time.time(), list_process_commands()
+        )
+        if exit_code is not None:
+            return exit_code
+        if args.once:
+            return 0
+        time.sleep(args.poll_seconds)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
