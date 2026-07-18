@@ -21,15 +21,15 @@ A comprehensive PyTorch-based pipeline for 3D human pose estimation and motion a
 
 ## Pipeline Overview
 
-The project consists of several interconnected modules that form a complete 3D motion analysis pipeline:
+The active pipeline processes paired face/side videos in this order:
 
-1. **SAM3Dbody**: 3D body mesh reconstruction and keypoint extraction from video frames
-2. **fuse**: Align and fuse SAM3D-Body results from face and side views
-3. **split_cycle**: Segment motion sequences into individual cycles using DTW and feature analysis
-4. **project/train**: Train and evaluate motion classification models
-5. **analysis**: Data analysis and visualization tools
-6. **triangulation**: SAM3D face/side triangulation, result reports, and support 3D joint estimation tools
-7. **camera_calibration**: Calibrate multi-camera setups for accurate 3D reconstruction
+1. **SAM3Dbody**: Extract per-frame 2D and 3D keypoints from both views
+2. **split_cycle**: Align the face/side timelines and segment motion cycles
+3. **triangulation**: Triangulate 2D keypoints into cycle-level 3D pseudo-GT
+4. **fuse**: Align and fuse face/side 3D keypoints using the saved split-cycle offset
+5. **analysis**: Compare fused sequences with triangulated pseudo-GT and generate reports
+6. **project/train**: Optionally train and evaluate motion classification models
+7. **camera_calibration**: Provide camera calibration support for 3D reconstruction
 
 ## Installation
 
@@ -55,15 +55,21 @@ pip install -r requirements.txt
 
 ## Usage
 
-The project uses Hydra for configuration management. The active data preparation
-path uses SAM3D-Body directly. See `docs/current_pipeline.md` for the current
-pipeline and `docs/modules.md` for module responsibilities.
+The project uses Hydra for configuration management. The active path starts from
+paired face/side videos and uses the split-cycle alignment record for both
+triangulation and fusion.
+
+中文文档：
+
+- [当前数据处理流程](docs/current_pipeline.md)
+- [数据处理运行手册](docs/runbook.md)
+- [模块职责](docs/modules.md)
 
 ### 1. SAM-3D-Body (Dataset Preparation)
 Generate 3D body meshes and keypoints from video frames:
 
 ```bash
-python -m SAM3Dbody.main
+conda run -n gymnastic python -m SAM3Dbody.main
 ```
 
 Configuration: `configs/sam3d_body.yaml`
@@ -71,52 +77,58 @@ Configuration: `configs/sam3d_body.yaml`
 The previous YOLO/Detectron2/DPT/RAFT preprocessing flow is kept under
 `legacy/prepare_dataset/` with configuration in `configs/legacy/prepare_dataset.yaml`.
 
-### 2. Fuse Multi-View Results
-Run the default fusion experiment matrix. It rebuilds face/side temporal
-alignment from SAM3D-Body outputs, runs the configured fusion variants, and
-reports metrics against the triangulated reference:
+### 2. Split Cycle (Alignment and Motion Segmentation)
+Align the face/side timelines and segment continuous motion into cycles:
 
 ```bash
-python -m fuse
+conda run -n gymnastic python -m split_cycle.main
 ```
 
-### 3. Split Cycle (Motion Segmentation)
-Segment continuous motion into individual cycles:
+The alignment record is saved under `logs/split_cycle/person_<id>/` and provides
+the `offset_side_to_face` used by triangulation and fusion.
+
+### 3. Triangulate 3D Pseudo-GT
+Triangulate SAM3D-Body 2D keypoints using the saved split-cycle alignment:
 
 ```bash
-python -m split_cycle.main
+conda run -n gymnastic python -m triangulation.sam3d_from_split_cycle
 ```
 
-### 4. Train Classifiers
-Train and evaluate motion classification models:
+Configuration: `configs/sam3d_triangulation.yaml`
+
+Main guide: `triangulation/README.md`
+
+### 4. Fuse Multi-View Results
+Read the split-cycle offset, run the recommended fusion method, and compare the
+result with triangulated pseudo-GT:
 
 ```bash
-python -m project.train.train
+conda run -n gymnastic python -m fuse --methods sim3_face_stable_smooth_kpt
+```
+
+Omit `--methods sim3_face_stable_smooth_kpt` to run the complete experiment
+matrix.
+
+### 5. Generate Triangulation Reports
+
+```bash
+conda run -n gymnastic python triangulation/tools/generate_results_report.py
+```
+
+### 6. Optional Classifier Training
+Train and evaluate motion classification models after data preparation:
+
+```bash
+conda run -n gymnastic python -m project.train.train
 ```
 
 Configuration: `configs/train.yaml`
 
-### 5. Optional Support Modules
-Triangulation and camera calibration are kept as support workflows:
+### 7. Optional Camera Calibration Support
+Calibrate a multi-camera setup when new calibration parameters are required:
 
 ```bash
-python -m triangulation.sam3d_from_split_cycle
-```
-
-Main guide: `triangulation/README.md`
-
-Configuration: `configs/sam3d_triangulation.yaml`
-
-Generate the triangulated-result report:
-
-```bash
-python triangulation/tools/generate_results_report.py
-```
-
-Calibrate multi-camera setup:
-
-```bash
-python -m camera_calibration.main
+conda run -n gymnastic python -m camera_calibration.main
 ```
 
 ## Project Organization
