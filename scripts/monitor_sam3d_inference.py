@@ -1,8 +1,21 @@
 #!/usr/bin/env python3
 
-from dataclasses import dataclass
+import json
+import os
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Sequence
+
+
+FATAL_MARKERS = (
+    "CUDA out of memory",
+    "OutOfMemoryError",
+    "Traceback",
+    "\u65f6\u51fa\u9519",
+    "CUDA error",
+    "Killed",
+    "No module named",
+)
 
 
 @dataclass(frozen=True)
@@ -11,6 +24,21 @@ class ProgressSnapshot:
     incomplete_ids: tuple[int, ...]
     npz_count: int
     latest_npz_mtime: float
+
+
+@dataclass
+class MonitorState:
+    started_at: float
+    last_progress_at: float
+    last_npz_count: int = 0
+    latest_npz_mtime: float = 0.0
+    log_offset: int = 0
+    sent_fingerprints: list[str] = field(default_factory=list)
+    stalled: bool = False
+
+    @classmethod
+    def new(cls, now: float) -> "MonitorState":
+        return cls(started_at=now, last_progress_at=now)
 
 
 def parse_person_ids(spec: str) -> list[int]:
@@ -63,3 +91,61 @@ def collect_progress(
         npz_count=len(all_npz),
         latest_npz_mtime=latest_mtime,
     )
+
+
+def load_state(path: Path, now: float) -> MonitorState:
+    if not path.exists():
+        return MonitorState.new(now)
+    return MonitorState(**json.loads(path.read_text(encoding="utf-8")))
+
+
+def save_state(path: Path, state: MonitorState) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(asdict(state), indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    os.replace(temporary, path)
+
+
+def scan_new_fatal_errors(run_log: Path, offset: int) -> tuple[list[str], int]:
+    if not run_log.exists():
+        return [], 0
+    size = run_log.stat().st_size
+    if offset > size:
+        offset = 0
+    with run_log.open("rb") as handle:
+        handle.seek(offset)
+        text = handle.read().decode("utf-8", errors="replace")
+        new_offset = handle.tell()
+    errors = [
+        line.strip()
+        for line in text.splitlines()
+        if any(marker in line for marker in FATAL_MARKERS)
+    ]
+    return errors, new_offset
+
+
+def process_is_active(commands: Sequence[str], process_match: str) -> bool:
+    return any(
+        "python -m SAM3Dbody.main" in command and process_match in command
+        for command in commands
+    )
+
+
+def update_progress_state(
+    state: MonitorState, snapshot: ProgressSnapshot, now: float
+) -> bool:
+    progressed = (
+        snapshot.npz_count > state.last_npz_count
+        or snapshot.latest_npz_mtime > state.latest_npz_mtime
+    )
+    if progressed:
+        state.last_progress_at = now
+    state.last_npz_count = snapshot.npz_count
+    state.latest_npz_mtime = snapshot.latest_npz_mtime
+    return progressed
+
+
+def is_stalled(state: MonitorState, now: float, stall_seconds: int) -> bool:
+    return now - state.last_progress_at >= stall_seconds
