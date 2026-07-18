@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 
+import hashlib
 import json
 import os
+import smtplib
+import stat
+import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
+from email.message import EmailMessage
 from pathlib import Path
 from typing import Sequence
 
@@ -39,6 +45,23 @@ class MonitorState:
     @classmethod
     def new(cls, now: float) -> "MonitorState":
         return cls(started_at=now, last_progress_at=now)
+
+
+@dataclass(frozen=True)
+class SmtpSettings:
+    host: str
+    port: int
+    user: str
+    password: str = field(repr=False)
+    recipient: str
+
+
+@dataclass(frozen=True)
+class Notification:
+    kind: str
+    fingerprint: str
+    subject: str
+    body: str
 
 
 def parse_person_ids(spec: str) -> list[int]:
@@ -149,3 +172,88 @@ def update_progress_state(
 
 def is_stalled(state: MonitorState, now: float, stall_seconds: int) -> bool:
     return now - state.last_progress_at >= stall_seconds
+
+
+def load_smtp_settings(path: Path) -> SmtpSettings:
+    mode = stat.S_IMODE(path.stat().st_mode)
+    if mode != 0o600:
+        raise PermissionError(f"SMTP config must have mode 0600: {path}")
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        key, value = stripped.split("=", 1)
+        values[key.strip()] = value.strip()
+    required = (
+        "SMTP_HOST",
+        "SMTP_PORT",
+        "SMTP_USER",
+        "SMTP_APP_PASSWORD",
+        "EMAIL_TO",
+    )
+    missing = [key for key in required if not values.get(key)]
+    if missing:
+        raise ValueError(f"missing SMTP settings: {', '.join(missing)}")
+    return SmtpSettings(
+        host=values["SMTP_HOST"],
+        port=int(values["SMTP_PORT"]),
+        user=values["SMTP_USER"],
+        password=values["SMTP_APP_PASSWORD"].replace(" ", ""),
+        recipient=values["EMAIL_TO"],
+    )
+
+
+def make_notification(
+    kind: str, detail: str, snapshot: ProgressSnapshot
+) -> Notification:
+    fingerprint = hashlib.sha256(f"{kind}\n{detail}".encode("utf-8")).hexdigest()
+    subject = f"[Gymnastics][SAM3D-Body] {kind}"
+    body = (
+        f"Status: {kind}\n"
+        f"Completed persons: {len(snapshot.completed_ids)}\n"
+        f"Incomplete persons: {','.join(map(str, snapshot.incomplete_ids))}\n"
+        f"NPZ files: {snapshot.npz_count}\n\n"
+        f"Detail:\n{detail}\n"
+    )
+    return Notification(kind, fingerprint, subject, body)
+
+
+def send_email(
+    settings: SmtpSettings,
+    notification: Notification,
+    smtp_factory=smtplib.SMTP_SSL,
+    sleep_fn=time.sleep,
+) -> None:
+    message = EmailMessage()
+    message["From"] = settings.user
+    message["To"] = settings.recipient
+    message["Subject"] = notification.subject
+    message.set_content(notification.body)
+    last_error: OSError | smtplib.SMTPException | None = None
+    for attempt in range(3):
+        try:
+            with smtp_factory(settings.host, settings.port, timeout=30) as smtp:
+                smtp.login(settings.user, settings.password)
+                smtp.send_message(message)
+            return
+        except (OSError, smtplib.SMTPException) as error:
+            last_error = error
+            if attempt < 2:
+                sleep_fn(2**attempt)
+    if last_error is None:
+        raise RuntimeError("SMTP delivery failed without an exception")
+    raise last_error
+
+
+def send_once(
+    notification: Notification,
+    state: MonitorState,
+    sender: Callable[[Notification], bool],
+) -> bool:
+    if notification.fingerprint in state.sent_fingerprints:
+        return True
+    if not sender(notification):
+        return False
+    state.sent_fingerprints.append(notification.fingerprint)
+    return True
