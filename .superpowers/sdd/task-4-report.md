@@ -65,3 +65,23 @@
 
 - Thorax rotation accepts a `thorax_joint_index` supplied by its caller. The training/configuration integration should derive that index from `SkeletonSpec.role("thorax")` when it assembles the corruption config.
 - The dataset consumes already-loaded cached `PosePairTrial` records; cache discovery/loading remains intentionally owned by the reviewed Task 1 cache adapter.
+
+## Post-Commit Lint Cleanup
+
+Controller verification identified Ruff `F401` for the unused `Mapping` import in `fuse/rotation_aware/corruptions.py:9`. Removed only that import; no behavior changed.
+
+1. Focused Ruff:
+
+   ```bash
+   conda run -n gymnastic ruff check fuse/rotation_aware/corruptions.py
+   ```
+
+   Result: `All checks passed!`
+
+2. Focused Task 4 pytest:
+
+   ```bash
+   conda run -n gymnastic python -m pytest tests/rotation_aware/test_corruptions.py tests/rotation_aware/test_dataset.py -q
+   ```
+
+   Result: `15 passed in 1.17s`.
