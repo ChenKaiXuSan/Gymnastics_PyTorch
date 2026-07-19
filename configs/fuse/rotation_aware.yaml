@@ -1,0 +1,8 @@
+paths:
+  sam3d_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}/sam3d_body_results
+  split_cycle_root: logs/split_cycle
+  output_root: logs/fuse_rotation_aware
+  skeleton: configs/fuse/skeleton_mhr70.yaml
+data:
+  fps: 60.0
+  cache_dir: ${paths.output_root}/cache
