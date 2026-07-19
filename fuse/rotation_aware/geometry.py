@@ -122,8 +122,8 @@ def build_thorax_frame(points: Tensor, valid: Tensor, spec: SkeletonSpec) -> Fra
         right = torch.where(acromion_valid[..., None], acromion_right, shoulder_right)
         lateral_valid = acromion_valid | shoulder_valid
     thorax, thorax_valid = _role_point(points, valid, spec, "thorax")
-    pelvis, pelvis_valid = _role_point(points, valid, spec, "pelvis")
-    return _build_frame(thorax, left, right, thorax - pelvis, lateral_valid & thorax_valid & pelvis_valid)
+    neck, neck_valid = _role_point(points, valid, spec, "neck")
+    return _build_frame(thorax, left, right, neck - thorax, lateral_valid & thorax_valid & neck_valid)
 
 
 def _trial_scale(points: Tensor, valid: Tensor, spec: SkeletonSpec) -> Tensor:

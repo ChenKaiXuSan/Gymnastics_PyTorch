@@ -120,3 +120,24 @@ def test_constructed_frames_are_orthogonal_right_handed_rotations():
         identity = torch.eye(3).expand_as(frame.rotation)
         torch.testing.assert_close(frame.rotation.transpose(-1, -2) @ frame.rotation, identity, atol=1e-5, rtol=0)
         torch.testing.assert_close(torch.linalg.det(frame.rotation), torch.ones_like(frame.valid, dtype=points.dtype), atol=1e-5, rtol=0)
+
+
+def test_thorax_frame_uses_neck_to_thorax_as_vertical_hint():
+    points, valid = synthetic_mhr70_pose()
+    neck = SPEC.joint_index("neck")
+    points[:, :, neck] = torch.tensor([0.5, 3.0, 0.25])
+
+    frame = build_thorax_frame(points, valid, SPEC)
+
+    expected = torch.tensor([0.0, 1.0, 0.25])
+    expected = expected / torch.linalg.vector_norm(expected)
+    torch.testing.assert_close(frame.rotation[:, :, :, 1], expected.expand_as(frame.rotation[:, :, :, 1]), atol=1e-5, rtol=0)
+
+
+def test_thorax_frame_is_directly_invalid_when_neck_is_invalid():
+    points, valid = synthetic_mhr70_pose()
+    valid[:, :, SPEC.joint_index("neck")] = False
+
+    frame = build_thorax_frame(points, valid, SPEC)
+
+    assert not frame.valid.any()
