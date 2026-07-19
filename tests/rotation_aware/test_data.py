@@ -19,8 +19,8 @@ def fake_sam3d_loader(_root, _person_id, view):
     }
 
 
-def _cache_trial() -> PosePairTrial:
-    points = np.ones((1, len(mhr_names), 3), dtype=np.float32)
+def _cache_trial(value: float = 1.0) -> PosePairTrial:
+    points = np.full((1, len(mhr_names), 3), value, dtype=np.float32)
     valid = valid_from_points(points)
     return PosePairTrial(
         face=points,
@@ -215,24 +215,24 @@ def test_cache_round_trip_preserves_trial_and_metadata(tmp_path, monkeypatch, sp
     assert metadata["config"]["skeleton"] == "mhr70"
 
 
-def test_write_person_cache_publishes_atomically_and_clears_marker(
+def test_write_person_cache_publishes_atomically_and_clears_its_lock(
     tmp_path, monkeypatch
 ):
-    marker_seen_while_writing: list[bool] = []
+    lock_seen_while_writing: list[bool] = []
     replace_calls: list[tuple[str, str]] = []
     original_save = data.np.savez_compressed
     original_replace = os.replace
-    marker = tmp_path / "cache" / "person_1" / ".publishing"
+    lock = tmp_path / "cache" / "person_1" / ".publishing.lock"
 
-    def save_with_marker(path, *args, **kwargs):
-        marker_seen_while_writing.append(marker.is_file())
+    def save_with_lock(path, *args, **kwargs):
+        lock_seen_while_writing.append(lock.is_file())
         return original_save(path, *args, **kwargs)
 
     def record_replace(source, destination):
         replace_calls.append((str(source), str(destination)))
         original_replace(source, destination)
 
-    monkeypatch.setattr(data.np, "savez_compressed", save_with_marker)
+    monkeypatch.setattr(data.np, "savez_compressed", save_with_lock)
     monkeypatch.setattr(data, "os", os, raising=False)
     monkeypatch.setattr(data.os, "replace", record_replace)
 
@@ -243,8 +243,8 @@ def test_write_person_cache_publishes_atomically_and_clears_marker(
         config_metadata={"skeleton": "mhr70"},
     )
 
-    assert marker_seen_while_writing == [True]
-    assert not marker.exists()
+    assert lock_seen_while_writing == [True]
+    assert not lock.exists()
     assert (person_cache / "manifest.json").is_file()
     assert any(
         Path(destination) == person_cache / "manifest.json"
@@ -252,6 +252,226 @@ def test_write_person_cache_publishes_atomically_and_clears_marker(
         and ".tmp" in Path(source).name
         for source, destination in replace_calls
     )
+
+
+def test_write_person_cache_publishes_immutable_generation_and_pointer(tmp_path):
+    person_cache = data.write_person_cache(
+        [_cache_trial()],
+        tmp_path / "cache",
+        source_metadata=_cache_source(),
+        config_metadata={"skeleton": "mhr70"},
+    )
+
+    pointer = json.loads((person_cache / "manifest.json").read_text(encoding="utf-8"))
+    generation = pointer["generation"]
+    generation_dir = person_cache / ".generations" / generation
+    generation_manifest = json.loads(
+        (generation_dir / "manifest.json").read_text(encoding="utf-8")
+    )
+
+    assert (generation_dir / "cycle_000.npz").is_file()
+    assert not (person_cache / "cycle_000.npz").exists()
+    assert generation_manifest["generation"] == generation
+    assert generation_manifest["trials"] == ["cycle_000"]
+
+
+def test_load_cached_trial_from_person_directory_resolves_generation_metadata(tmp_path):
+    person_cache = data.write_person_cache(
+        [_cache_trial(1.0)],
+        tmp_path / "cache",
+        source_metadata=_cache_source(),
+        config_metadata={"skeleton": "mhr70"},
+    )
+    pointer = json.loads((person_cache / "manifest.json").read_text(encoding="utf-8"))
+
+    trial, metadata = data.load_cached_trial(person_cache, "cycle_000")
+
+    assert metadata["generation"] == pointer["generation"]
+    assert trial.face[0, 0, 0] == pytest.approx(1.0)
+
+
+def test_second_writer_is_rejected_by_exclusive_token_lock(tmp_path, monkeypatch):
+    original_save = data.np.savez_compressed
+    attempted_second_writer = False
+
+    def save_while_starting_second(path, *args, **kwargs):
+        nonlocal attempted_second_writer
+        if not attempted_second_writer:
+            attempted_second_writer = True
+            with pytest.raises(FileExistsError, match="publication lock"):
+                data.write_person_cache(
+                    [_cache_trial(2.0)],
+                    tmp_path / "cache",
+                    source_metadata=_cache_source(),
+                    config_metadata={"skeleton": "mhr70"},
+                )
+        return original_save(path, *args, **kwargs)
+
+    monkeypatch.setattr(data.np, "savez_compressed", save_while_starting_second)
+
+    person_cache = data.write_person_cache(
+        [_cache_trial(1.0)],
+        tmp_path / "cache",
+        source_metadata=_cache_source(),
+        config_metadata={"skeleton": "mhr70"},
+    )
+
+    assert attempted_second_writer
+    assert not (person_cache / ".publishing.lock").exists()
+
+
+def test_lost_lock_owner_never_deletes_replacement_lock(tmp_path, monkeypatch):
+    original_save = data.np.savez_compressed
+    replacement_token = "second-writer-token"
+    lock = tmp_path / "cache" / "person_1" / ".publishing.lock"
+
+    def replace_lock_during_write(path, *args, **kwargs):
+        lock.write_text(replacement_token, encoding="utf-8")
+        return original_save(path, *args, **kwargs)
+
+    monkeypatch.setattr(data.np, "savez_compressed", replace_lock_during_write)
+
+    with pytest.raises(OSError, match="publication lock ownership"):
+        data.write_person_cache(
+            [_cache_trial()],
+            tmp_path / "cache",
+            source_metadata=_cache_source(),
+            config_metadata={"skeleton": "mhr70"},
+        )
+
+    assert lock.read_text(encoding="utf-8") == replacement_token
+
+
+def test_failed_generation_write_keeps_previous_pointer_usable(tmp_path, monkeypatch):
+    person_cache = data.write_person_cache(
+        [_cache_trial(1.0)],
+        tmp_path / "cache",
+        source_metadata=_cache_source(),
+        config_metadata={"skeleton": "mhr70"},
+    )
+    previous_pointer = json.loads(
+        (person_cache / "manifest.json").read_text(encoding="utf-8")
+    )
+
+    monkeypatch.setattr(
+        data.np,
+        "savez_compressed",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("write failed")),
+    )
+
+    with pytest.raises(OSError, match="write failed"):
+        data.write_person_cache(
+            [_cache_trial(2.0)],
+            tmp_path / "cache",
+            source_metadata=_cache_source(),
+            config_metadata={"skeleton": "mhr70"},
+        )
+
+    current_pointer = json.loads(
+        (person_cache / "manifest.json").read_text(encoding="utf-8")
+    )
+    restored, metadata = data.load_cached_trial(person_cache, "cycle_000")
+    assert current_pointer == previous_pointer
+    assert metadata["generation"] == previous_pointer["generation"]
+    assert restored.face[0, 0, 0] == pytest.approx(1.0)
+
+
+def test_failed_pointer_publication_cleans_own_temporary_generation_files(
+    tmp_path, monkeypatch
+):
+    person_cache = data.write_person_cache(
+        [_cache_trial(1.0)],
+        tmp_path / "cache",
+        source_metadata=_cache_source(),
+        config_metadata={"skeleton": "mhr70"},
+    )
+    previous_pointer = json.loads(
+        (person_cache / "manifest.json").read_text(encoding="utf-8")
+    )
+    original_replace = os.replace
+
+    def fail_pointer_replace(source, destination):
+        if Path(destination) == person_cache / "manifest.json":
+            raise OSError("pointer replace failed")
+        original_replace(source, destination)
+
+    monkeypatch.setattr(data.os, "replace", fail_pointer_replace)
+
+    with pytest.raises(OSError, match="pointer replace failed"):
+        data.write_person_cache(
+            [_cache_trial(2.0)],
+            tmp_path / "cache",
+            source_metadata=_cache_source(),
+            config_metadata={"skeleton": "mhr70"},
+        )
+
+    assert json.loads(
+        (person_cache / "manifest.json").read_text(encoding="utf-8")
+    ) == previous_pointer
+    assert not list(person_cache.glob(".manifest.json.*.tmp"))
+    assert sorted(
+        path.name
+        for path in (person_cache / ".generations").iterdir()
+        if path.is_dir()
+    ) == [previous_pointer["generation"]]
+
+
+def test_captured_generation_path_remains_loadable_after_pointer_flip(tmp_path):
+    person_cache = data.write_person_cache(
+        [_cache_trial(1.0)],
+        tmp_path / "cache",
+        source_metadata=_cache_source(),
+        config_metadata={"skeleton": "mhr70"},
+    )
+    first_pointer = json.loads(
+        (person_cache / "manifest.json").read_text(encoding="utf-8")
+    )
+    first_path = (
+        person_cache
+        / ".generations"
+        / first_pointer["generation"]
+        / "cycle_000.npz"
+    )
+
+    data.write_person_cache(
+        [_cache_trial(2.0)],
+        tmp_path / "cache",
+        source_metadata=_cache_source(),
+        config_metadata={"skeleton": "mhr70"},
+    )
+
+    restored, metadata = data.load_cached_trial(first_path)
+    assert metadata["generation"] == first_pointer["generation"]
+    assert restored.face[0, 0, 0] == pytest.approx(1.0)
+
+
+def test_load_cached_trial_keeps_legacy_direct_cache_compatible(tmp_path):
+    person_cache = tmp_path / "cache" / "person_1"
+    person_cache.mkdir(parents=True)
+    trial = _cache_trial(3.0)
+    np.savez_compressed(
+        person_cache / "cycle_000.npz",
+        face=trial.face,
+        side=trial.side,
+        valid_face=trial.valid_face,
+        valid_side=trial.valid_side,
+        timestamps=trial.timestamps,
+        face_map=trial.face_map,
+        side_map=trial.side_map,
+        joint_names=np.asarray(trial.joint_names),
+        person_id=np.asarray(trial.person_id),
+        trial_id=np.asarray(trial.trial_id),
+        fps=np.asarray(trial.fps, dtype=np.float64),
+    )
+    legacy_manifest = {"person_id": "1", "trials": ["cycle_000"]}
+    (person_cache / "manifest.json").write_text(
+        json.dumps(legacy_manifest), encoding="utf-8"
+    )
+
+    restored, metadata = data.load_cached_trial(person_cache, "cycle_000")
+
+    assert restored.face[0, 0, 0] == pytest.approx(3.0)
+    assert metadata == legacy_manifest
 
 
 def test_write_person_cache_requires_nonempty_provenance(tmp_path, monkeypatch, spec):

@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
+import uuid
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -21,7 +23,8 @@ from .schema import PosePairTrial, valid_from_points
 
 DEFAULT_FPS = 60.0
 CACHE_MANIFEST_FILENAME = "manifest.json"
-CACHE_PUBLICATION_MARKER = ".publishing"
+CACHE_GENERATIONS_DIRECTORY = ".generations"
+CACHE_PUBLICATION_LOCK = ".publishing.lock"
 
 
 def _load_split_record(split_root: Path, person_id: str) -> tuple[Path, dict[str, Any]]:
@@ -138,6 +141,61 @@ def _validate_metadata(metadata: Mapping[str, Any], field_name: str) -> dict[str
     return normalized
 
 
+def _read_manifest(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"Cache manifest must be a mapping: {path}")
+    return payload
+
+
+def resolve_cache_manifest(person_cache: str | Path) -> tuple[Path, dict[str, Any]]:
+    """Resolve a stable generation manifest, falling back to the legacy layout."""
+    person_dir = Path(person_cache)
+    pointer = _read_manifest(person_dir / CACHE_MANIFEST_FILENAME)
+    generation = pointer.get("generation")
+    if generation is None:
+        return person_dir, pointer
+    if not isinstance(generation, str) or not generation:
+        raise ValueError(f"Invalid cache generation pointer: {person_dir}")
+    generation_dir = person_dir / CACHE_GENERATIONS_DIRECTORY / generation
+    manifest = _read_manifest(generation_dir / CACHE_MANIFEST_FILENAME)
+    if manifest.get("generation") != generation:
+        raise ValueError(f"Generation manifest does not match pointer: {person_dir}")
+    return generation_dir, manifest
+
+
+def _acquire_publication_lock(person_cache: Path, token: str) -> Path:
+    lock_path = person_cache / CACHE_PUBLICATION_LOCK
+    try:
+        descriptor = os.open(
+            lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+        )
+    except FileExistsError as error:
+        raise FileExistsError(
+            f"Cache publication lock already held for {person_cache}"
+        ) from error
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(token)
+    return lock_path
+
+
+def _require_lock_owner(lock_path: Path, token: str) -> None:
+    try:
+        owner = lock_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise OSError(f"Cache publication lock ownership lost: {lock_path}") from error
+    if owner != token:
+        raise OSError(f"Cache publication lock ownership lost: {lock_path}")
+
+
+def _release_publication_lock(lock_path: Path, token: str) -> None:
+    try:
+        if lock_path.read_text(encoding="utf-8") == token:
+            lock_path.unlink()
+    except FileNotFoundError:
+        return
+
+
 def write_person_cache(
     trials: Sequence[PosePairTrial],
     cache_root: str | Path = Path("logs/fuse_rotation_aware/cache"),
@@ -145,7 +203,7 @@ def write_person_cache(
     source_metadata: Mapping[str, Any],
     config_metadata: Mapping[str, Any],
 ) -> Path:
-    """Write compact per-cycle arrays and traceable source/config metadata."""
+    """Publish immutable cycle arrays through an atomic person-cache pointer."""
     if not trials:
         raise ValueError("Cannot cache an empty trial list")
     person_id = trials[0].person_id
@@ -162,12 +220,20 @@ def write_person_cache(
     source["trial_sources"] = {
         trial.trial_id: _plain_metadata(trial.source_metadata) for trial in trials
     }
-    marker = person_cache / CACHE_PUBLICATION_MARKER
-    marker.touch()
+    token = uuid.uuid4().hex
+    lock_path = _acquire_publication_lock(person_cache, token)
+    generations = person_cache / CACHE_GENERATIONS_DIRECTORY
+    generation = f"generation_{token}"
+    staging = generations / f".staging_{token}"
+    final_generation = generations / generation
+    temporary_pointer: Path | None = None
+    published = False
     try:
+        generations.mkdir(exist_ok=True)
+        staging.mkdir()
         for trial in trials:
             np.savez_compressed(
-                person_cache / f"{trial.trial_id}.npz",
+                staging / f"{trial.trial_id}.npz",
                 face=trial.face,
                 side=trial.side,
                 valid_face=trial.valid_face,
@@ -183,32 +249,48 @@ def write_person_cache(
         manifest = {
             "person_id": person_id,
             "trials": [trial.trial_id for trial in trials],
+            "generation": generation,
             "source": source,
             "config": config,
             "source_hash": _metadata_hash(source),
             "config_hash": _metadata_hash(config),
         }
-        manifest_path = person_cache / CACHE_MANIFEST_FILENAME
-        temporary_manifest = person_cache / f".{CACHE_MANIFEST_FILENAME}.tmp"
-        temporary_manifest.write_text(
+        (staging / CACHE_MANIFEST_FILENAME).write_text(
             json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
         )
-        os.replace(temporary_manifest, manifest_path)
+        _require_lock_owner(lock_path, token)
+        os.replace(staging, final_generation)
+        _require_lock_owner(lock_path, token)
+        temporary_pointer = person_cache / f".{CACHE_MANIFEST_FILENAME}.{token}.tmp"
+        temporary_pointer.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        os.replace(temporary_pointer, person_cache / CACHE_MANIFEST_FILENAME)
+        published = True
     finally:
-        marker.unlink(missing_ok=True)
+        if temporary_pointer is not None:
+            temporary_pointer.unlink(missing_ok=True)
+        if not published:
+            shutil.rmtree(staging, ignore_errors=True)
+            shutil.rmtree(final_generation, ignore_errors=True)
+        _release_publication_lock(lock_path, token)
     return person_cache
 
 
 def load_cached_trial(cache_path: str | Path, trial_id: str | None = None) -> tuple[PosePairTrial, dict[str, Any]]:
     """Load one cache entry and its person manifest metadata."""
     path = Path(cache_path)
-    trial_path = path if path.suffix == ".npz" else path / f"{trial_id}.npz"
-    if trial_id is None and path.suffix != ".npz":
+    if path.suffix == ".npz":
+        trial_path = path
+        manifest_path = path.parent / CACHE_MANIFEST_FILENAME
+        metadata = _read_manifest(manifest_path) if manifest_path.is_file() else {}
+    elif trial_id is None:
         raise ValueError("trial_id is required when loading from a person cache directory")
-    if not trial_path.exists():
+    else:
+        payload_dir, metadata = resolve_cache_manifest(path)
+        trial_path = payload_dir / f"{trial_id}.npz"
+    if not trial_path.is_file():
         raise FileNotFoundError(f"Missing cached trial: {trial_path}")
-    manifest_path = trial_path.parent / CACHE_MANIFEST_FILENAME
-    metadata = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
     with np.load(trial_path, allow_pickle=False) as data:
         trial = PosePairTrial(
             face=data["face"],

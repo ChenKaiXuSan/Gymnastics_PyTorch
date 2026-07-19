@@ -88,6 +88,15 @@ metadata. `runs/<run_id>/` holds `config_resolved.yaml`,
 `no_pseudo_gt_training: true` and the split/config/corruption provenance used
 to select checkpoints.
 
+Prepared person caches use immutable internal generations:
+`cache/person_<id>/.generations/<generation>/` contains that generation's
+cycle NPZ files and manifest, while `cache/person_<id>/manifest.json`
+atomically points to the active generation. Readers resolve the pointer once,
+then read only that immutable generation. Older generations are retained, so a
+reader that has already resolved a path remains valid during a later prepare.
+The top-level manifest and the public person-cache API remain compatible with
+legacy caches whose cycle NPZ files live directly under `person_<id>/`.
+
 Each inference cycle writes `fused_sequence.npz`, `config.json`, and
 `metadata.json`. Important NPZ fields are:
 

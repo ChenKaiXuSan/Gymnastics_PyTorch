@@ -22,9 +22,10 @@ from .config import load_skeleton_spec
 from .corruptions import CorruptionConfig, write_corruption_manifest
 from .data import (
     CACHE_MANIFEST_FILENAME,
-    CACHE_PUBLICATION_MARKER,
+    CACHE_PUBLICATION_LOCK,
     load_cached_trial,
     load_person_trials,
+    resolve_cache_manifest,
     write_person_cache,
 )
 from .dataset import (
@@ -199,15 +200,36 @@ def _cached_trials(cache: Path, people: Iterable[str], skeleton) -> list:
 
 
 def _cache_trial_paths(cache: Path, people: Iterable[str]) -> dict[str, list[Path]]:
-    """Require complete manifests, waiting only for an active cache publication."""
+    """Resolve immutable generation paths, waiting only for a first publication."""
     cached: dict[str, list[Path]] = {}
     missing: list[str] = []
     for person in sorted({str(value) for value in people}):
         person_dir = cache / f"person_{person}"
-        marker = person_dir / CACHE_PUBLICATION_MARKER
+        lock_path = person_dir / CACHE_PUBLICATION_LOCK
         manifest_path = person_dir / CACHE_MANIFEST_FILENAME
         for attempt in range(_CACHE_PUBLICATION_MAX_ATTEMPTS + 1):
-            if marker.is_file():
+            if manifest_path.is_file():
+                try:
+                    payload_dir, manifest = resolve_cache_manifest(person_dir)
+                    expected = (
+                        manifest.get("trials") if isinstance(manifest, dict) else None
+                    )
+                    if (
+                        not isinstance(expected, list)
+                        or not expected
+                        or manifest.get("person_id") != person
+                        or not all(isinstance(trial_id, str) for trial_id in expected)
+                    ):
+                        raise ValueError("invalid person cache manifest")
+                    paths = [payload_dir / f"{trial_id}.npz" for trial_id in expected]
+                    if not all(path.is_file() for path in paths):
+                        raise ValueError("missing declared cache cycle")
+                except (OSError, ValueError, json.JSONDecodeError):
+                    missing.append(f"person_{person}")
+                    break
+                cached[person] = paths
+                break
+            if lock_path.is_file():
                 if attempt == _CACHE_PUBLICATION_MAX_ATTEMPTS:
                     missing.append(
                         f"person_{person} (cache publication timed out)"
@@ -215,32 +237,8 @@ def _cache_trial_paths(cache: Path, people: Iterable[str]) -> dict[str, list[Pat
                     break
                 time.sleep(_CACHE_PUBLICATION_SLEEP_SECONDS)
                 continue
-            if not person_dir.is_dir() or not manifest_path.is_file():
-                missing.append(f"person_{person}")
-                break
-            try:
-                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                expected = manifest.get("trials") if isinstance(manifest, dict) else None
-                if (
-                    not isinstance(expected, list)
-                    or not expected
-                    or manifest.get("person_id") != person
-                    or not all(isinstance(trial_id, str) for trial_id in expected)
-                ):
-                    raise ValueError("invalid person cache manifest")
-                paths = [person_dir / f"{trial_id}.npz" for trial_id in expected]
-                if not all(path.is_file() for path in paths):
-                    raise ValueError("missing declared cache cycle")
-            except (OSError, ValueError, json.JSONDecodeError):
-                missing.append(f"person_{person}")
-                break
-            if not marker.is_file():
-                cached[person] = paths
-                break
-            if attempt == _CACHE_PUBLICATION_MAX_ATTEMPTS:
-                missing.append(f"person_{person} (cache publication timed out)")
-                break
-            time.sleep(_CACHE_PUBLICATION_SLEEP_SECONDS)
+            missing.append(f"person_{person}")
+            break
     if missing:
         raise FileNotFoundError(
             f"missing complete cache for selected people: {', '.join(missing)}"

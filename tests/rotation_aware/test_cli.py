@@ -32,6 +32,17 @@ def _write_sam3d(root: Path, view: str, person: str = "1") -> None:
         )
 
 
+def _declared_cache_cycle(person_cache: Path, trial_id: str) -> Path:
+    manifest = json.loads((person_cache / "manifest.json").read_text(encoding="utf-8"))
+    generation = manifest.get("generation")
+    root = (
+        person_cache / ".generations" / generation
+        if isinstance(generation, str)
+        else person_cache
+    )
+    return root / f"{trial_id}.npz"
+
+
 def test_cli_parser_lists_all_task_seven_subcommands(capsys) -> None:
     parser = make_parser()
     with pytest.raises(SystemExit) as error:
@@ -74,7 +85,9 @@ def test_prepare_smoke_uses_real_tiny_files_and_writes_manifest(tmp_path: Path) 
     )
 
     assert main(["prepare", "--config", str(config), "--person", "1"]) == 0
-    assert (tmp_path / "out" / "cache" / "person_1" / "cycle_000.npz").exists()
+    assert _declared_cache_cycle(
+        tmp_path / "out" / "cache" / "person_1", "cycle_000"
+    ).exists()
     assert (tmp_path / "out" / "split_manifest.json").exists()
 
 
@@ -407,7 +420,7 @@ def test_default_prepare_keeps_aligned_people_outside_fold_membership(
         "1",
         "2",
     ]
-    assert (out / "cache" / "person_2" / "cycle_000.npz").exists()
+    assert _declared_cache_cycle(out / "cache" / "person_2", "cycle_000").exists()
 
 
 def test_cache_paths_require_every_manifest_declared_cycle(tmp_path: Path) -> None:
@@ -433,34 +446,34 @@ def _write_complete_cache_manifest(cache: Path) -> Path:
     return person
 
 
-def test_cache_paths_waits_for_short_publication_marker(
+def test_cache_paths_keeps_legacy_manifest_compatible_while_lock_exists(
     tmp_path: Path, monkeypatch
 ) -> None:
     person = _write_complete_cache_manifest(tmp_path)
-    marker = person / ".publishing"
-    marker.touch()
+    lock = person / ".publishing.lock"
+    lock.write_text("new-writer", encoding="utf-8")
     waits: list[float] = []
 
-    def clear_marker(delay: float) -> None:
+    def record_wait(delay: float) -> None:
         waits.append(delay)
-        marker.unlink()
 
     monkeypatch.setattr(
-        cli, "time", SimpleNamespace(sleep=clear_marker), raising=False
+        cli, "time", SimpleNamespace(sleep=record_wait), raising=False
     )
     monkeypatch.setattr(cli, "_CACHE_PUBLICATION_MAX_ATTEMPTS", 2, raising=False)
 
     assert _cache_trial_paths(tmp_path, ["1"]) == {
         "1": [person / "cycle_000.npz"]
     }
-    assert waits
+    assert not waits
 
 
 def test_cache_paths_reports_publication_timeout_without_long_sleep(
     tmp_path: Path, monkeypatch
 ) -> None:
-    person = _write_complete_cache_manifest(tmp_path)
-    (person / ".publishing").touch()
+    person = tmp_path / "person_1"
+    person.mkdir()
+    (person / ".publishing.lock").write_text("first-writer", encoding="utf-8")
     monkeypatch.setattr(
         cli, "time", SimpleNamespace(sleep=lambda _delay: None), raising=False
     )
@@ -468,6 +481,69 @@ def test_cache_paths_reports_publication_timeout_without_long_sleep(
 
     with pytest.raises(FileNotFoundError, match="publication.*timed out"):
         _cache_trial_paths(tmp_path, ["1"])
+
+
+def _write_generation_pointer(cache: Path, generation: str = "generation_old") -> Path:
+    person = cache / "person_1"
+    generation_dir = person / ".generations" / generation
+    generation_dir.mkdir(parents=True)
+    (generation_dir / "cycle_000.npz").touch()
+    manifest = {
+        "person_id": "1",
+        "trials": ["cycle_000"],
+        "generation": generation,
+    }
+    (generation_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    person.mkdir(parents=True, exist_ok=True)
+    (person / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return person
+
+
+def test_cache_paths_reads_old_generation_while_new_writer_holds_lock(
+    tmp_path: Path,
+) -> None:
+    person = _write_generation_pointer(tmp_path)
+    (person / ".publishing.lock").write_text("new-writer", encoding="utf-8")
+
+    assert _cache_trial_paths(tmp_path, ["1"]) == {
+        "1": [person / ".generations" / "generation_old" / "cycle_000.npz"]
+    }
+
+
+def test_cache_paths_waits_for_first_generation_pointer_then_reads_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    person = tmp_path / "person_1"
+    person.mkdir(parents=True)
+    lock = person / ".publishing.lock"
+    lock.write_text("first-writer", encoding="utf-8")
+    waits: list[float] = []
+
+    def publish_generation(delay: float) -> None:
+        waits.append(delay)
+        generation_dir = person / ".generations" / "generation_first"
+        generation_dir.mkdir(parents=True)
+        (generation_dir / "cycle_000.npz").touch()
+        manifest = {
+            "person_id": "1",
+            "trials": ["cycle_000"],
+            "generation": "generation_first",
+        }
+        (generation_dir / "manifest.json").write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
+        (person / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        lock.unlink()
+
+    monkeypatch.setattr(
+        cli, "time", SimpleNamespace(sleep=publish_generation), raising=False
+    )
+    monkeypatch.setattr(cli, "_CACHE_PUBLICATION_MAX_ATTEMPTS", 2, raising=False)
+
+    assert _cache_trial_paths(tmp_path, ["1"]) == {
+        "1": [person / ".generations" / "generation_first" / "cycle_000.npz"]
+    }
+    assert waits
 
 
 def test_evaluate_combines_a4_a5_a6_runs_with_deterministic_a0_a3(
