@@ -28,6 +28,21 @@ def test_quality_fusion_preserves_lone_view_with_tiny_positive_quality():
     torch.testing.assert_close(out.points, face, atol=0, rtol=0)
 
 
+def test_quality_fusion_exactly_selects_each_lone_view_for_random_tiny_qualities():
+    generator = torch.Generator().manual_seed(17)
+    face = torch.rand(2, 3, 4, 3, generator=generator)
+    side = torch.rand(2, 3, 4, 3, generator=generator)
+    tiny_face = torch.rand(2, 3, generator=generator) * 1e-8
+    tiny_side = torch.rand(2, 3, generator=generator) * 1e-8
+    valid = torch.ones(2, 3, 4, dtype=torch.bool)
+
+    face_only = quality_weighted_fusion(face, side, valid, torch.zeros_like(valid), tiny_face, tiny_side)
+    side_only = quality_weighted_fusion(face, side, torch.zeros_like(valid), valid, tiny_face, tiny_side)
+
+    torch.testing.assert_close(face_only.points, face, atol=0, rtol=0)
+    torch.testing.assert_close(side_only.points, side, atol=0, rtol=0)
+
+
 def test_arithmetic_fusion_is_mask_aware_and_handles_both_invalid():
     face = torch.tensor([[[[2.0, 4.0, 6.0], [8.0, 10.0, 12.0]]]])
     side = torch.tensor([[[[4.0, 8.0, 12.0], [16.0, 20.0, 24.0]]]])

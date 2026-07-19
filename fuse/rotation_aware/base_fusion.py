@@ -62,11 +62,14 @@ def quality_weighted_fusion(
     side_quality = _quality(quality_side, side, "quality_side")
     face_weight = face_valid.to(face.dtype) * face_quality[..., None]
     side_weight = side_valid.to(side.dtype) * side_quality[..., None]
-    # A zero score must not discard the only observed view.
-    observed = face_valid | side_valid
-    zero_total = (face_weight + side_weight) == 0
-    fallback_face = face_valid.to(face.dtype)
-    fallback_side = side_valid.to(side.dtype)
-    face_weight = torch.where(zero_total & observed, fallback_face, face_weight)
-    side_weight = torch.where(zero_total & observed, fallback_side, side_weight)
-    return _fuse(face, side, face_weight, side_weight)
+    both_valid = face_valid & side_valid
+    face_only = face_valid & ~side_valid
+    side_only = side_valid & ~face_valid
+    both_face_weight = torch.where(both_valid, face_weight, torch.zeros_like(face_weight))
+    both_side_weight = torch.where(both_valid, side_weight, torch.zeros_like(side_weight))
+    zero_both_weight = both_valid & ((both_face_weight + both_side_weight) == 0)
+    both_face_weight = torch.where(zero_both_weight, torch.ones_like(both_face_weight), both_face_weight)
+    both_side_weight = torch.where(zero_both_weight, torch.ones_like(both_side_weight), both_side_weight)
+    both = _fuse(face, side, both_face_weight, both_side_weight)
+    points = torch.where(face_only[..., None], face, torch.where(side_only[..., None], side, both.points))
+    return FusionResult(points, face_valid | side_valid, face_weight, side_weight)

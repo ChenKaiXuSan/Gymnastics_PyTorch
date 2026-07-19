@@ -138,6 +138,19 @@ def _robust_deviation(values: Tensor, valid: Tensor) -> Tensor:
     return torch.where(valid, result, torch.zeros_like(result))
 
 
+def _robust_temporal_bone_deviation(values: Tensor, valid: Tensor) -> Tensor:
+    """Return each bone's deviation from its own robust temporal baseline."""
+    result = torch.zeros_like(values)
+    for batch_index in range(values.shape[0]):
+        for bone_index in range(values.shape[2]):
+            usable = values[batch_index, :, bone_index][valid[batch_index, :, bone_index]]
+            if usable.numel():
+                median = usable.median()
+                scale = (usable - median).abs().median().clamp_min(1e-6)
+                result[batch_index, :, bone_index] = (values[batch_index, :, bone_index] - median).abs() / scale
+    return torch.where(valid, result, torch.zeros_like(result))
+
+
 def compute_quality_features(
     points: Tensor,
     valid: Tensor,
@@ -164,7 +177,7 @@ def compute_quality_features(
     hip_deviation = _robust_deviation(hip, hip_valid)
     torso_deviation = _robust_deviation(torso, torso_valid)
     if spec.bones:
-        bone_residual = _robust_deviation(pose.bone_lengths, pose.bone_valid)
+        bone_residual = _robust_temporal_bone_deviation(pose.bone_lengths, pose.bone_valid)
         valid_bones = pose.bone_valid.sum(dim=-1)
         rigidity = torch.where(
             valid_bones > 0,

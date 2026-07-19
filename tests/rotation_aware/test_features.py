@@ -82,6 +82,16 @@ def test_rigidity_residual_uses_only_valid_bones():
     torch.testing.assert_close(with_invalid_bone.rigidity_residual, valid_only.rigidity_residual)
 
 
+def test_static_pose_with_different_bone_lengths_has_zero_rigidity_and_high_quality():
+    pose, valid = synthetic_mhr70_pose(frames=3)
+    trunk = extract_trunk_features(pose, valid, SPEC, dt=1.0)
+
+    quality = compute_quality_features(pose, valid, trunk, SPEC)
+
+    torch.testing.assert_close(quality.rigidity_residual, torch.zeros_like(quality.rigidity_residual), atol=1e-6, rtol=0)
+    assert (quality.score > 0.05).all()
+
+
 def test_disagreement_masks_invalid_coordinates_and_is_swap_symmetric():
     face, valid_face = synthetic_mhr70_pose(theta_deg=10.0)
     side, valid_side = synthetic_mhr70_pose(theta_deg=-10.0)
