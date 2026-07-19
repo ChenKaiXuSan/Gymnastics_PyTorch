@@ -108,7 +108,7 @@ def build_pelvis_frame(points: Tensor, valid: Tensor, spec: SkeletonSpec) -> Fra
 
 
 def build_thorax_frame(points: Tensor, valid: Tensor, spec: SkeletonSpec) -> Frame:
-    """Build a thorax frame with its long axis anchored to the pelvis."""
+    """Build a thorax frame whose long-axis hint is guided by the neck."""
     points, valid = _finite_points(points, valid)
     shoulder_left, shoulder_left_valid = _role_point(points, valid, spec, "left_shoulder")
     shoulder_right, shoulder_right_valid = _role_point(points, valid, spec, "right_shoulder")

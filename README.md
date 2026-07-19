@@ -109,6 +109,12 @@ conda run -n gymnastic python -m fuse --methods sim3_face_stable_smooth_kpt
 Omit `--methods sim3_face_stable_smooth_kpt` to run the complete experiment
 matrix.
 
+The existing `python -m fuse` nine-method matrix and
+`logs/fuse_experiments` are retained comparison experiments. The separate
+paper mainline is `rotation_aware_self_supervised`; it writes only below
+`logs/fuse_rotation_aware` and is documented in
+[Rotation-Aware Fusion](docs/rotation_aware_fusion.md).
+
 ### 5. Generate Triangulation Reports
 
 ```bash
