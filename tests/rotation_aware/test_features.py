@@ -2,7 +2,7 @@ from pathlib import Path
 
 import torch
 
-from fuse.rotation_aware.config import load_skeleton_spec
+from fuse.rotation_aware.config import SkeletonSpec, load_skeleton_spec
 from fuse.rotation_aware.features import (
     QualityConfig,
     compute_disagreement_features,
@@ -69,6 +69,19 @@ def test_quality_uses_explicit_fixed_configuration_weights():
     assert rigidity_weighted.score[:, 1].item() < unweighted.score[:, 1].item()
 
 
+def test_rigidity_residual_uses_only_valid_bones():
+    pose, valid = synthetic_mhr70_pose(frames=3)
+    pose[:, 2, SPEC.joint_index("right-hip")] += torch.tensor([1.0, 0.0, 0.0])
+    trunk = extract_trunk_features(pose, valid, SPEC, dt=1.0)
+    valid_bone_spec = SkeletonSpec(SPEC.name, SPEC.joint_names, (SPEC.bones[0],), SPEC.roles, SPEC.required_roles)
+    masked_bone_spec = SkeletonSpec(SPEC.name, SPEC.joint_names, (SPEC.bones[0], SPEC.bones[1]), SPEC.roles, SPEC.required_roles)
+
+    valid_only = compute_quality_features(pose, valid, trunk, valid_bone_spec)
+    with_invalid_bone = compute_quality_features(pose, valid, trunk, masked_bone_spec)
+
+    torch.testing.assert_close(with_invalid_bone.rigidity_residual, valid_only.rigidity_residual)
+
+
 def test_disagreement_masks_invalid_coordinates_and_is_swap_symmetric():
     face, valid_face = synthetic_mhr70_pose(theta_deg=10.0)
     side, valid_side = synthetic_mhr70_pose(theta_deg=-10.0)
@@ -83,3 +96,19 @@ def test_disagreement_masks_invalid_coordinates_and_is_swap_symmetric():
     assert not forward.coordinate_abs_delta[:, :, SPEC.joint_index("neck")].any()
     torch.testing.assert_close(forward.coordinate_abs_delta, reverse.coordinate_abs_delta)
     torch.testing.assert_close(forward.rotation_distance, reverse.rotation_distance)
+
+
+def test_disagreement_center_requires_common_valid_coordinates():
+    face, face_valid = synthetic_mhr70_pose()
+    side, side_valid = synthetic_mhr70_pose()
+    face_valid[:] = False
+    side_valid[:] = False
+    face_valid[:, :, SPEC.joint_index("left-hip")] = True
+    side_valid[:, :, SPEC.joint_index("right-hip")] = True
+    face_trunk = extract_trunk_features(face, face_valid, SPEC, dt=1.0)
+    side_trunk = extract_trunk_features(side, side_valid, SPEC, dt=1.0)
+
+    features = compute_disagreement_features(face, side, face_trunk, side_trunk, face_valid, side_valid)
+
+    assert not features.trunk_displacement_valid.any()
+    torch.testing.assert_close(features.trunk_displacement_abs_delta, torch.zeros_like(features.trunk_displacement_abs_delta))

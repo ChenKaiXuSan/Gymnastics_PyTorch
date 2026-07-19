@@ -29,7 +29,8 @@ def _safe_inputs(face: Tensor, side: Tensor, face_valid: Tensor, side_valid: Ten
 def _fuse(face: Tensor, side: Tensor, face_weight: Tensor, side_weight: Tensor) -> FusionResult:
     total = face_weight + side_weight
     valid = total > 0
-    points = (face * face_weight[..., None] + side * side_weight[..., None]) / total[..., None].clamp_min(1e-6)
+    denominator = torch.where(valid, total, torch.ones_like(total))
+    points = (face * face_weight[..., None] + side * side_weight[..., None]) / denominator[..., None]
     points = torch.where(valid[..., None], points, torch.zeros_like(points))
     return FusionResult(points, valid, face_weight, side_weight)
 

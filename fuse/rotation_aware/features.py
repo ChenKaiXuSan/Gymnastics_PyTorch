@@ -55,6 +55,7 @@ class DisagreementFeatures:
     rotation_distance: Tensor
     rotation_valid: Tensor
     trunk_displacement_abs_delta: Tensor
+    trunk_displacement_valid: Tensor
     validity_abs_delta: Tensor
 
 
@@ -162,7 +163,16 @@ def compute_quality_features(
     shoulder_deviation = _robust_deviation(shoulder, shoulder_valid)
     hip_deviation = _robust_deviation(hip, hip_valid)
     torso_deviation = _robust_deviation(torso, torso_valid)
-    rigidity = _robust_deviation(pose.bone_lengths, pose.bone_valid).mean(dim=-1) if spec.bones else torch.zeros_like(shoulder)
+    if spec.bones:
+        bone_residual = _robust_deviation(pose.bone_lengths, pose.bone_valid)
+        valid_bones = pose.bone_valid.sum(dim=-1)
+        rigidity = torch.where(
+            valid_bones > 0,
+            bone_residual.sum(dim=-1) / valid_bones.clamp_min(1),
+            torch.zeros_like(shoulder),
+        )
+    else:
+        rigidity = torch.zeros_like(shoulder)
     angular_outlier = _robust_deviation(trunk.alpha.abs(), trunk.alpha_valid)
     frame_degenerate = (~trunk.rotation_valid).to(points.dtype)
     valid_ratio = effective_valid.to(points.dtype).mean(dim=-1)
@@ -215,9 +225,11 @@ def compute_disagreement_features(
     rotation_valid = face_trunk.rotation_valid & side_trunk.rotation_valid
     rotation_delta = _rotation_distance(face_trunk.rotation, side_trunk.rotation)
     rotation_delta = torch.where(rotation_valid, rotation_delta, torch.zeros_like(rotation_delta))
-    face_center = (safe_face * face_valid[..., None]).sum(dim=2) / face_valid.sum(dim=2, keepdim=True).clamp_min(1)
-    side_center = (safe_side * side_valid[..., None]).sum(dim=2) / side_valid.sum(dim=2, keepdim=True).clamp_min(1)
-    displacement = (face_center - side_center).abs()
+    common_count = coordinate_valid.sum(dim=2, keepdim=True)
+    displacement_valid = common_count[..., 0] > 0
+    face_center = (safe_face * coordinate_valid[..., None]).sum(dim=2) / common_count.clamp_min(1)
+    side_center = (safe_side * coordinate_valid[..., None]).sum(dim=2) / common_count.clamp_min(1)
+    displacement = torch.where(displacement_valid[..., None], (face_center - side_center).abs(), torch.zeros_like(face_center))
     return DisagreementFeatures(
         coordinate_delta,
         coordinate_valid,
@@ -226,5 +238,6 @@ def compute_disagreement_features(
         rotation_delta,
         rotation_valid,
         displacement,
+        displacement_valid,
         (face_valid.to(face.dtype) - side_valid.to(face.dtype)).abs(),
     )

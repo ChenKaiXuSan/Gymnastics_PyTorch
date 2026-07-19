@@ -17,6 +17,17 @@ def test_base_fusion_falls_back_to_only_valid_view():
     assert torch.equal(out.valid, face_valid)
 
 
+def test_quality_fusion_preserves_lone_view_with_tiny_positive_quality():
+    face = torch.tensor([[[[7.0, 11.0, 13.0]]]])
+    side = torch.zeros_like(face)
+    face_valid = torch.ones(1, 1, 1, dtype=torch.bool)
+    side_valid = torch.zeros_like(face_valid)
+
+    out = quality_weighted_fusion(face, side, face_valid, side_valid, torch.tensor([[1e-8]]), torch.zeros(1, 1))
+
+    torch.testing.assert_close(out.points, face, atol=0, rtol=0)
+
+
 def test_arithmetic_fusion_is_mask_aware_and_handles_both_invalid():
     face = torch.tensor([[[[2.0, 4.0, 6.0], [8.0, 10.0, 12.0]]]])
     side = torch.tensor([[[[4.0, 8.0, 12.0], [16.0, 20.0, 24.0]]]])
