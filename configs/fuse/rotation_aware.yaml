@@ -6,3 +6,13 @@ paths:
 data:
   fps: 60.0
   cache_dir: ${paths.output_root}/cache
+window:
+  length: 128
+  train_stride: 32
+  eval_stride: 64
+training:
+  epochs: 20
+  batch_size: 4
+  learning_rate: 0.001
+  hidden_channels: 128
+  seed: 0
