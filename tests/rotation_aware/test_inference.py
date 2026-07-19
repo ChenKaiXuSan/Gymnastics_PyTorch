@@ -7,6 +7,7 @@ import torch
 from fuse.metadata.mhr70 import mhr_names
 from fuse.rotation_aware import inference
 from fuse.rotation_aware.config import load_skeleton_spec
+from fuse.rotation_aware.corruptions import CorruptionConfig
 from fuse.rotation_aware.inference import (
     canonicalize_trial,
     overlap_taper,
@@ -170,7 +171,8 @@ def test_inference_exports_timestamps_config_and_transform_invalidity(
         SPEC,
         output_root=tmp_path,
         run_id="run",
-        provenance={"config_hash": "cfg", "split_hash": "split"},
+        provenance={"training_config_hash": "train", "split_hash": "split"},
+        resolved_config={"inference": {"window_length": 128}},
     )
 
     with np.load(result.sequence_path) as data:
@@ -179,7 +181,11 @@ def test_inference_exports_timestamps_config_and_transform_invalidity(
         assert not data["joint_valid"].any()
         assert not data["kpts_face_world"].any()
         assert not data["kpts_side_world"].any()
-    assert result.sequence_path.with_name("config.json").exists()
+    assert json.loads(result.sequence_path.with_name("config.json").read_text()) == {
+        "inference": {"window_length": 128}
+    }
+    metadata = json.loads(result.sequence_path.with_name("metadata.json").read_text())
+    assert metadata["training_config_hash"] == "train"
 
 
 def test_swap_diagnostic_uses_the_same_overlap_add_path_as_primary_inference(
@@ -211,11 +217,25 @@ def test_swap_diagnostic_uses_the_same_overlap_add_path_as_primary_inference(
         provenance={"corruption_seed": "17", "corruption_manifest_hash": "manifest"},
     )
 
-    assert len(calls) == 2
+    assert len(calls) == 3
     np.testing.assert_allclose(calls[1][0], calls[0][1])
     np.testing.assert_allclose(calls[1][1], calls[0][0])
     assert calls[0][2] == calls[1][2] == 64
-    metadata = json.loads(result.sequence_path.with_name("config.json").read_text())
+    metadata = json.loads(result.sequence_path.with_name("metadata.json").read_text())
     assert pseudo_target_calls
     assert metadata["corruption_seed"] == 17
     assert metadata["corruption_manifest_hash"] == "manifest"
+
+
+def test_fixed_corruption_replays_manifest_window_seeds_deterministically() -> None:
+    trial = canonicalize_trial(_trial(8), SPEC).trial
+    manifest = {"windows": {"person_1/cycle_000/0": 123}}
+    corruption = CorruptionConfig(
+        enabled_families=("spike_noise",), spike_probability=1.0
+    )
+
+    first = inference._manifest_corruption(trial, manifest, SPEC, corruption, 8)
+    second = inference._manifest_corruption(trial, manifest, SPEC, corruption, 8)
+
+    assert first[-1].any()
+    np.testing.assert_allclose(first[0], second[0])

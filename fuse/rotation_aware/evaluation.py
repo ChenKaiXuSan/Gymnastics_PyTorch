@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -37,6 +37,7 @@ class MethodSequence:
     reference_kpts: np.ndarray | None = None
     swap_error: float | None = None
     corruption_recovery: float | None = None
+    diagnostic_status: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -105,8 +106,14 @@ def _trunk(
     timestamps: np.ndarray,
     skeleton: SkeletonSpec,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    median_dt = float(np.median(np.diff(timestamps)))
-    dt = np.r_[1.0 / max(median_dt, 1e-8), np.diff(timestamps)].astype(np.float32)
+    if len(timestamps) < 2:
+        dt: np.ndarray = np.ones(len(timestamps), dtype=np.float32)
+    else:
+        differences = np.diff(timestamps)
+        if not np.isfinite(differences).all() or np.any(differences <= 0):
+            raise ValueError("timestamps must be strictly increasing for trunk metrics")
+        median_dt = float(np.median(differences))
+        dt = np.r_[median_dt, differences].astype(np.float32)
     result = extract_trunk_features(
         torch.from_numpy(points.astype(np.float32)).unsqueeze(0),
         torch.from_numpy(valid).unsqueeze(0),
@@ -140,9 +147,17 @@ def _external_errors(
         (candidate - root_a[:, None]) - (reference - root_b[:, None]), axis=-1
     )
     valid = np.isfinite(candidate).all(axis=-1) & np.isfinite(reference).all(axis=-1)
-    valid &= (valid[:, 9] & valid[:, 10])[:, None]
+    reference_roots = np.any(reference[:, 9] != 0, axis=-1) & np.any(
+        reference[:, 10] != 0, axis=-1
+    )
+    candidate_roots = np.any(candidate[:, 9] != 0, axis=-1) & np.any(
+        candidate[:, 10] != 0, axis=-1
+    )
+    valid &= (valid[:, 9] & valid[:, 10] & reference_roots & candidate_roots)[:, None]
     if candidate_valid is not None:
-        valid &= np.asarray(candidate_valid, dtype=bool)
+        candidate_valid = np.asarray(candidate_valid, dtype=bool)
+        valid &= candidate_valid
+        valid &= (candidate_valid[:, 9] & candidate_valid[:, 10])[:, None]
     return errors, valid
 
 
@@ -284,6 +299,16 @@ def evaluate_person_trials(
                 row[key] = float(np.average(values[usable], weights=weights[usable]))
             else:
                 row[key] = float("nan")
+        for diagnostic in ("swap_error", "fixed_corruption_recovery"):
+            statuses = {
+                cycle.diagnostic_status.get(
+                    diagnostic, "unavailable_missing_diagnostic"
+                )
+                for cycle in cycles
+            }
+            row[f"{diagnostic}_availability"] = (
+                statuses.pop() if len(statuses) == 1 else "mixed"
+            )
         if references is not None:
             external_errors: list[np.ndarray] = []
             external_masks: list[np.ndarray] = []
@@ -364,10 +389,7 @@ def load_triangulated_references(
             by_trial[sequence.trial_id] = sequence
         else:
             by_trial.setdefault(sequence.trial_id, sequence)
-    references: dict[str, np.ndarray] = {
-        trial_id: np.full_like(sequence.kpts_world, np.nan)
-        for trial_id, sequence in by_trial.items()
-    }
+    references: dict[str, np.ndarray] = {}
     for root in sorted(
         (Path(triangulated_root) / f"person_{person_id}").glob("cycle_*")
     ):
@@ -420,6 +442,13 @@ def discover_method_sequences(
             )
             if not isinstance(metadata, dict):
                 metadata = {}
+            diagnostics = (
+                json.loads(str(data["diagnostics"].item()))
+                if "diagnostics" in data.files
+                else {}
+            )
+            if not isinstance(diagnostics, dict):
+                diagnostics = {}
             learned_ablation = str(metadata.get("ablation", "A6"))
             if learned_ablation not in {"A4", "A5", "A6"}:
                 learned_ablation = "A6"
@@ -464,6 +493,22 @@ def discover_method_sequences(
                     if method == "rotation_aware_self_supervised"
                     else method
                 )
+                diagnostic = diagnostics.get(
+                    reported_method, diagnostics.get(method, {})
+                )
+                if not isinstance(diagnostic, dict):
+                    diagnostic = {}
+                swap = diagnostic.get("swap_error")
+                recovery = diagnostic.get("fixed_corruption_recovery")
+                status_map = {
+                    "swap_error": "measured" if swap is not None else "unsupported",
+                    "fixed_corruption_recovery": str(
+                        diagnostic.get(
+                            "fixed_corruption_recovery_status",
+                            "unsupported",
+                        )
+                    ),
+                }
                 found.append(
                     MethodSequence(
                         reported_method,
@@ -475,8 +520,9 @@ def discover_method_sequences(
                         maps,
                         side_maps,
                         reference,
-                        swap,
-                        recovery,
+                        float(swap) if swap is not None else None,
+                        float(recovery) if recovery is not None else None,
+                        status_map,
                     )
                 )
                 status[reported_method] = "available"
@@ -501,6 +547,7 @@ def discover_method_sequences(
                                     reference,
                                     swap,
                                     recovery,
+                                    status_map,
                                 )
                             )
                             status[ablation] = "available"
@@ -546,6 +593,10 @@ def discover_method_sequences(
                         trial_id=template.trial_id,
                         face_map=template_face_map,
                         side_map=template_side_map,
+                        diagnostic_status={
+                            "swap_error": "unsupported_legacy_output",
+                            "fixed_corruption_recovery": "unsupported_legacy_output",
+                        },
                     )
                 )
                 sliced += 1
@@ -558,6 +609,10 @@ def discover_method_sequences(
                         trial_id="full_sequence",
                         face_map=face_map,
                         side_map=side_map,
+                        diagnostic_status={
+                            "swap_error": "unsupported_legacy_output",
+                            "fixed_corruption_recovery": "unsupported_legacy_output",
+                        },
                     )
                 )
         status[method] = "available"

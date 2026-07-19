@@ -9,9 +9,11 @@ from fuse.rotation_aware.evaluation import (
     MethodSequence,
     _circular_rom,
     _derivative,
+    _trunk,
     discover_method_sequences,
     evaluate_person_trials,
     external_metrics_from_reference,
+    load_triangulated_references,
 )
 
 
@@ -91,6 +93,30 @@ def test_external_gt_metrics_are_optional_and_root_normalized() -> None:
     assert len(joints) == len(mhr_names)
 
 
+def test_external_metrics_exclude_frames_with_zero_reference_or_invalid_candidate_hips() -> (
+    None
+):
+    candidate = _sequence().kpts_world
+    reference = candidate.copy()
+    reference[0, 9:11] = 0
+    candidate_valid = np.ones(candidate.shape[:2], dtype=bool)
+    candidate_valid[1, 9] = False
+
+    metrics, _ = external_metrics_from_reference(candidate, reference, candidate_valid)
+
+    assert metrics["matched_frames"] == len(candidate) - 2
+
+
+def test_missing_triangulated_cycle_is_not_prepopulated_as_nan_reference(
+    tmp_path: Path,
+) -> None:
+    sequence = MethodSequence(
+        "A6", _sequence().kpts_world, _sequence().timestamps, trial_id="cycle_404"
+    )
+
+    assert load_triangulated_references(tmp_path, "1", [sequence]) == {}
+
+
 def test_external_evaluation_imports_are_isolated() -> None:
     source = Path("fuse/rotation_aware/evaluation.py").read_text(encoding="utf-8")
     for path in ("inference.py", "training.py", "cli.py"):
@@ -118,6 +144,7 @@ def test_discovery_reports_only_saved_new_baselines_as_available(
         face_map=np.arange(len(values)),
         side_map=np.arange(len(values)),
         metadata=np.asarray(json.dumps({"ablation": "A4"})),
+        diagnostics=np.asarray(json.dumps({"A4": {"swap_error": 3.0}})),
     )
 
     sequences, status = discover_method_sequences(
@@ -133,6 +160,8 @@ def test_discovery_reports_only_saved_new_baselines_as_available(
     }
     assert status["A0"] == "available"
     assert status["A4"] == "available"
+    assert next(item for item in sequences if item.method == "A4").swap_error == 3.0
+    assert next(item for item in sequences if item.method == "A0").swap_error is None
 
 
 def test_person_metrics_are_weighted_by_valid_points_and_masked_static_joints_have_no_jerk() -> (
@@ -265,3 +294,15 @@ def test_derivatives_return_validity_masks_so_missing_intervals_are_not_averaged
 
     assert valid[:, 0].tolist() == [True, False, False, True]
     assert np.mean(np.abs(derivative[valid])) == 1.0
+
+
+def test_trunk_uses_median_first_dt_and_handles_single_frame() -> None:
+    sequence = _sequence()
+    _, _, _, omega_valid = _trunk(
+        sequence.kpts_world[:1],
+        np.ones(sequence.kpts_world[:1].shape[:2], dtype=bool),
+        np.array([0.0]),
+        SPEC,
+    )
+
+    assert not omega_valid.any()

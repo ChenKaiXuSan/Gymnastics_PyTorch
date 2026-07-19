@@ -246,6 +246,52 @@ def _overlap_fuse(
     return fused, base, point_weight
 
 
+def _manifest_corruption(
+    source: PosePairTrial,
+    manifest: Mapping[str, Any],
+    skeleton: SkeletonSpec,
+    config: CorruptionConfig | None,
+    window_length: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Replay the validation manifest on its own windows without a full-cycle seed."""
+    face, side = np.array(source.face, copy=True), np.array(source.side, copy=True)
+    valid_face = np.array(source.valid_face, copy=True)
+    valid_side = np.array(source.valid_side, copy=True)
+    mask = np.zeros(source.face.shape[:2], dtype=bool)
+    windows = manifest.get("windows")
+    if not isinstance(windows, Mapping):
+        return face, side, valid_face, valid_side, mask
+    prefix = f"person_{source.person_id}/{source.trial_id}/"
+    for window_id, seed in windows.items():
+        if not isinstance(window_id, str) or not window_id.startswith(prefix):
+            continue
+        try:
+            start = int(window_id.removeprefix(prefix))
+            seed = int(seed)
+        except (TypeError, ValueError):
+            continue
+        if start < 0 or start >= len(face):
+            continue
+        end = min(start + window_length, len(face))
+        corrupted = apply_corruptions(
+            torch.from_numpy(np.array(face[start:end], copy=True)),
+            torch.from_numpy(np.array(side[start:end], copy=True)),
+            torch.from_numpy(np.array(valid_face[start:end], copy=True)),
+            torch.from_numpy(np.array(valid_side[start:end], copy=True)),
+            seed=seed,
+            config=config,
+            skeleton=skeleton,
+        )
+        face[start:end] = corrupted.corrupted_face.numpy()
+        side[start:end] = corrupted.corrupted_side.numpy()
+        valid_face[start:end] = corrupted.corrupted_valid_face.numpy()
+        valid_side[start:end] = corrupted.corrupted_valid_side.numpy()
+        mask[start:end] |= (
+            corrupted.face_corruption_mask | corrupted.side_corruption_mask
+        ).numpy()
+    return face, side, valid_face, valid_side, mask
+
+
 def run_inference(
     model: RotationAwareFusionModel,
     trial: PosePairTrial,
@@ -257,6 +303,8 @@ def run_inference(
     stride: int = 64,
     provenance: Mapping[str, Any] | None = None,
     corruption_config: CorruptionConfig | None = None,
+    resolved_config: Mapping[str, Any] | None = None,
+    corruption_manifest: Mapping[str, Any] | None = None,
 ) -> InferenceResult:
     """Fuse a complete raw trial with 128/64-style overlap-add and save one NPZ."""
     if not run_id:
@@ -293,7 +341,7 @@ def run_inference(
         skeleton,
         _dt(source),
     )
-    swapped_fused, _, swapped_weight = _overlap_fuse(
+    swapped_fused, swapped_base, swapped_weight = _overlap_fuse(
         model,
         source,
         skeleton,
@@ -310,28 +358,29 @@ def run_inference(
         if common.any()
         else float("nan")
     )
-    corruption = apply_corruptions(
-        full_face[0],
-        full_side[0],
-        full_face_valid[0],
-        full_side_valid[0],
-        seed=int((provenance or {}).get("corruption_seed", 0)),
-        config=corruption_config,
-        skeleton=skeleton,
-    )
-    corrupted_output, _, _ = _forward(
-        model,
-        corruption.corrupted_face.unsqueeze(0),
-        corruption.corrupted_side.unsqueeze(0),
-        corruption.corrupted_valid_face.unsqueeze(0),
-        corruption.corrupted_valid_side.unsqueeze(0),
+    (
+        corrupted_face,
+        corrupted_side,
+        corrupted_valid_face,
+        corrupted_valid_side,
+        corruption_mask,
+    ) = _manifest_corruption(
+        source,
+        corruption_manifest or {},
         skeleton,
-        _dt(source),
+        corruption_config,
+        window_length,
     )
-    corruption_mask = (
-        (corruption.face_corruption_mask | corruption.side_corruption_mask)
-        .cpu()
-        .numpy()
+    corrupted_fused, _, corrupted_weight = _overlap_fuse(
+        model,
+        source,
+        skeleton,
+        face=corrupted_face,
+        side=corrupted_side,
+        valid_face=corrupted_valid_face,
+        valid_side=corrupted_valid_side,
+        window_length=window_length,
+        stride=stride,
     )
     pseudo_target, pseudo_valid, _ = _pseudo_target(
         full_face,
@@ -343,20 +392,63 @@ def run_inference(
         LossConfig(),
     )
     recovery_error = np.linalg.norm(
-        corrupted_output.fused_kpts.squeeze(0).detach().cpu().numpy()
-        - pseudo_target.squeeze(0).detach().cpu().numpy(),
+        corrupted_fused - pseudo_target.squeeze(0).detach().cpu().numpy(),
         axis=-1,
     )
     recovery_mask = (
         corruption_mask
         & pseudo_valid.squeeze(0).detach().cpu().numpy()
-        & corrupted_output.valid.squeeze(0).detach().cpu().numpy()
+        & (corrupted_weight > 0)
     )
     fixed_corruption_recovery = (
         float(recovery_error[recovery_mask].mean())
         if recovery_mask.any()
         else float("nan")
     )
+
+    def diagnostic_error(
+        left: np.ndarray, right: np.ndarray, mask: np.ndarray
+    ) -> float:
+        return (
+            float(np.linalg.norm(left - right, axis=-1)[mask].mean())
+            if mask.any()
+            else float("nan")
+        )
+
+    face_side_common = source.valid_face & source.valid_side
+    diagnostics = {
+        "face_only": {
+            "swap_error": diagnostic_error(source.face, source.side, face_side_common),
+            "fixed_corruption_recovery": None,
+            "fixed_corruption_recovery_status": "unsupported_deterministic_baseline",
+        },
+        "side_only": {
+            "swap_error": diagnostic_error(source.side, source.face, face_side_common),
+            "fixed_corruption_recovery": None,
+            "fixed_corruption_recovery_status": "unsupported_deterministic_baseline",
+        },
+        "canonical_arithmetic": {
+            "swap_error": 0.0
+            if (source.valid_face | source.valid_side).any()
+            else float("nan"),
+            "fixed_corruption_recovery": None,
+            "fixed_corruption_recovery_status": "unsupported_deterministic_baseline",
+        },
+        "quality_mean": {
+            "swap_error": diagnostic_error(
+                base, swapped_base, (point_weight > 0) & (swapped_weight > 0)
+            ),
+            "fixed_corruption_recovery": None,
+            "fixed_corruption_recovery_status": "unsupported_deterministic_baseline",
+        },
+        str((provenance or {}).get("ablation", "A6")): {
+            "swap_error": swap_error,
+            "fixed_corruption_recovery": fixed_corruption_recovery,
+            "fixed_corruption_recovery_status": "measured"
+            if recovery_mask.any()
+            else "unavailable_no_manifest_window",
+        },
+    }
     fused_tensor = torch.from_numpy(fused).unsqueeze(0)
     frame_valid = point_weight.any(axis=1)
     trunk = extract_trunk_features(
@@ -397,7 +489,10 @@ def run_inference(
         "window_length": window_length,
         "stride": stride,
         "canonical_source": "complete_trial",
-        "config_hash": str((provenance or {}).get("config_hash", "")),
+        "training_config_hash": str((provenance or {}).get("training_config_hash", "")),
+        "inference_config_hash": str(
+            (provenance or {}).get("inference_config_hash", "")
+        ),
         "split_hash": str((provenance or {}).get("split_hash", "")),
         "checkpoint_path": str((provenance or {}).get("checkpoint_path", "")),
         "checkpoint_sha256": str((provenance or {}).get("checkpoint_sha256", "")),
@@ -409,6 +504,7 @@ def run_inference(
         ),
         "swap_error": swap_error,
         "fixed_corruption_recovery": fixed_corruption_recovery,
+        "diagnostics": diagnostics,
     }
     target = (
         Path(output_root)
@@ -445,8 +541,13 @@ def run_inference(
         kpts_face_canonical=source.face,
         kpts_side_canonical=source.side,
         metadata=np.asarray(json.dumps(metadata, sort_keys=True)),
+        diagnostics=np.asarray(json.dumps(diagnostics, sort_keys=True)),
     )
     target.with_name("config.json").write_text(
+        json.dumps(dict(resolved_config or {}), indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    target.with_name("metadata.json").write_text(
         json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8"
     )
     return InferenceResult(target, frames, metadata)

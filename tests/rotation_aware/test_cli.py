@@ -8,7 +8,9 @@ import pytest
 
 from fuse.metadata.mhr70 import mhr_names
 from fuse.rotation_aware import cli
+from fuse.rotation_aware.config import load_skeleton_spec
 from fuse.rotation_aware.cli import (
+    _cached_trials,
     loss_config_for_ablation,
     main,
     make_parser,
@@ -179,7 +181,8 @@ def test_prepare_filters_people_without_alignment_and_reports_them(
 
     manifest = json.loads((out / "split_manifest.json").read_text())
     assert manifest["prepared_people"] == ["1"]
-    assert "2" in manifest["failures"]
+    assert manifest["selected_people"] == ["1"]
+    assert "2" not in manifest["failures"]
 
 
 def test_ablation_loss_configs_change_the_actual_training_objectives() -> None:
@@ -229,3 +232,102 @@ def test_train_person_subset_without_train_trials_fails_clearly(
             ),
             config,
         )
+
+
+def test_cached_trials_rejects_any_selected_person_without_nonempty_cache(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "person_1").mkdir()
+    (tmp_path / "person_1" / "cycle_000.npz").touch()
+    monkeypatch.setattr(cli, "load_cached_trial", lambda _: (SimpleNamespace(), {}))
+    monkeypatch.setattr(
+        cli, "canonicalize_trial", lambda trial, _: SimpleNamespace(trial=trial)
+    )
+
+    with pytest.raises(FileNotFoundError, match="person_2"):
+        _cached_trials(tmp_path, ["1", "2"], object())
+
+
+def test_prepare_explicit_failure_returns_nonzero_after_writing_manifest(
+    tmp_path: Path,
+) -> None:
+    sam3d = tmp_path / "sam3d" / "sam3d_body_results"
+    _write_sam3d(sam3d, "face", "1")
+    _write_sam3d(sam3d, "side", "1")
+    fold = tmp_path / "fold.json"
+    fold.write_text(json.dumps({"train": [{"person_id": "1"}], "val": [], "test": []}))
+    out = tmp_path / "out"
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {tmp_path / 'split'}\n  output_root: {out}\n  skeleton: configs/fuse/skeleton_mhr70.yaml\n  fold_json: {fold}"
+    )
+
+    assert main(["prepare", "--config", str(config), "--person", "1"]) == 1
+    manifest = json.loads((out / "split_manifest.json").read_text())
+    assert "1" in manifest["failures"]
+
+
+def test_evaluate_combines_a4_a5_a6_runs_with_deterministic_a0_a3(
+    tmp_path: Path,
+) -> None:
+    out = tmp_path / "out"
+    values = np.ones((4, len(mhr_names), 3), dtype=np.float32)
+    values[:, 9, 0], values[:, 10, 0] = -1, 1
+    values[:, 5, 1], values[:, 6, 1], values[:, 2, 1] = 2, 2, 3
+    for run_id, ablation in (("a4", "A4"), ("a5", "A5"), ("a6", "A6")):
+        root = out / "inference" / run_id / "person_1" / "cycle_000"
+        root.mkdir(parents=True)
+        np.savez_compressed(
+            root / "fused_sequence.npz",
+            kpts_world=values,
+            kpts_face_world=values,
+            kpts_side_world=values,
+            kpts_arithmetic_world=values,
+            kpts_base_world=values,
+            frame_valid=np.ones(4, dtype=bool),
+            joint_valid=np.ones(values.shape[:2], dtype=bool),
+            face_map=np.arange(4),
+            side_map=np.arange(4),
+            timestamps=np.arange(4) / 60.0,
+            metadata=np.asarray(json.dumps({"ablation": ablation})),
+            diagnostics=np.asarray(json.dumps({ablation: {"swap_error": 0.0}})),
+        )
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        f"paths:\n  sam3d_root: {tmp_path / 'sam3d'}\n  split_cycle_root: {tmp_path / 'split'}\n  output_root: {out}\n  skeleton: configs/fuse/skeleton_mhr70.yaml\n  fold_json: {tmp_path / 'fold.json'}"
+    )
+
+    assert (
+        main(
+            [
+                "evaluate",
+                "--config",
+                str(config),
+                "--run-id",
+                "a4",
+                "--run-id",
+                "a5",
+                "--run-id",
+                "a6",
+            ]
+        )
+        == 0
+    )
+
+    report = json.loads((out / "evaluation" / "a4+a5+a6" / "report.json").read_text())
+    assert {row["method"] for row in report["person_metrics"]} >= {
+        "A0",
+        "A1",
+        "A2",
+        "A3",
+        "A4",
+        "A5",
+        "A6",
+    }
+
+
+def test_inference_rejects_checkpoint_with_different_skeleton_contract() -> None:
+    skeleton = load_skeleton_spec("configs/fuse/skeleton_mhr70.yaml")
+
+    with pytest.raises(ValueError, match="skeleton"):
+        cli._validate_checkpoint_skeleton({"skeleton": {}}, skeleton)
