@@ -90,7 +90,10 @@ def _build_frame(origin: Tensor, left: Tensor, right: Tensor, vertical: Tensor, 
     # Reconstruct x from y and z so the right-handed frame is orthonormal.
     x_axis, _ = _safe_normalize(torch.cross(y_axis, z_axis, dim=-1))
     rotation = torch.stack((x_axis, y_axis, z_axis), dim=-1)
-    observed = role_valid & x_valid & y_valid & z_valid & (torch.linalg.det(rotation) > 0)
+    determinant = torch.linalg.det(rotation)
+    z_axis = torch.where((determinant < 0)[..., None], -z_axis, z_axis)
+    rotation = torch.stack((x_axis, y_axis, z_axis), dim=-1)
+    observed = role_valid & x_valid & y_valid & z_valid & (determinant.abs() > 1e-6) & (torch.linalg.det(rotation) > 0)
     return _continuous_frame(rotation, origin, observed)
 
 
@@ -107,11 +110,20 @@ def build_pelvis_frame(points: Tensor, valid: Tensor, spec: SkeletonSpec) -> Fra
 def build_thorax_frame(points: Tensor, valid: Tensor, spec: SkeletonSpec) -> Frame:
     """Build a thorax frame with its long axis anchored to the pelvis."""
     points, valid = _finite_points(points, valid)
-    left, left_valid = _role_point(points, valid, spec, "left_acromion")
-    right, right_valid = _role_point(points, valid, spec, "right_acromion")
+    shoulder_left, shoulder_left_valid = _role_point(points, valid, spec, "left_shoulder")
+    shoulder_right, shoulder_right_valid = _role_point(points, valid, spec, "right_shoulder")
+    shoulder_valid = shoulder_left_valid & shoulder_right_valid
+    left, right, lateral_valid = shoulder_left, shoulder_right, shoulder_valid
+    if "left_acromion" in spec.roles and "right_acromion" in spec.roles:
+        acromion_left, acromion_left_valid = _role_point(points, valid, spec, "left_acromion")
+        acromion_right, acromion_right_valid = _role_point(points, valid, spec, "right_acromion")
+        acromion_valid = acromion_left_valid & acromion_right_valid
+        left = torch.where(acromion_valid[..., None], acromion_left, shoulder_left)
+        right = torch.where(acromion_valid[..., None], acromion_right, shoulder_right)
+        lateral_valid = acromion_valid | shoulder_valid
     thorax, thorax_valid = _role_point(points, valid, spec, "thorax")
     pelvis, pelvis_valid = _role_point(points, valid, spec, "pelvis")
-    return _build_frame(thorax, left, right, thorax - pelvis, left_valid & right_valid & thorax_valid & pelvis_valid)
+    return _build_frame(thorax, left, right, thorax - pelvis, lateral_valid & thorax_valid & pelvis_valid)
 
 
 def _trial_scale(points: Tensor, valid: Tensor, spec: SkeletonSpec) -> Tensor:
@@ -140,7 +152,7 @@ def canonicalize_pose(points: Tensor, valid: Tensor, spec: SkeletonSpec) -> Cano
         scale=scale,
         valid=pelvis.valid,
     )
-    return CanonicalizedPose(points=canonical_points, valid=valid.bool(), transform=transform)
+    return CanonicalizedPose(points=canonical_points, valid=safe_valid, transform=transform)
 
 
 def restore_pose(points: Tensor, transform: CanonicalTransform) -> Tensor:

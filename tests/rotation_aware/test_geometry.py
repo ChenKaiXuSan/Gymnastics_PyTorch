@@ -2,8 +2,8 @@ from pathlib import Path
 
 import torch
 
-from fuse.rotation_aware.config import load_skeleton_spec
-from fuse.rotation_aware.geometry import canonicalize_pose, restore_pose
+from fuse.rotation_aware.config import SkeletonSpec, load_skeleton_spec
+from fuse.rotation_aware.geometry import build_pelvis_frame, build_thorax_frame, canonicalize_pose, restore_pose
 
 
 SPEC = load_skeleton_spec(Path("configs/fuse/skeleton_mhr70.yaml"))
@@ -74,3 +74,49 @@ def test_canonicalization_has_finite_gradients():
     canonical.points.square().sum().backward()
 
     assert torch.isfinite(points.grad).all()
+
+
+def test_canonicalization_clears_valid_mask_for_nonfinite_coordinates():
+    points, valid = synthetic_mhr70_pose()
+    index = SPEC.joint_index("neck")
+    points[:, 1, index] = torch.tensor([float("nan"), 0.0, 0.0])
+
+    canonical = canonicalize_pose(points, valid, SPEC)
+
+    assert not canonical.valid[:, 1, index].any()
+    assert torch.isfinite(canonical.points).all()
+
+
+def test_thorax_frame_falls_back_to_shoulders_when_acromions_are_invalid():
+    points, valid = synthetic_mhr70_pose()
+    for acromion, shoulder in (("left-acromion", "left-shoulder"), ("right-acromion", "right-shoulder")):
+        points[:, :, SPEC.joint_index(shoulder)] = points[:, :, SPEC.joint_index(acromion)]
+        valid[:, :, SPEC.joint_index(shoulder)] = True
+        valid[:, :, SPEC.joint_index(acromion)] = False
+
+    frame = build_thorax_frame(points, valid, SPEC)
+
+    assert frame.valid.all()
+    assert torch.isfinite(frame.rotation).all()
+
+
+def test_thorax_frame_uses_shoulders_when_acromion_roles_are_absent():
+    points, valid = synthetic_mhr70_pose()
+    for acromion, shoulder in (("left-acromion", "left-shoulder"), ("right-acromion", "right-shoulder")):
+        points[:, :, SPEC.joint_index(shoulder)] = points[:, :, SPEC.joint_index(acromion)]
+        valid[:, :, SPEC.joint_index(shoulder)] = True
+    roles = {name: role for name, role in SPEC.roles.items() if name not in {"left_acromion", "right_acromion"}}
+    shoulder_only_spec = SkeletonSpec(SPEC.name, SPEC.joint_names, SPEC.bones, roles, SPEC.required_roles)
+
+    frame = build_thorax_frame(points, valid, shoulder_only_spec)
+
+    assert frame.valid.all()
+
+
+def test_constructed_frames_are_orthogonal_right_handed_rotations():
+    points, valid = synthetic_mhr70_pose(theta_deg=31.0)
+
+    for frame in (build_pelvis_frame(points, valid, SPEC), build_thorax_frame(points, valid, SPEC)):
+        identity = torch.eye(3).expand_as(frame.rotation)
+        torch.testing.assert_close(frame.rotation.transpose(-1, -2) @ frame.rotation, identity, atol=1e-5, rtol=0)
+        torch.testing.assert_close(torch.linalg.det(frame.rotation), torch.ones_like(frame.valid, dtype=points.dtype), atol=1e-5, rtol=0)
