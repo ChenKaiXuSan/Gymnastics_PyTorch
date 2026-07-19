@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import torch
 
 from fuse.rotation_aware.config import RoleSpec, SkeletonSpec, load_skeleton_spec
@@ -218,9 +219,15 @@ def test_invalid_padded_suffix_does_not_change_valid_prefix_outputs() -> None:
 
 
 def test_explicit_temporal_valid_mask_excludes_padded_frames() -> None:
-    face, side, face_features, side_features, cross, valid_face, valid_side = _inputs()
+    face, side, _, _, _, valid_face, valid_side = _inputs()
     temporal_valid = torch.ones(face.shape[:2], dtype=torch.bool)
     temporal_valid[:, -1] = False
+    face_features, side_features, cross = _rebuild_inputs(
+        face,
+        side,
+        valid_face & temporal_valid[..., None],
+        valid_side & temporal_valid[..., None],
+    )
     model = RotationAwareFusionModel(SPEC, hidden_channels=16)
 
     out = model(
@@ -236,6 +243,89 @@ def test_explicit_temporal_valid_mask_excludes_padded_frames() -> None:
 
     assert not out.valid[:, -1].any()
     torch.testing.assert_close(out.delta_kpts[:, -1], torch.zeros_like(out.delta_kpts[:, -1]), atol=0, rtol=0)
+
+
+def test_temporal_mask_rejects_features_built_before_masking() -> None:
+    face, side, face_features, side_features, cross, valid_face, valid_side = _inputs()
+    temporal_valid = torch.ones(face.shape[:2], dtype=torch.bool)
+    temporal_valid[:, -1] = False
+    model = RotationAwareFusionModel(SPEC, hidden_channels=16)
+
+    with pytest.raises(ValueError, match="features must be recomputed after temporal masking"):
+        model(
+            face,
+            side,
+            face_features,
+            side_features,
+            cross,
+            valid_face,
+            valid_side,
+            temporal_valid=temporal_valid,
+        )
+
+
+def test_model_rejects_features_from_different_source_points() -> None:
+    face, side, _, side_features, cross, valid_face, valid_side = _inputs()
+    shifted_face = face.clone()
+    shifted_face[:, :, SPEC.joint_index("neck"), 0] += 0.5
+    shifted_face_features = _feature_bundle(shifted_face, valid_face)
+    model = RotationAwareFusionModel(SPEC, hidden_channels=16)
+
+    with pytest.raises(ValueError, match="pose.points must match the supplied effective points"):
+        model(face, side, shifted_face_features, side_features, cross, valid_face, valid_side)
+
+
+def test_recomputed_masked_features_ignore_excluded_coordinates() -> None:
+    torch.manual_seed(29)
+    face, side, _, _, _, valid_face, valid_side = _inputs()
+    temporal_valid = torch.ones(face.shape[:2], dtype=torch.bool)
+    temporal_valid[:, -1] = False
+    effective_face_valid = valid_face & temporal_valid[..., None]
+    effective_side_valid = valid_side & temporal_valid[..., None]
+    noisy_face = face.clone()
+    noisy_side = side.clone()
+    noisy_face[:, -1] = torch.randn_like(noisy_face[:, -1]) * 1000
+    noisy_side[:, -1] = torch.randn_like(noisy_side[:, -1]) * 1000
+    clean_face_features, clean_side_features, clean_cross = _rebuild_inputs(
+        face,
+        side,
+        effective_face_valid,
+        effective_side_valid,
+    )
+    noisy_face_features, noisy_side_features, noisy_cross = _rebuild_inputs(
+        noisy_face,
+        noisy_side,
+        effective_face_valid,
+        effective_side_valid,
+    )
+    model = RotationAwareFusionModel(SPEC, hidden_channels=16).eval()
+
+    clean = model(
+        face,
+        side,
+        clean_face_features,
+        clean_side_features,
+        clean_cross,
+        valid_face,
+        valid_side,
+        temporal_valid=temporal_valid,
+    )
+    noisy = model(
+        noisy_face,
+        noisy_side,
+        noisy_face_features,
+        noisy_side_features,
+        noisy_cross,
+        valid_face,
+        valid_side,
+        temporal_valid=temporal_valid,
+    )
+
+    prefix = slice(None, -1)
+    for field in ("fused_kpts", "base_kpts", "delta_kpts", "fused_theta", "fused_r_pt"):
+        torch.testing.assert_close(getattr(clean, field)[:, prefix], getattr(noisy, field)[:, prefix], atol=0, rtol=0)
+    for field in ("valid", "fused_theta_valid", "fused_r_pt_valid"):
+        assert torch.equal(getattr(clean, field)[:, prefix], getattr(noisy, field)[:, prefix])
 
 
 def test_internal_invalid_coordinates_do_not_change_valid_outputs() -> None:

@@ -194,6 +194,22 @@ class RotationAwareFusionModel(nn.Module):
         return temporal_valid.bool()
 
     @staticmethod
+    def _validate_feature_bundle(
+        name: str,
+        features: FeatureBundle,
+        points: Tensor,
+        effective_valid: Tensor,
+    ) -> None:
+        pose = features.pose
+        if pose.valid.shape != effective_valid.shape or not torch.equal(pose.valid, effective_valid):
+            raise ValueError(
+                f"{name} features must be recomputed after temporal masking: "
+                "FeatureBundle.pose.valid must exactly match the effective valid mask"
+            )
+        if pose.points.shape != points.shape or not torch.equal(pose.points, points):
+            raise ValueError(f"{name} FeatureBundle.pose.points must match the supplied effective points")
+
+    @staticmethod
     def _cross_features(cross: DisagreementFeatures, shape: tuple[int, int, int], dtype: torch.dtype) -> Tensor:
         batch, frames, joints = shape
         if cross.coordinate_abs_delta.shape != (batch, frames, joints, 3):
@@ -251,6 +267,8 @@ class RotationAwareFusionModel(nn.Module):
         valid_side = valid_side & temporal_valid[..., None]
         face = torch.where(valid_face[..., None], face, torch.zeros_like(face))
         side = torch.where(valid_side[..., None], side, torch.zeros_like(side))
+        self._validate_feature_bundle("face", face_features, face, valid_face)
+        self._validate_feature_bundle("side", side_features, side, valid_side)
         base = quality_weighted_fusion(
             face,
             side,
