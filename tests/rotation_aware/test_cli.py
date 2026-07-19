@@ -422,6 +422,54 @@ def test_cache_paths_require_every_manifest_declared_cycle(tmp_path: Path) -> No
         _cache_trial_paths(tmp_path, ["1"])
 
 
+def _write_complete_cache_manifest(cache: Path) -> Path:
+    person = cache / "person_1"
+    person.mkdir(parents=True)
+    (person / "cycle_000.npz").touch()
+    (person / "manifest.json").write_text(
+        json.dumps({"person_id": "1", "trials": ["cycle_000"]}),
+        encoding="utf-8",
+    )
+    return person
+
+
+def test_cache_paths_waits_for_short_publication_marker(
+    tmp_path: Path, monkeypatch
+) -> None:
+    person = _write_complete_cache_manifest(tmp_path)
+    marker = person / ".publishing"
+    marker.touch()
+    waits: list[float] = []
+
+    def clear_marker(delay: float) -> None:
+        waits.append(delay)
+        marker.unlink()
+
+    monkeypatch.setattr(
+        cli, "time", SimpleNamespace(sleep=clear_marker), raising=False
+    )
+    monkeypatch.setattr(cli, "_CACHE_PUBLICATION_MAX_ATTEMPTS", 2, raising=False)
+
+    assert _cache_trial_paths(tmp_path, ["1"]) == {
+        "1": [person / "cycle_000.npz"]
+    }
+    assert waits
+
+
+def test_cache_paths_reports_publication_timeout_without_long_sleep(
+    tmp_path: Path, monkeypatch
+) -> None:
+    person = _write_complete_cache_manifest(tmp_path)
+    (person / ".publishing").touch()
+    monkeypatch.setattr(
+        cli, "time", SimpleNamespace(sleep=lambda _delay: None), raising=False
+    )
+    monkeypatch.setattr(cli, "_CACHE_PUBLICATION_MAX_ATTEMPTS", 1, raising=False)
+
+    with pytest.raises(FileNotFoundError, match="publication.*timed out"):
+        _cache_trial_paths(tmp_path, ["1"])
+
+
 def test_evaluate_combines_a4_a5_a6_runs_with_deterministic_a0_a3(
     tmp_path: Path,
 ) -> None:

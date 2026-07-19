@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -19,6 +20,8 @@ from .config import SkeletonSpec
 from .schema import PosePairTrial, valid_from_points
 
 DEFAULT_FPS = 60.0
+CACHE_MANIFEST_FILENAME = "manifest.json"
+CACHE_PUBLICATION_MARKER = ".publishing"
 
 
 def _load_split_record(split_root: Path, person_id: str) -> tuple[Path, dict[str, Any]]:
@@ -159,30 +162,40 @@ def write_person_cache(
     source["trial_sources"] = {
         trial.trial_id: _plain_metadata(trial.source_metadata) for trial in trials
     }
-    for trial in trials:
-        np.savez_compressed(
-            person_cache / f"{trial.trial_id}.npz",
-            face=trial.face,
-            side=trial.side,
-            valid_face=trial.valid_face,
-            valid_side=trial.valid_side,
-            timestamps=trial.timestamps,
-            face_map=trial.face_map,
-            side_map=trial.side_map,
-            joint_names=np.asarray(trial.joint_names),
-            person_id=np.asarray(trial.person_id),
-            trial_id=np.asarray(trial.trial_id),
-            fps=np.asarray(trial.fps, dtype=np.float64),
+    marker = person_cache / CACHE_PUBLICATION_MARKER
+    marker.touch()
+    try:
+        for trial in trials:
+            np.savez_compressed(
+                person_cache / f"{trial.trial_id}.npz",
+                face=trial.face,
+                side=trial.side,
+                valid_face=trial.valid_face,
+                valid_side=trial.valid_side,
+                timestamps=trial.timestamps,
+                face_map=trial.face_map,
+                side_map=trial.side_map,
+                joint_names=np.asarray(trial.joint_names),
+                person_id=np.asarray(trial.person_id),
+                trial_id=np.asarray(trial.trial_id),
+                fps=np.asarray(trial.fps, dtype=np.float64),
+            )
+        manifest = {
+            "person_id": person_id,
+            "trials": [trial.trial_id for trial in trials],
+            "source": source,
+            "config": config,
+            "source_hash": _metadata_hash(source),
+            "config_hash": _metadata_hash(config),
+        }
+        manifest_path = person_cache / CACHE_MANIFEST_FILENAME
+        temporary_manifest = person_cache / f".{CACHE_MANIFEST_FILENAME}.tmp"
+        temporary_manifest.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
         )
-    manifest = {
-        "person_id": person_id,
-        "trials": [trial.trial_id for trial in trials],
-        "source": source,
-        "config": config,
-        "source_hash": _metadata_hash(source),
-        "config_hash": _metadata_hash(config),
-    }
-    (person_cache / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+        os.replace(temporary_manifest, manifest_path)
+    finally:
+        marker.unlink(missing_ok=True)
     return person_cache
 
 
@@ -194,7 +207,7 @@ def load_cached_trial(cache_path: str | Path, trial_id: str | None = None) -> tu
         raise ValueError("trial_id is required when loading from a person cache directory")
     if not trial_path.exists():
         raise FileNotFoundError(f"Missing cached trial: {trial_path}")
-    manifest_path = trial_path.parent / "manifest.json"
+    manifest_path = trial_path.parent / CACHE_MANIFEST_FILENAME
     metadata = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
     with np.load(trial_path, allow_pickle=False) as data:
         trial = PosePairTrial(

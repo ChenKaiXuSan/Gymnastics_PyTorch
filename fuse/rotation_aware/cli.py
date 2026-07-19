@@ -9,6 +9,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -19,7 +20,13 @@ from torch.utils.data import DataLoader
 
 from .config import load_skeleton_spec
 from .corruptions import CorruptionConfig, write_corruption_manifest
-from .data import load_cached_trial, load_person_trials, write_person_cache
+from .data import (
+    CACHE_MANIFEST_FILENAME,
+    CACHE_PUBLICATION_MARKER,
+    load_cached_trial,
+    load_person_trials,
+    write_person_cache,
+)
 from .dataset import (
     PosePairWindowDataset,
     WindowConfig,
@@ -39,6 +46,8 @@ from .training import load_checkpoint, save_checkpoint, train_one_epoch, validat
 
 _ENV = re.compile(r"\$\{oc\.env:([^,}]+)(?:,([^}]*))?\}")
 _PATH = re.compile(r"\$\{([^{}]+)\}")
+_CACHE_PUBLICATION_MAX_ATTEMPTS = 20
+_CACHE_PUBLICATION_SLEEP_SECONDS = 0.05
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
@@ -190,32 +199,48 @@ def _cached_trials(cache: Path, people: Iterable[str], skeleton) -> list:
 
 
 def _cache_trial_paths(cache: Path, people: Iterable[str]) -> dict[str, list[Path]]:
-    """Require every selected person cache to match its declared cycle manifest."""
+    """Require complete manifests, waiting only for an active cache publication."""
     cached: dict[str, list[Path]] = {}
     missing: list[str] = []
     for person in sorted({str(value) for value in people}):
         person_dir = cache / f"person_{person}"
-        manifest_path = person_dir / "manifest.json"
-        if not person_dir.is_dir() or not manifest_path.is_file():
-            missing.append(f"person_{person}")
-            continue
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            expected = manifest.get("trials") if isinstance(manifest, dict) else None
-            if (
-                not isinstance(expected, list)
-                or not expected
-                or manifest.get("person_id") != person
-                or not all(isinstance(trial_id, str) for trial_id in expected)
-            ):
-                raise ValueError("invalid person cache manifest")
-            paths = [person_dir / f"{trial_id}.npz" for trial_id in expected]
-            if not all(path.is_file() for path in paths):
-                raise ValueError("missing declared cache cycle")
-        except (OSError, ValueError, json.JSONDecodeError):
-            missing.append(f"person_{person}")
-            continue
-        cached[person] = paths
+        marker = person_dir / CACHE_PUBLICATION_MARKER
+        manifest_path = person_dir / CACHE_MANIFEST_FILENAME
+        for attempt in range(_CACHE_PUBLICATION_MAX_ATTEMPTS + 1):
+            if marker.is_file():
+                if attempt == _CACHE_PUBLICATION_MAX_ATTEMPTS:
+                    missing.append(
+                        f"person_{person} (cache publication timed out)"
+                    )
+                    break
+                time.sleep(_CACHE_PUBLICATION_SLEEP_SECONDS)
+                continue
+            if not person_dir.is_dir() or not manifest_path.is_file():
+                missing.append(f"person_{person}")
+                break
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                expected = manifest.get("trials") if isinstance(manifest, dict) else None
+                if (
+                    not isinstance(expected, list)
+                    or not expected
+                    or manifest.get("person_id") != person
+                    or not all(isinstance(trial_id, str) for trial_id in expected)
+                ):
+                    raise ValueError("invalid person cache manifest")
+                paths = [person_dir / f"{trial_id}.npz" for trial_id in expected]
+                if not all(path.is_file() for path in paths):
+                    raise ValueError("missing declared cache cycle")
+            except (OSError, ValueError, json.JSONDecodeError):
+                missing.append(f"person_{person}")
+                break
+            if not marker.is_file():
+                cached[person] = paths
+                break
+            if attempt == _CACHE_PUBLICATION_MAX_ATTEMPTS:
+                missing.append(f"person_{person} (cache publication timed out)")
+                break
+            time.sleep(_CACHE_PUBLICATION_SLEEP_SECONDS)
     if missing:
         raise FileNotFoundError(
             f"missing complete cache for selected people: {', '.join(missing)}"

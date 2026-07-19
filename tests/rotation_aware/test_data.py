@@ -1,4 +1,6 @@
 import json
+import os
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -14,6 +16,33 @@ def fake_sam3d_loader(_root, _person_id, view):
     return {
         frame_id: np.full((len(mhr_names), 3), frame_id, dtype=np.float32)
         for frame_id in frame_ids
+    }
+
+
+def _cache_trial() -> PosePairTrial:
+    points = np.ones((1, len(mhr_names), 3), dtype=np.float32)
+    valid = valid_from_points(points)
+    return PosePairTrial(
+        face=points,
+        side=points,
+        valid_face=valid,
+        valid_side=valid,
+        timestamps=np.array([0.0], dtype=np.float64),
+        face_map=np.array([0], dtype=np.int64),
+        side_map=np.array([0], dtype=np.int64),
+        joint_names=tuple(mhr_names),
+        person_id="1",
+        trial_id="cycle_000",
+        fps=60.0,
+    )
+
+
+def _cache_source() -> dict[str, object]:
+    return {
+        "alignment_record": "alignment_record_1.json",
+        "offset_side_to_face": 0,
+        "fps": 60.0,
+        "person_id": "1",
     }
 
 
@@ -184,6 +213,45 @@ def test_cache_round_trip_preserves_trial_and_metadata(tmp_path, monkeypatch, sp
     np.testing.assert_array_equal(restored.valid_side, trials[0].valid_side)
     assert metadata["source"]["alignment_record"] == str(record_path)
     assert metadata["config"]["skeleton"] == "mhr70"
+
+
+def test_write_person_cache_publishes_atomically_and_clears_marker(
+    tmp_path, monkeypatch
+):
+    marker_seen_while_writing: list[bool] = []
+    replace_calls: list[tuple[str, str]] = []
+    original_save = data.np.savez_compressed
+    original_replace = os.replace
+    marker = tmp_path / "cache" / "person_1" / ".publishing"
+
+    def save_with_marker(path, *args, **kwargs):
+        marker_seen_while_writing.append(marker.is_file())
+        return original_save(path, *args, **kwargs)
+
+    def record_replace(source, destination):
+        replace_calls.append((str(source), str(destination)))
+        original_replace(source, destination)
+
+    monkeypatch.setattr(data.np, "savez_compressed", save_with_marker)
+    monkeypatch.setattr(data, "os", os, raising=False)
+    monkeypatch.setattr(data.os, "replace", record_replace)
+
+    person_cache = data.write_person_cache(
+        [_cache_trial()],
+        tmp_path / "cache",
+        source_metadata=_cache_source(),
+        config_metadata={"skeleton": "mhr70"},
+    )
+
+    assert marker_seen_while_writing == [True]
+    assert not marker.exists()
+    assert (person_cache / "manifest.json").is_file()
+    assert any(
+        Path(destination) == person_cache / "manifest.json"
+        and Path(source) != Path(destination)
+        and ".tmp" in Path(source).name
+        for source, destination in replace_calls
+    )
 
 
 def test_write_person_cache_requires_nonempty_provenance(tmp_path, monkeypatch, spec):

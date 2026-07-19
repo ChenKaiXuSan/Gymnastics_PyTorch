@@ -68,6 +68,8 @@ def test_end_to_end_overlap_inference_exports_person_metrics(tmp_path: Path) -> 
         encoding="utf-8",
     )
     output = tmp_path / "outputs"
+    old_fuse_root = tmp_path / "legacy_fuse_outputs"
+    old_fuse_root.mkdir()
     config = tmp_path / "rotation_aware.yaml"
     config.write_text(
         "\n".join(
@@ -78,6 +80,7 @@ def test_end_to_end_overlap_inference_exports_person_metrics(tmp_path: Path) -> 
                 f"  output_root: {output}",
                 "  skeleton: configs/fuse/skeleton_mhr70.yaml",
                 f"  fold_json: {fold}",
+                f"  old_fuse_root: {old_fuse_root}",
                 "window:",
                 "  length: 32",
                 "  train_stride: 16",
@@ -113,3 +116,4 @@ def test_end_to_end_overlap_inference_exports_person_metrics(tmp_path: Path) -> 
         rows = list(csv.DictReader(handle))
     assert rows
     assert {row["person_id"] for row in rows} == {"1"}
+    assert {row["method"] for row in rows} >= {"A6"}
