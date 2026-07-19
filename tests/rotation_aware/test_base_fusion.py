@@ -43,6 +43,21 @@ def test_quality_fusion_exactly_selects_each_lone_view_for_random_tiny_qualities
     torch.testing.assert_close(side_only.points, side, atol=0, rtol=0)
 
 
+def test_quality_fusion_reports_effective_weights_for_all_validity_cases():
+    face = torch.tensor([[[[2.0, 0.0, 0.0]], [[2.0, 0.0, 0.0]], [[2.0, 0.0, 0.0]], [[2.0, 0.0, 0.0]], [[2.0, 0.0, 0.0]]]])
+    side = torch.tensor([[[[6.0, 0.0, 0.0]], [[6.0, 0.0, 0.0]], [[6.0, 0.0, 0.0]], [[6.0, 0.0, 0.0]], [[6.0, 0.0, 0.0]]]])
+    face_valid = torch.tensor([[[True], [False], [True], [True], [False]]])
+    side_valid = torch.tensor([[[False], [True], [True], [True], [False]]])
+    quality_face = torch.tensor([[0.0, 0.0, 0.0, 0.2, 0.0]])
+    quality_side = torch.tensor([[0.0, 0.0, 0.0, 0.3, 0.0]])
+
+    out = quality_weighted_fusion(face, side, face_valid, side_valid, quality_face, quality_side)
+
+    torch.testing.assert_close(out.face_weight[..., 0], torch.tensor([[1.0, 0.0, 0.5, 0.4, 0.0]]), atol=0, rtol=0)
+    torch.testing.assert_close(out.side_weight[..., 0], torch.tensor([[0.0, 1.0, 0.5, 0.6, 0.0]]), atol=0, rtol=0)
+    torch.testing.assert_close(out.face_weight + out.side_weight, out.valid.to(face.dtype))
+
+
 def test_arithmetic_fusion_is_mask_aware_and_handles_both_invalid():
     face = torch.tensor([[[[2.0, 4.0, 6.0], [8.0, 10.0, 12.0]]]])
     side = torch.tensor([[[[4.0, 8.0, 12.0], [16.0, 20.0, 24.0]]]])

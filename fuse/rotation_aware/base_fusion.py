@@ -72,4 +72,10 @@ def quality_weighted_fusion(
     both_side_weight = torch.where(zero_both_weight, torch.ones_like(both_side_weight), both_side_weight)
     both = _fuse(face, side, both_face_weight, both_side_weight)
     points = torch.where(face_only[..., None], face, torch.where(side_only[..., None], side, both.points))
-    return FusionResult(points, face_valid | side_valid, face_weight, side_weight)
+    both_total = both_face_weight + both_side_weight
+    normalization = torch.where(both_valid, both_total, torch.ones_like(both_total))
+    normalized_face = both_face_weight / normalization
+    normalized_side = both_side_weight / normalization
+    effective_face_weight = torch.where(face_only, torch.ones_like(face_weight), normalized_face)
+    effective_side_weight = torch.where(side_only, torch.ones_like(side_weight), normalized_side)
+    return FusionResult(points, face_valid | side_valid, effective_face_weight, effective_side_weight)
