@@ -113,7 +113,7 @@ def _pseudo_target(
     quality_face: Tensor,
     quality_side: Tensor,
     config: LossConfig,
-) -> tuple[Tensor, Tensor]:
+) -> tuple[Tensor, Tensor, Tensor]:
     """Construct a quality-bounded reference without selecting weak disagreements."""
     face, valid_face = _safe_points(face, valid_face)
     side, valid_side = _safe_points(side, valid_side)
@@ -135,29 +135,44 @@ def _pseudo_target(
     target = torch.where(face_only[..., None], face, target)
     target = torch.where(side_only[..., None], side, target)
     valid = consensus | face_dominant | side_dominant | face_only | side_only
-    return torch.where(valid[..., None], target, torch.zeros_like(target)), valid
+    return torch.where(valid[..., None], target, torch.zeros_like(target)), valid, consensus
 
 
-def _rotation_distance(left: Tensor, right: Tensor) -> Tensor:
-    relative = left.transpose(-1, -2) @ right
-    cosine = ((relative.diagonal(dim1=-2, dim2=-1).sum(dim=-1) - 1.0) / 2.0).clamp(-1.0, 1.0)
-    return torch.acos(cosine)
+def _rotation_chordal_proxy(left: Tensor, right: Tensor) -> Tensor:
+    """A smooth SO(3) proxy equal to one minus cosine for valid rotations."""
+    return (left - right).square().sum(dim=(-2, -1)) * 0.125
 
 
 def _frame_mask(joint_mask: Tensor) -> Tensor:
     return joint_mask.bool().any(dim=-1)
 
 
-def _complete_cycle_mask(batch: Mapping[str, object], frames: int, device: torch.device) -> Tensor:
+def _complete_cycle_mask(batch: Mapping[str, object], frames: int, device: torch.device, *, batch_size: int) -> Tensor:
     complete = batch.get("complete_cycle")
     if complete is None:
-        return torch.ones((1, frames), dtype=torch.bool, device=device)
-    if not isinstance(complete, Tensor) or complete.ndim != 1:
+        return torch.zeros((batch_size, frames), dtype=torch.bool, device=device)
+    if not isinstance(complete, Tensor) or complete.shape != (batch_size,):
         raise ValueError("batch['complete_cycle'] must have shape [B]")
     return complete.bool().to(device=device)[:, None].expand(-1, frames)
 
 
+def _unwrap_circular(values: Tensor, valid: Tensor) -> Tensor:
+    """Unwrap each valid contiguous angle run with differentiable circular steps."""
+    unwrapped = torch.zeros_like(values)
+    for index in range(values.shape[1]):
+        current_valid = valid[:, index]
+        if index == 0:
+            unwrapped[:, index] = torch.where(current_valid, values[:, index], torch.zeros_like(values[:, index]))
+            continue
+        continuous = current_valid & valid[:, index - 1]
+        continued = unwrapped[:, index - 1] + circular_diff(values[:, index], values[:, index - 1])
+        unwrapped[:, index] = torch.where(continuous, continued, torch.where(current_valid, values[:, index], torch.zeros_like(values[:, index])))
+    return unwrapped
+
+
 def _rom_loss(prediction: Tensor, target: Tensor, valid: Tensor, complete: Tensor) -> Tensor:
+    prediction = _unwrap_circular(prediction, valid)
+    target = _unwrap_circular(target, valid)
     values: list[Tensor] = []
     for batch_index in range(prediction.shape[0]):
         usable = valid[batch_index] & complete[batch_index]
@@ -168,6 +183,16 @@ def _rom_loss(prediction: Tensor, target: Tensor, valid: Tensor, complete: Tenso
     if not values:
         return prediction.new_zeros(())
     return torch.stack(values).mean()
+
+
+def _trial_bone_baseline(lengths: Tensor, valid: Tensor) -> Tensor:
+    baseline = torch.zeros((lengths.shape[0], lengths.shape[2]), dtype=lengths.dtype, device=lengths.device)
+    for batch_index in range(lengths.shape[0]):
+        for bone_index in range(lengths.shape[2]):
+            usable = lengths[batch_index, :, bone_index][valid[batch_index, :, bone_index]]
+            if usable.numel():
+                baseline[batch_index, bone_index] = usable.median()
+    return baseline[:, None, :]
 
 
 def compute_self_supervised_losses(
@@ -182,12 +207,17 @@ def compute_self_supervised_losses(
         raise ValueError("FusionOutput.fused_kpts must have shape [B, T, J, 3]")
     batch_size, frames, joints, _ = fused.shape
     shape = (batch_size, frames, joints)
+    if output.valid.shape != shape:
+        raise ValueError("FusionOutput.valid must have shape [B, T, J]")
+    if output.delta_kpts.shape != fused.shape:
+        raise ValueError("FusionOutput.delta_kpts must have shape [B, T, J, 3]")
     reference_face = _require_tensor(batch, "reference_face", fused.shape)
     reference_side = _require_tensor(batch, "reference_side", fused.shape)
     valid_face = _require_tensor(batch, "valid_face", shape).bool()
     valid_side = _require_tensor(batch, "valid_side", shape).bool()
     loss_mask = _require_tensor(batch, "loss_mask", shape).bool()
     padding_mask = _require_tensor(batch, "padding_mask", (batch_size, frames)).bool()
+    dt = _require_tensor(batch, "dt", (batch_size, frames)).to(device=fused.device, dtype=fused.dtype)
     face_corruption = _require_tensor(batch, "face_corruption_mask", shape).bool()
     side_corruption = _require_tensor(batch, "side_corruption_mask", shape).bool()
     quality_face = _require_tensor(batch, "quality_face", (batch_size, frames)).to(device=fused.device, dtype=fused.dtype)
@@ -200,29 +230,30 @@ def compute_self_supervised_losses(
     valid_face = valid_face.to(device=fused.device)
     valid_side = valid_side.to(device=fused.device)
     coordinate_mask = loss_mask.to(device=fused.device) & padding_mask.to(device=fused.device)[..., None]
-    target, target_valid = _pseudo_target(
+    target, target_valid, consensus_mask = _pseudo_target(
         reference_face, reference_side, valid_face, valid_side, quality_face, quality_side, config
     )
     fused, fused_valid = _safe_points(fused, output.valid.to(device=fused.device) & coordinate_mask)
     coordinate_mask = coordinate_mask & fused_valid & target_valid
     corrupted_mask = coordinate_mask & (face_corruption.to(device=fused.device) | side_corruption.to(device=fused.device))
-    identity_mask = coordinate_mask & ~(face_corruption.to(device=fused.device) | side_corruption.to(device=fused.device))
+    identity_mask = coordinate_mask & consensus_mask & ~(face_corruption.to(device=fused.device) | side_corruption.to(device=fused.device))
     coordinate_error = (fused - target).square().mean(dim=-1)
     corruption_recovery = _finite_masked_mean(coordinate_error, corrupted_mask)
     high_consensus_identity = _finite_masked_mean(coordinate_error, identity_mask)
 
-    target_trunk = extract_trunk_features(target, target_valid & coordinate_mask, skeleton, dt=1.0)
-    fused_trunk = extract_trunk_features(fused, fused_valid, skeleton, dt=1.0)
+    target_trunk = extract_trunk_features(target, target_valid & coordinate_mask, skeleton, dt=dt)
+    fused_trunk = extract_trunk_features(fused, fused_valid, skeleton, dt=dt)
     shared_frame = _frame_mask(coordinate_mask)
     axial_mask = shared_frame & target_trunk.angle_valid & fused_trunk.angle_valid
     circular_axial_rotation = _finite_masked_mean(circular_diff(fused_trunk.angle, target_trunk.angle).square(), axial_mask)
     rotation_mask = shared_frame & target_trunk.rotation_valid & fused_trunk.rotation_valid
-    so3_rotation = _finite_masked_mean(_rotation_distance(fused_trunk.rotation, target_trunk.rotation).square(), rotation_mask)
+    so3_rotation = _finite_masked_mean(_rotation_chordal_proxy(fused_trunk.rotation, target_trunk.rotation), rotation_mask)
 
-    target_pose = extract_pose_features(target, target_valid & coordinate_mask, skeleton, dt=1.0)
-    fused_pose = extract_pose_features(fused, fused_valid, skeleton, dt=1.0)
+    target_pose = extract_pose_features(target, target_valid & coordinate_mask, skeleton, dt=dt)
+    fused_pose = extract_pose_features(fused, fused_valid, skeleton, dt=dt)
     bone_mask = target_pose.bone_valid & fused_pose.bone_valid
-    relative_bone_error = (fused_pose.bone_lengths - target_pose.bone_lengths).abs() / target_pose.bone_lengths.clamp_min(config.epsilon)
+    target_bone_baseline = _trial_bone_baseline(target_pose.bone_lengths, target_pose.bone_valid)
+    relative_bone_error = (fused_pose.bone_lengths - target_bone_baseline).abs() / target_bone_baseline.clamp_min(config.epsilon)
     trial_bone_length = _finite_masked_mean(relative_bone_error.square(), bone_mask)
     local_bone_mask = bone_mask[:, 1:] & bone_mask[:, :-1]
     local_bone_error = (fused_pose.bone_lengths[:, 1:] - fused_pose.bone_lengths[:, :-1]) - (
@@ -230,16 +261,24 @@ def compute_self_supervised_losses(
     )
     local_rigidity = _finite_masked_mean(local_bone_error.square(), local_bone_mask)
 
-    acceleration_mask = coordinate_mask[:, 2:] & coordinate_mask[:, 1:-1] & coordinate_mask[:, :-2]
-    target_acceleration = target[:, 2:] - 2.0 * target[:, 1:-1] + target[:, :-2]
-    fused_acceleration = fused[:, 2:] - 2.0 * fused[:, 1:-1] + fused[:, :-2]
+    previous_dt = dt[:, 1:-1]
+    next_dt = dt[:, 2:]
+    interval_valid = torch.isfinite(previous_dt) & torch.isfinite(next_dt) & (previous_dt > 0) & (next_dt > 0)
+    acceleration_mask = coordinate_mask[:, 2:] & coordinate_mask[:, 1:-1] & coordinate_mask[:, :-2] & interval_valid[..., None]
+    target_velocity_previous = (target[:, 1:-1] - target[:, :-2]) / previous_dt[..., None, None].clamp_min(config.epsilon)
+    target_velocity_next = (target[:, 2:] - target[:, 1:-1]) / next_dt[..., None, None].clamp_min(config.epsilon)
+    fused_velocity_previous = (fused[:, 1:-1] - fused[:, :-2]) / previous_dt[..., None, None].clamp_min(config.epsilon)
+    fused_velocity_next = (fused[:, 2:] - fused[:, 1:-1]) / next_dt[..., None, None].clamp_min(config.epsilon)
+    denominator = (previous_dt + next_dt)[..., None, None].clamp_min(config.epsilon)
+    target_acceleration = 2.0 * (target_velocity_next - target_velocity_previous) / denominator
+    fused_acceleration = 2.0 * (fused_velocity_next - fused_velocity_previous) / denominator
     adaptive_weight = 1.0 / (1.0 + torch.linalg.vector_norm(target_acceleration, dim=-1).detach())
     acceleration_error = (fused_acceleration - target_acceleration).square().mean(dim=-1) * adaptive_weight
     adaptive_temporal_acceleration = _finite_masked_mean(acceleration_error, acceleration_mask)
 
     delta = torch.where(fused_valid[..., None] & torch.isfinite(output.delta_kpts), output.delta_kpts, torch.zeros_like(output.delta_kpts))
     minimal_residual = _finite_masked_mean(delta.square().mean(dim=-1), coordinate_mask)
-    complete = _complete_cycle_mask(batch, frames, fused.device)
+    complete = _complete_cycle_mask(batch, frames, fused.device, batch_size=batch_size)
     complete_cycle_rom = _rom_loss(fused_trunk.angle, target_trunk.angle, axial_mask, complete)
 
     values = {

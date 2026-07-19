@@ -123,11 +123,18 @@ class PosePairWindowDataset(Dataset[dict[str, Any]]):
         valid_face = torch.zeros((length, joints), dtype=torch.bool)
         valid_side = torch.zeros_like(valid_face)
         padding_mask = torch.zeros(length, dtype=torch.bool)
+        timestamps = torch.zeros(length, dtype=torch.float64)
+        dt = torch.zeros(length, dtype=torch.float32)
         face[:available] = torch.from_numpy(np.array(trial.face[start : start + available], copy=True))
         side[:available] = torch.from_numpy(np.array(trial.side[start : start + available], copy=True))
         valid_face[:available] = torch.from_numpy(np.array(trial.valid_face[start : start + available], copy=True))
         valid_side[:available] = torch.from_numpy(np.array(trial.valid_side[start : start + available], copy=True))
         padding_mask[:available] = True
+        timestamps[:available] = torch.from_numpy(np.array(trial.timestamps[start : start + available], copy=True))
+        if available:
+            dt[0] = 1.0 / trial.fps
+        if available > 1:
+            dt[1:available] = torch.from_numpy(np.diff(trial.timestamps[start : start + available]).astype(np.float32))
         return {
             "face": face,
             "side": side,
@@ -135,6 +142,10 @@ class PosePairWindowDataset(Dataset[dict[str, Any]]):
             "valid_side": valid_side,
             "padding_mask": padding_mask,
             "loss_mask": padding_mask.unsqueeze(-1) & valid_face & valid_side,
+            "timestamps": timestamps,
+            "fps": torch.tensor(trial.fps, dtype=torch.float32),
+            "dt": dt,
+            "complete_cycle": start == 0 and available == len(trial.timestamps),
             "person_id": trial.person_id,
             "trial_id": trial.trial_id,
             "window_start": start,

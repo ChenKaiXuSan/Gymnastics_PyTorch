@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from fuse.rotation_aware.config import RoleSpec, SkeletonSpec
-from fuse.rotation_aware.losses import LossConfig, compute_self_supervised_losses
+from fuse.rotation_aware.losses import LossConfig, _complete_cycle_mask, _rom_loss, compute_self_supervised_losses
 from fuse.rotation_aware.model import FusionOutput
 from fuse.rotation_aware.trunk import extract_trunk_features
 
@@ -61,6 +61,7 @@ def _batch_and_output(*, frames: int = 5) -> tuple[dict[str, torch.Tensor], Fusi
         "valid_side": valid.clone(),
         "loss_mask": valid.clone(),
         "padding_mask": torch.ones((1, frames), dtype=torch.bool),
+        "dt": torch.ones((1, frames)),
         "face_corruption_mask": torch.ones_like(valid),
         "side_corruption_mask": torch.zeros_like(valid),
         "quality_face": torch.ones((1, frames)),
@@ -149,3 +150,84 @@ def test_complete_cycle_rom_excludes_incomplete_windows() -> None:
     losses = compute_self_supervised_losses(shifted, batch, LossConfig(), spec)
 
     assert losses.complete_cycle_rom.item() == pytest.approx(0.0, abs=1e-7)
+
+
+def test_so3_exact_agreement_has_finite_backward_gradient() -> None:
+    batch, output, spec = _batch_and_output()
+    fused = output.fused_kpts.detach().clone().requires_grad_()
+    output = replace(output, fused_kpts=fused)
+
+    losses = compute_self_supervised_losses(output, batch, LossConfig(), spec)
+    losses.so3_rotation.backward()
+
+    assert fused.grad is not None
+    assert torch.isfinite(fused.grad).all()
+
+
+def test_rom_unwraps_across_the_pi_boundary() -> None:
+    wrapped = torch.tensor([[3.0, -3.0]])
+    target = torch.tensor([[3.0, 3.1]])
+    valid = torch.ones_like(wrapped, dtype=torch.bool)
+    complete = torch.ones_like(valid)
+
+    loss = _rom_loss(wrapped, target, valid, complete)
+
+    assert loss.item() < 0.05
+
+
+def test_missing_complete_cycle_disables_rom() -> None:
+    batch, output, spec = _batch_and_output()
+    batch.pop("complete_cycle")
+
+    mask = _complete_cycle_mask(batch, output.fused_kpts.shape[1], output.fused_kpts.device, batch_size=1)
+
+    assert not mask.any()
+
+
+def test_trial_bone_length_uses_a_temporal_target_baseline() -> None:
+    batch, output, spec = _batch_and_output()
+    ramp = torch.linspace(0.0, 0.4, output.fused_kpts.shape[1])
+    batch["reference_face"][:, :, 1, 0] += ramp
+    batch["reference_side"][:, :, 1, 0] += ramp
+    output = replace(output, fused_kpts=batch["reference_face"].clone())
+
+    losses = compute_self_supervised_losses(output, batch, LossConfig(), spec)
+
+    assert losses.trial_bone_length.item() > 0
+
+
+def test_identity_excludes_quality_dominant_disagreements() -> None:
+    batch, output, spec = _batch_and_output()
+    batch["reference_side"] += 1.0
+    batch["quality_face"][:] = 1.0
+    batch["quality_side"][:] = 0.0
+    batch["face_corruption_mask"][:] = False
+    batch["side_corruption_mask"][:] = False
+    output = replace(output, fused_kpts=batch["reference_side"].clone())
+
+    losses = compute_self_supervised_losses(output, batch, LossConfig(), spec)
+
+    assert losses.high_consensus_identity.item() == pytest.approx(0.0, abs=1e-7)
+
+
+def test_adaptive_acceleration_is_invariant_to_equivalent_sampling_rates() -> None:
+    def acceleration_loss(frames: int, interval: float) -> torch.Tensor:
+        batch, output, spec = _batch_and_output(frames=frames)
+        time = torch.arange(frames, dtype=torch.float32) * interval
+        output = replace(output, fused_kpts=output.fused_kpts + (0.2 * time.square())[None, :, None, None])
+        batch["dt"] = torch.full((1, frames), interval)
+        return compute_self_supervised_losses(output, batch, LossConfig(), spec).adaptive_temporal_acceleration
+
+    coarse = acceleration_loss(5, 0.25)
+    fine = acceleration_loss(9, 0.125)
+
+    torch.testing.assert_close(coarse, fine, atol=1e-6, rtol=1e-5)
+
+
+def test_loss_validates_output_masks_and_residual_shapes() -> None:
+    batch, output, spec = _batch_and_output()
+
+    with pytest.raises(ValueError, match="FusionOutput.valid"):
+        compute_self_supervised_losses(replace(output, valid=output.valid[:, :-1]), batch, LossConfig(), spec)
+    with pytest.raises(ValueError, match="FusionOutput.delta_kpts"):
+        compute_self_supervised_losses(replace(output, delta_kpts=output.delta_kpts[..., :2]), batch, LossConfig(), spec)

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 import torch
 
+import fuse.rotation_aware.model as rotation_model
 from fuse.rotation_aware.config import RoleSpec, SkeletonSpec, load_skeleton_spec
 from fuse.rotation_aware.features import (
     DisagreementFeatures,
@@ -417,3 +418,24 @@ def test_model_output_is_base_plus_delta_has_finite_gradients_and_recomputes_tru
     torch.testing.assert_close(out.fused_theta_valid, expected_trunk.angle_valid)
     out.fused_kpts.square().mean().backward()
     assert all(parameter.grad is not None and torch.isfinite(parameter.grad).all() for parameter in model.parameters())
+
+
+def test_model_propagates_physical_dt_to_every_trunk_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
+    face, side, face_features, side_features, cross, valid_face, valid_side = _inputs()
+    dt = torch.full(face.shape[:2], 1 / 120)
+    seen: list[torch.Tensor] = []
+    original = rotation_model.extract_trunk_features
+
+    def capture(points: torch.Tensor, valid: torch.Tensor, spec: SkeletonSpec, dt: float | torch.Tensor):
+        if isinstance(dt, torch.Tensor):
+            seen.append(dt)
+        return original(points, valid, spec, dt)
+
+    monkeypatch.setattr(rotation_model, "extract_trunk_features", capture)
+    model = RotationAwareFusionModel(SPEC, hidden_channels=8)
+
+    model(face, side, face_features, side_features, cross, valid_face, valid_side, dt=dt)
+
+    assert len(seen) == 3
+    for received in seen:
+        torch.testing.assert_close(received, dt)

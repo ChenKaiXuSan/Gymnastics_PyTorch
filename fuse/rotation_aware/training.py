@@ -10,7 +10,7 @@ import torch
 from torch import Tensor, nn
 
 from .config import SkeletonSpec
-from .corruptions import CorruptionConfig, apply_corruptions
+from .corruptions import CorruptionConfig, apply_corruptions, stable_window_seed
 from .features import FeatureBundle, compute_disagreement_features, compute_quality_features, extract_pose_features
 from .losses import LossConfig, compute_self_supervised_losses
 from .model import FusionOutput, RotationAwareFusionModel
@@ -28,10 +28,10 @@ def _required_tensor(batch: Mapping[str, object], name: str) -> Tensor:
     return value
 
 
-def _feature_bundle(points: Tensor, valid: Tensor, skeleton: SkeletonSpec) -> FeatureBundle:
-    trunk = extract_trunk_features(points, valid, skeleton, dt=1.0)
+def _feature_bundle(points: Tensor, valid: Tensor, skeleton: SkeletonSpec, dt: Tensor) -> FeatureBundle:
+    trunk = extract_trunk_features(points, valid, skeleton, dt=dt)
     return FeatureBundle(
-        pose=extract_pose_features(points, valid, skeleton, dt=1.0),
+        pose=extract_pose_features(points, valid, skeleton, dt=dt),
         quality=compute_quality_features(points, valid, trunk, skeleton),
     )
 
@@ -42,6 +42,7 @@ def _corrupt_batch(
     seed: int,
     skeleton: SkeletonSpec,
     corruption_config: CorruptionConfig | None,
+    epoch: int = 0,
 ) -> dict[str, object]:
     face = _required_tensor(batch, "face")
     side = _required_tensor(batch, "side")
@@ -49,12 +50,16 @@ def _corrupt_batch(
     valid_side = _required_tensor(batch, "valid_side")
     if face.device.type != "cpu":
         raise ValueError("deterministic synthetic corruption requires CPU batches")
+    window_ids = batch.get("window_id")
+    if not isinstance(window_ids, (list, tuple)) or len(window_ids) != face.shape[0] or not all(isinstance(value, str) for value in window_ids):
+        raise ValueError("training batches require one stable string window_id per sample")
+    epoch_seed = int(seed) + int(epoch) * 1_000_003
     results = [
         apply_corruptions(
             face[index], side[index], valid_face[index].bool(), valid_side[index].bool(),
-            seed=seed + index, config=corruption_config, skeleton=skeleton,
+            seed=stable_window_seed(epoch_seed, window_id), config=corruption_config, skeleton=skeleton,
         )
-        for index in range(face.shape[0])
+        for index, window_id in enumerate(window_ids)
     ]
     prepared = dict(batch)
     prepared.update(
@@ -82,42 +87,52 @@ def _forward_window(
     seed: int,
     corruption_config: CorruptionConfig | None,
     device: torch.device,
+    epoch: int = 0,
 ) -> tuple[FusionOutput, dict[str, object]]:
-    prepared = _corrupt_batch(batch, seed=seed, skeleton=skeleton, corruption_config=corruption_config)
+    prepared = _corrupt_batch(batch, seed=seed, skeleton=skeleton, corruption_config=corruption_config, epoch=epoch)
     prepared = _tensor_batch(prepared, device)
     face = _required_tensor(prepared, "face")
     side = _required_tensor(prepared, "side")
     valid_face = _required_tensor(prepared, "corrupted_valid_face")
     valid_side = _required_tensor(prepared, "corrupted_valid_side")
     temporal_valid = _required_tensor(prepared, "padding_mask")
+    dt = _required_tensor(prepared, "dt")
 
     # This must precede all feature extraction because Task 5 validates provenance.
     effective_face_valid = valid_face.bool() & temporal_valid.bool()[..., None]
     effective_side_valid = valid_side.bool() & temporal_valid.bool()[..., None]
     safe_face = torch.where(effective_face_valid[..., None], face, torch.zeros_like(face))
     safe_side = torch.where(effective_side_valid[..., None], side, torch.zeros_like(side))
-    face_features = _feature_bundle(safe_face, effective_face_valid, skeleton)
-    side_features = _feature_bundle(safe_side, effective_side_valid, skeleton)
-    face_trunk = extract_trunk_features(safe_face, effective_face_valid, skeleton, dt=1.0)
-    side_trunk = extract_trunk_features(safe_side, effective_side_valid, skeleton, dt=1.0)
+    face_features = _feature_bundle(safe_face, effective_face_valid, skeleton, dt)
+    side_features = _feature_bundle(safe_side, effective_side_valid, skeleton, dt)
+    face_trunk = extract_trunk_features(safe_face, effective_face_valid, skeleton, dt=dt)
+    side_trunk = extract_trunk_features(safe_side, effective_side_valid, skeleton, dt=dt)
     cross = compute_disagreement_features(
         safe_face, safe_side, face_trunk, side_trunk, effective_face_valid, effective_side_valid
     )
     output = model(
         safe_face, safe_side, face_features, side_features, cross, effective_face_valid, effective_side_valid,
-        temporal_valid=temporal_valid,
+        temporal_valid=temporal_valid, dt=dt,
     )
     reference_valid_face = _required_tensor(prepared, "reference_valid_face")
     reference_valid_side = _required_tensor(prepared, "reference_valid_side")
     loss_mask = _required_tensor(prepared, "loss_mask")
+    reference_face = _required_tensor(prepared, "reference_face")
+    reference_side = _required_tensor(prepared, "reference_side")
+    effective_reference_face_valid = reference_valid_face.bool() & temporal_valid.bool()[..., None]
+    effective_reference_side_valid = reference_valid_side.bool() & temporal_valid.bool()[..., None]
+    safe_reference_face = torch.where(effective_reference_face_valid[..., None], reference_face, torch.zeros_like(reference_face))
+    safe_reference_side = torch.where(effective_reference_side_valid[..., None], reference_side, torch.zeros_like(reference_side))
+    reference_face_features = _feature_bundle(safe_reference_face, effective_reference_face_valid, skeleton, dt)
+    reference_side_features = _feature_bundle(safe_reference_side, effective_reference_side_valid, skeleton, dt)
     prepared["valid_face"] = reference_valid_face.bool()
     prepared["valid_side"] = reference_valid_side.bool()
     prepared["loss_mask"] = loss_mask.bool() & temporal_valid.bool()[..., None]
-    prepared["quality_face"] = face_features.quality.loss_weight
-    prepared["quality_side"] = side_features.quality.loss_weight
+    prepared["quality_face"] = reference_face_features.quality.loss_weight
+    prepared["quality_side"] = reference_side_features.quality.loss_weight
     complete_cycle = prepared.get("complete_cycle")
     if complete_cycle is None:
-        prepared["complete_cycle"] = temporal_valid.bool().all(dim=1)
+        prepared["complete_cycle"] = torch.zeros(temporal_valid.shape[0], dtype=torch.bool, device=device)
     elif not isinstance(complete_cycle, Tensor):
         prepared["complete_cycle"] = torch.as_tensor(complete_cycle, dtype=torch.bool, device=device)
     return output, prepared
@@ -152,8 +167,8 @@ def train_one_epoch(
     for batch_index, batch in enumerate(loader):
         optimizer.zero_grad(set_to_none=True)
         output, prepared = _forward_window(
-            model, batch, skeleton, seed=int(seed) + int(epoch) * 1_000_003 + batch_index * 997,
-            corruption_config=corruption_config, device=target_device,
+            model, batch, skeleton, seed=int(seed), corruption_config=corruption_config,
+            device=target_device, epoch=epoch,
         )
         losses = compute_self_supervised_losses(output, prepared, config, skeleton)
         if not torch.isfinite(losses.total):
@@ -182,25 +197,39 @@ def validate(
     model.to(target_device)
     config = loss_config or LossConfig()
     history: list[dict[str, float]] = []
+    bone_cv_values: list[float] = []
     with torch.no_grad():
         for batch_index, batch in enumerate(loader):
             output, prepared = _forward_window(
-                model, batch, skeleton, seed=int(seed) + batch_index * 997,
-                corruption_config=corruption_config, device=target_device,
+                model, batch, skeleton, seed=int(seed), corruption_config=corruption_config,
+                device=target_device,
             )
             losses = compute_self_supervised_losses(output, prepared, config, skeleton)
             history.append({name: float(value.cpu()) for name, value in losses.as_dict().items()})
+            bone_cv_values.append(_fused_bone_cv(output, _required_tensor(prepared, "dt"), skeleton))
     if was_training:
         model.train()
     means = _mean_metrics(history)
     components = {
         "corruption_recovery": 1.0 / (1.0 + means["corruption_recovery"]),
-        "bone_cv": 1.0 / (1.0 + means["trial_bone_length"]),
+        "bone_cv": 1.0 / (1.0 + sum(bone_cv_values) / len(bone_cv_values)),
         "rotation_consistency": 1.0 / (1.0 + (means["circular_axial_rotation"] + means["so3_rotation"]) / 2.0),
         "identity_preservation": 1.0 / (1.0 + means["high_consensus_identity"]),
         "rom_retention": 1.0 / (1.0 + means["complete_cycle_rom"]),
     }
     return {"loss": means["total"], "score": sum(components.values()) / len(components), "components": components, "losses": means}
+
+
+def _fused_bone_cv(output: FusionOutput, dt: Tensor, skeleton: SkeletonSpec) -> float:
+    """Return mean per-trial, per-bone coefficient of variation of fused lengths."""
+    pose = extract_pose_features(output.fused_kpts, output.valid, skeleton, dt=dt)
+    values: list[Tensor] = []
+    for batch_index in range(pose.bone_lengths.shape[0]):
+        for bone_index in range(pose.bone_lengths.shape[2]):
+            lengths = pose.bone_lengths[batch_index, :, bone_index][pose.bone_valid[batch_index, :, bone_index]]
+            if lengths.numel():
+                values.append(lengths.std(unbiased=False) / lengths.mean().abs().clamp_min(1e-6))
+    return float(torch.stack(values).mean().cpu()) if values else 0.0
 
 
 def _skeleton_metadata(skeleton: SkeletonSpec) -> dict[str, object]:
@@ -224,14 +253,25 @@ def save_checkpoint(
     loss_config: LossConfig,
     skeleton: SkeletonSpec,
     provenance: Mapping[str, object],
+    training_config: Mapping[str, object],
+    corruption_config: CorruptionConfig,
     score: float,
     scheduler: object | None = None,
 ) -> None:
     """Persist enough provenance to reproduce a self-supervised selection decision."""
+    required = ("split_hash", "corruption_manifest_hash", "git_commit")
+    for name in required:
+        value = provenance.get(name)
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"provenance requires non-empty {name}")
+    if not training_config:
+        raise ValueError("training_config must be non-empty")
     payload: dict[str, object] = {
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),
         "loss_config": asdict(loss_config),
+        "training_config": dict(training_config),
+        "corruption_config": asdict(corruption_config),
         "skeleton": _skeleton_metadata(skeleton),
         "provenance": dict(provenance),
         "score": float(score),
@@ -255,6 +295,17 @@ def load_checkpoint(
     payload = torch.load(Path(path), map_location=map_location, weights_only=False)
     if not isinstance(payload, dict):
         raise ValueError("checkpoint payload must be a mapping")
+    provenance = payload.get("provenance")
+    if not isinstance(provenance, Mapping):
+        raise ValueError("checkpoint provenance must be a mapping")
+    for name in ("split_hash", "corruption_manifest_hash", "git_commit"):
+        value = provenance.get(name)
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"provenance requires non-empty {name}")
+    if not isinstance(payload.get("training_config"), Mapping) or not payload["training_config"]:
+        raise ValueError("checkpoint requires non-empty training_config")
+    if not isinstance(payload.get("corruption_config"), Mapping):
+        raise ValueError("checkpoint requires corruption_config")
     model.load_state_dict(payload["model"])
     if optimizer is not None:
         optimizer.load_state_dict(payload["optimizer"])

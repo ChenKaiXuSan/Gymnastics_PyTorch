@@ -237,7 +237,8 @@ def apply_corruptions(
     )
 
 
-def _window_seed(seed: int, window_id: str) -> int:
+def stable_window_seed(seed: int, window_id: str) -> int:
+    """Derive a batch-order-independent corruption seed for one stable window id."""
     encoded = f"{int(seed)}:{window_id}".encode("utf-8")
     return int.from_bytes(hashlib.sha256(encoded).digest()[:8], "big") % (2**63 - 1)
 
@@ -255,7 +256,7 @@ def write_corruption_manifest(
     manifest: dict[str, object] = {
         "seed": int(seed),
         "config": json.loads(json.dumps(asdict(config or CorruptionConfig()))),
-        "windows": {window_id: _window_seed(seed, window_id) for window_id in sorted(window_ids)},
+        "windows": {window_id: stable_window_seed(seed, window_id) for window_id in sorted(window_ids)},
     }
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)

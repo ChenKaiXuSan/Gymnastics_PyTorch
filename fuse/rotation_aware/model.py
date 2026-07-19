@@ -194,6 +194,24 @@ class RotationAwareFusionModel(nn.Module):
         return temporal_valid.bool()
 
     @staticmethod
+    def _physical_dt(dt: float | Tensor, points: Tensor, temporal_valid: Tensor) -> float | Tensor:
+        """Validate physical frame intervals while retaining scalar-call compatibility."""
+        if isinstance(dt, Tensor):
+            if dt.ndim == 0:
+                dt = dt.to(device=points.device, dtype=points.dtype)
+            elif dt.shape == points.shape[:2]:
+                dt = dt.to(device=points.device, dtype=points.dtype)
+            else:
+                raise ValueError("dt tensor must be scalar or have shape [B, T]")
+            usable = temporal_valid if dt.ndim else torch.ones((), dtype=torch.bool, device=points.device)
+            if not torch.isfinite(dt).all() or (dt[usable] <= 0).any():
+                raise ValueError("dt must be finite and positive for non-padded frames")
+            return dt
+        if not torch.isfinite(points.new_tensor(float(dt))) or float(dt) <= 0:
+            raise ValueError("dt must be finite and positive")
+        return float(dt)
+
+    @staticmethod
     def _validate_feature_bundle(
         name: str,
         features: FeatureBundle,
@@ -255,6 +273,7 @@ class RotationAwareFusionModel(nn.Module):
         valid_face: Tensor | None = None,
         valid_side: Tensor | None = None,
         temporal_valid: Tensor | None = None,
+        dt: float | Tensor = 1.0,
     ) -> FusionOutput:
         """Return a quality-weighted base plus a masked symmetric bounded residual."""
         if (valid_face is None) != (valid_side is None):
@@ -263,6 +282,7 @@ class RotationAwareFusionModel(nn.Module):
             valid_face, valid_side = face_features.pose.valid, side_features.pose.valid
         face, side, valid_face, valid_side = self._safe_inputs(face, side, valid_face, valid_side)
         temporal_valid = self._temporal_valid_mask(temporal_valid, valid_face, valid_side)
+        dt = self._physical_dt(dt, face, temporal_valid)
         valid_face = valid_face & temporal_valid[..., None]
         valid_side = valid_side & temporal_valid[..., None]
         face = torch.where(valid_face[..., None], face, torch.zeros_like(face))
@@ -277,8 +297,8 @@ class RotationAwareFusionModel(nn.Module):
             face_features.quality.score,
             side_features.quality.score,
         )
-        face_trunk = extract_trunk_features(face, valid_face, self.spec, dt=1.0)
-        side_trunk = extract_trunk_features(side, valid_side, self.spec, dt=1.0)
+        face_trunk = extract_trunk_features(face, valid_face, self.spec, dt=dt)
+        side_trunk = extract_trunk_features(side, valid_side, self.spec, dt=dt)
         effective_mask = valid_face & valid_side
         face_encoded = self.view_encoder(
             face,
@@ -316,7 +336,7 @@ class RotationAwareFusionModel(nn.Module):
         bounded_delta = torch.tanh(raw_delta) * self.max_delta_by_joint[None, None, :, None].to(dtype=face.dtype)
         delta = torch.where(effective_mask[..., None], bounded_delta, torch.zeros_like(bounded_delta))
         fused = base.points + delta
-        fused_trunk = extract_trunk_features(fused, base.valid, self.spec, dt=1.0)
+        fused_trunk = extract_trunk_features(fused, base.valid, self.spec, dt=dt)
         return FusionOutput(
             fused_kpts=fused,
             base_kpts=base.points,

@@ -88,6 +88,20 @@ def test_eval_windows_use_64_stride_and_short_trial_padding_is_excluded():
     assert sample["padding_mask"].sum().item() == 40
     assert not sample["loss_mask"][40:].any()
     assert not sample["valid_face"][40:].any()
+    assert sample["complete_cycle"]
+    assert sample["timestamps"].shape == (128,)
+    assert sample["dt"].shape == (128,)
+    torch.testing.assert_close(sample["dt"][1:40], torch.full((39,), 1 / 60))
+    assert not sample["dt"][40:].any()
+
+
+def test_complete_cycle_is_true_only_for_an_entire_trial_window():
+    dataset = PosePairWindowDataset(
+        [_trial("1", 160)], manifest=SplitManifest(train=("1",), val=("2",), test=("3",)), split="train"
+    )
+
+    assert not dataset[0]["complete_cycle"]
+    assert not dataset[1]["complete_cycle"]
 
 
 def test_collate_stacks_window_tensors_without_unmasking_padding():
