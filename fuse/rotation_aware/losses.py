@@ -139,8 +139,8 @@ def _pseudo_target(
 
 
 def _rotation_chordal_proxy(left: Tensor, right: Tensor) -> Tensor:
-    """A smooth SO(3) proxy equal to one minus cosine for valid rotations."""
-    return (left - right).square().sum(dim=(-2, -1)) * 0.125
+    """A smooth SO(3) proxy equal to one minus the relative rotation cosine."""
+    return (left - right).square().sum(dim=(-2, -1)) * 0.25
 
 
 def _frame_mask(joint_mask: Tensor) -> Tensor:
@@ -171,28 +171,25 @@ def _unwrap_circular(values: Tensor, valid: Tensor) -> Tensor:
 
 
 def _rom_loss(prediction: Tensor, target: Tensor, valid: Tensor, complete: Tensor) -> Tensor:
-    prediction = _unwrap_circular(prediction, valid)
-    target = _unwrap_circular(target, valid)
     values: list[Tensor] = []
     for batch_index in range(prediction.shape[0]):
         usable = valid[batch_index] & complete[batch_index]
-        if usable.any():
-            pred_values = prediction[batch_index][usable]
-            target_values = target[batch_index][usable]
-            values.append((pred_values.max() - pred_values.min() - target_values.max() + target_values.min()).square())
+        index = 0
+        while index < prediction.shape[1]:
+            if not bool(usable[index]):
+                index += 1
+                continue
+            end = index + 1
+            while end < prediction.shape[1] and bool(usable[end]):
+                end += 1
+            run_valid = torch.ones((1, end - index), dtype=torch.bool, device=prediction.device)
+            pred_run = _unwrap_circular(prediction[batch_index : batch_index + 1, index:end], run_valid)[0]
+            target_run = _unwrap_circular(target[batch_index : batch_index + 1, index:end], run_valid)[0]
+            values.append((pred_run.max() - pred_run.min() - target_run.max() + target_run.min()).square())
+            index = end
     if not values:
         return prediction.new_zeros(())
     return torch.stack(values).mean()
-
-
-def _trial_bone_baseline(lengths: Tensor, valid: Tensor) -> Tensor:
-    baseline = torch.zeros((lengths.shape[0], lengths.shape[2]), dtype=lengths.dtype, device=lengths.device)
-    for batch_index in range(lengths.shape[0]):
-        for bone_index in range(lengths.shape[2]):
-            usable = lengths[batch_index, :, bone_index][valid[batch_index, :, bone_index]]
-            if usable.numel():
-                baseline[batch_index, bone_index] = usable.median()
-    return baseline[:, None, :]
 
 
 def compute_self_supervised_losses(
@@ -252,13 +249,18 @@ def compute_self_supervised_losses(
     target_pose = extract_pose_features(target, target_valid & coordinate_mask, skeleton, dt=dt)
     fused_pose = extract_pose_features(fused, fused_valid, skeleton, dt=dt)
     bone_mask = target_pose.bone_valid & fused_pose.bone_valid
-    target_bone_baseline = _trial_bone_baseline(target_pose.bone_lengths, target_pose.bone_valid)
-    relative_bone_error = (fused_pose.bone_lengths - target_bone_baseline).abs() / target_bone_baseline.clamp_min(config.epsilon)
+    baseline_shape = (batch_size, len(skeleton.bones))
+    target_bone_baseline = _require_tensor(batch, "trial_bone_baseline", baseline_shape).to(device=fused.device, dtype=fused.dtype)
+    baseline_valid = _require_tensor(batch, "trial_bone_baseline_valid", baseline_shape).bool().to(device=fused.device)
+    bone_mask = bone_mask & baseline_valid[:, None, :]
+    relative_bone_error = (fused_pose.bone_lengths - target_bone_baseline[:, None, :]).abs() / target_bone_baseline[:, None, :].clamp_min(config.epsilon)
     trial_bone_length = _finite_masked_mean(relative_bone_error.square(), bone_mask)
-    local_bone_mask = bone_mask[:, 1:] & bone_mask[:, :-1]
-    local_bone_error = (fused_pose.bone_lengths[:, 1:] - fused_pose.bone_lengths[:, :-1]) - (
-        target_pose.bone_lengths[:, 1:] - target_pose.bone_lengths[:, :-1]
-    )
+    rate_dt = dt[:, 1:]
+    rate_valid = torch.isfinite(rate_dt) & (rate_dt > 0)
+    local_bone_mask = bone_mask[:, 1:] & bone_mask[:, :-1] & rate_valid[..., None]
+    fused_rate = (fused_pose.bone_lengths[:, 1:] - fused_pose.bone_lengths[:, :-1]) / rate_dt[..., None].clamp_min(config.epsilon)
+    target_rate = (target_pose.bone_lengths[:, 1:] - target_pose.bone_lengths[:, :-1]) / rate_dt[..., None].clamp_min(config.epsilon)
+    local_bone_error = fused_rate - target_rate
     local_rigidity = _finite_masked_mean(local_bone_error.square(), local_bone_mask)
 
     previous_dt = dt[:, 1:-1]

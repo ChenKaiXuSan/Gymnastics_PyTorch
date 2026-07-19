@@ -6,6 +6,7 @@ import pytest
 import torch
 
 from fuse.rotation_aware.config import RoleSpec, SkeletonSpec
+from fuse.rotation_aware.features import extract_pose_features
 from fuse.rotation_aware.losses import LossConfig, _complete_cycle_mask, _rom_loss, compute_self_supervised_losses
 from fuse.rotation_aware.model import FusionOutput
 from fuse.rotation_aware.trunk import extract_trunk_features
@@ -44,6 +45,10 @@ def _batch_and_output(*, frames: int = 5) -> tuple[dict[str, torch.Tensor], Fusi
     reference[:, :, 4, 0] = torch.linspace(0.0, 0.2, frames)
     valid = torch.ones(reference.shape[:-1], dtype=torch.bool)
     trunk = extract_trunk_features(reference, valid, spec, dt=1.0)
+    pose_features = extract_pose_features(reference, valid, spec, dt=1.0)
+    baseline = torch.stack(
+        [pose_features.bone_lengths[0, :, index][pose_features.bone_valid[0, :, index]].median() for index in range(len(spec.bones))]
+    )[None]
     output = FusionOutput(
         fused_kpts=reference.clone(),
         base_kpts=reference.clone(),
@@ -62,6 +67,8 @@ def _batch_and_output(*, frames: int = 5) -> tuple[dict[str, torch.Tensor], Fusi
         "loss_mask": valid.clone(),
         "padding_mask": torch.ones((1, frames), dtype=torch.bool),
         "dt": torch.ones((1, frames)),
+        "trial_bone_baseline": baseline,
+        "trial_bone_baseline_valid": torch.ones_like(baseline, dtype=torch.bool),
         "face_corruption_mask": torch.ones_like(valid),
         "side_corruption_mask": torch.zeros_like(valid),
         "quality_face": torch.ones((1, frames)),
@@ -175,6 +182,19 @@ def test_rom_unwraps_across_the_pi_boundary() -> None:
     assert loss.item() < 0.05
 
 
+def test_rom_never_spans_independently_reset_runs_and_has_finite_backward() -> None:
+    prediction = torch.tensor([[3.13, 0.0, 3.14]], requires_grad=True)
+    target = torch.tensor([[3.13, 0.0, -3.13]])
+    valid = torch.tensor([[True, False, True]])
+    complete = torch.ones_like(valid)
+
+    loss = _rom_loss(prediction, target, valid, complete)
+    loss.backward()
+
+    assert loss.item() == pytest.approx(0.0, abs=1e-7)
+    assert prediction.grad is not None and torch.isfinite(prediction.grad).all()
+
+
 def test_missing_complete_cycle_disables_rom() -> None:
     batch, output, spec = _batch_and_output()
     batch.pop("complete_cycle")
@@ -220,6 +240,22 @@ def test_adaptive_acceleration_is_invariant_to_equivalent_sampling_rates() -> No
 
     coarse = acceleration_loss(5, 0.25)
     fine = acceleration_loss(9, 0.125)
+
+    torch.testing.assert_close(coarse, fine, atol=1e-6, rtol=1e-5)
+
+
+def test_local_rigidity_compares_physical_bone_rates_across_sampling_rates() -> None:
+    def rigidity_loss(frames: int, interval: float) -> torch.Tensor:
+        batch, output, spec = _batch_and_output(frames=frames)
+        time = torch.arange(frames, dtype=torch.float32) * interval
+        batch["reference_face"][:, :, 1, 0] += 0.2 * time
+        batch["reference_side"][:, :, 1, 0] += 0.2 * time
+        output = replace(output, fused_kpts=output.fused_kpts + (0.1 * time)[None, :, None, None])
+        batch["dt"] = torch.full((1, frames), interval)
+        return compute_self_supervised_losses(output, batch, LossConfig(), spec).local_rigidity
+
+    coarse = rigidity_loss(5, 0.25)
+    fine = rigidity_loss(9, 0.125)
 
     torch.testing.assert_close(coarse, fine, atol=1e-6, rtol=1e-5)
 

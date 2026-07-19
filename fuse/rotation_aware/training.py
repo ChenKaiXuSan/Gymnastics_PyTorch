@@ -145,6 +145,19 @@ def _mean_metrics(losses: list[dict[str, float]]) -> dict[str, float]:
     return {key: sum(values[key] for values in losses) / len(losses) for key in keys}
 
 
+def _single_sample(batch: Mapping[str, object], index: int) -> dict[str, object]:
+    """Preserve a collated sample's batch dimension and stable metadata."""
+    sample: dict[str, object] = {}
+    for name, value in batch.items():
+        if isinstance(value, Tensor):
+            sample[name] = value[index : index + 1]
+        elif isinstance(value, (list, tuple)):
+            sample[name] = [value[index]]
+        else:
+            sample[name] = value
+    return sample
+
+
 def train_one_epoch(
     model: RotationAwareFusionModel,
     loader: Iterable[Mapping[str, object]],
@@ -196,23 +209,28 @@ def validate(
     target_device = torch.device(device)
     model.to(target_device)
     config = loss_config or LossConfig()
-    history: list[dict[str, float]] = []
-    bone_cv_values: list[float] = []
+    samples: list[tuple[str, dict[str, float], FusionOutput, dict[str, object]]] = []
     with torch.no_grad():
-        for batch_index, batch in enumerate(loader):
-            output, prepared = _forward_window(
-                model, batch, skeleton, seed=int(seed), corruption_config=corruption_config,
-                device=target_device,
-            )
-            losses = compute_self_supervised_losses(output, prepared, config, skeleton)
-            history.append({name: float(value.cpu()) for name, value in losses.as_dict().items()})
-            bone_cv_values.append(_fused_bone_cv(output, _required_tensor(prepared, "dt"), skeleton))
+        for batch in loader:
+            face = _required_tensor(batch, "face")
+            for sample_index in range(face.shape[0]):
+                output, prepared = _forward_window(
+                    model, _single_sample(batch, sample_index), skeleton, seed=int(seed),
+                    corruption_config=corruption_config, device=target_device,
+                )
+                losses = compute_self_supervised_losses(output, prepared, config, skeleton)
+                window_ids = prepared.get("window_id")
+                if not isinstance(window_ids, list) or len(window_ids) != 1 or not isinstance(window_ids[0], str):
+                    raise ValueError("validation samples require one stable string window_id")
+                samples.append((window_ids[0], {name: float(value.cpu()) for name, value in losses.as_dict().items()}, output, prepared))
     if was_training:
         model.train()
-    means = _mean_metrics(history)
+    samples.sort(key=lambda value: value[0])
+    means = _mean_metrics([metrics for _, metrics, _, _ in samples])
+    bone_cv = _trial_level_bone_cv(samples, skeleton)
     components = {
         "corruption_recovery": 1.0 / (1.0 + means["corruption_recovery"]),
-        "bone_cv": 1.0 / (1.0 + sum(bone_cv_values) / len(bone_cv_values)),
+        "bone_cv": 1.0 / (1.0 + bone_cv),
         "rotation_consistency": 1.0 / (1.0 + (means["circular_axial_rotation"] + means["so3_rotation"]) / 2.0),
         "identity_preservation": 1.0 / (1.0 + means["high_consensus_identity"]),
         "rom_retention": 1.0 / (1.0 + means["complete_cycle_rom"]),
@@ -229,6 +247,44 @@ def _fused_bone_cv(output: FusionOutput, dt: Tensor, skeleton: SkeletonSpec) -> 
             lengths = pose.bone_lengths[batch_index, :, bone_index][pose.bone_valid[batch_index, :, bone_index]]
             if lengths.numel():
                 values.append(lengths.std(unbiased=False) / lengths.mean().abs().clamp_min(1e-6))
+    return float(torch.stack(values).mean().cpu()) if values else 0.0
+
+
+def _trial_level_bone_cv(
+    samples: list[tuple[str, dict[str, float], FusionOutput, dict[str, object]]],
+    skeleton: SkeletonSpec,
+) -> float:
+    """Average overlapped fused frames before computing per-trial bone variation."""
+    frames: dict[tuple[str, str, int], tuple[Tensor, Tensor]] = {}
+    for _, _, output, prepared in samples:
+        person_ids = prepared.get("person_id")
+        trial_ids = prepared.get("trial_id")
+        if not isinstance(person_ids, list) or not isinstance(trial_ids, list) or len(person_ids) != 1 or len(trial_ids) != 1:
+            raise ValueError("validation samples require one person_id and trial_id")
+        if not isinstance(person_ids[0], str) or not isinstance(trial_ids[0], str):
+            raise ValueError("person_id and trial_id must be strings")
+        global_index = _required_tensor(prepared, "global_frame_index")[0]
+        for local_index, global_frame in enumerate(global_index.tolist()):
+            if global_frame < 0:
+                continue
+            valid = output.valid[0, local_index]
+            points = torch.where(valid[:, None], output.fused_kpts[0, local_index], torch.zeros_like(output.fused_kpts[0, local_index]))
+            key = (person_ids[0], trial_ids[0], int(global_frame))
+            previous_points, previous_count = frames.get(
+                key, (torch.zeros_like(points), torch.zeros_like(valid, dtype=points.dtype))
+            )
+            frames[key] = (previous_points + points, previous_count + valid.to(dtype=points.dtype))
+    grouped: dict[tuple[str, str], list[tuple[int, Tensor, Tensor]]] = {}
+    for (person_id, trial_id, frame), (point_sum, count) in frames.items():
+        grouped.setdefault((person_id, trial_id), []).append((frame, point_sum / count.clamp_min(1)[:, None], count > 0))
+    values: list[Tensor] = []
+    for sequence in grouped.values():
+        sequence.sort(key=lambda item: item[0])
+        for start, end in skeleton.bones:
+            lengths = [torch.linalg.vector_norm(points[end] - points[start]) for _, points, valid in sequence if valid[start] and valid[end]]
+            if lengths:
+                value = torch.stack(lengths)
+                values.append(value.std(unbiased=False) / value.mean().abs().clamp_min(1e-6))
     return float(torch.stack(values).mean().cpu()) if values else 0.0
 
 

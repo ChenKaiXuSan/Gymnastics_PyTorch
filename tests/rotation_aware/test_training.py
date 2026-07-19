@@ -38,15 +38,21 @@ def _samples(count: int = 8) -> list[dict[str, object]]:
     sequence = pose[None].repeat(5, 1, 1)
     sequence[:, 4, 0] = torch.linspace(0.0, 0.2, 5)
     valid = torch.ones(sequence.shape[:-1], dtype=torch.bool)
+    baseline = torch.tensor([2.0, 2.0, 2.0, 2.0])
     return [
         {
-            "face": sequence.clone(),
-            "side": sequence.clone(),
+            "face": sequence.clone() + index * 0.01,
+            "side": sequence.clone() + index * 0.01,
             "valid_face": valid.clone(),
             "valid_side": valid.clone(),
             "padding_mask": torch.ones(5, dtype=torch.bool),
             "loss_mask": valid.clone(),
             "dt": torch.ones(5),
+            "trial_bone_baseline": baseline.clone(),
+            "trial_bone_baseline_valid": torch.ones_like(baseline, dtype=torch.bool),
+            "global_frame_index": torch.arange(5),
+            "person_id": "person-1",
+            "trial_id": "trial-1",
             "complete_cycle": True,
             "window_id": f"window-{index}",
         }
@@ -54,8 +60,9 @@ def _samples(count: int = 8) -> list[dict[str, object]]:
     ]
 
 
-def _loader() -> DataLoader[dict[str, object]]:
-    return DataLoader(_samples(), batch_size=4, shuffle=False, collate_fn=collate_pose_pair_windows)
+def _loader(*, count: int = 8, batch_size: int = 4, reverse: bool = False) -> DataLoader[dict[str, object]]:
+    samples = _samples(count)
+    return DataLoader(list(reversed(samples)) if reverse else samples, batch_size=batch_size, shuffle=False, collate_fn=collate_pose_pair_windows)
 
 
 def test_cpu_tiny_overfit_is_finite_and_reduces_loss() -> None:
@@ -131,6 +138,18 @@ def test_validation_score_and_checkpoint_metadata_exclude_external_ground_truth(
     assert "model" in loaded and "optimizer" in loaded and "skeleton" in loaded and "loss_config" in loaded
     assert loaded["training_config"] == {"batch_size": 4}
     assert "corruption_config" in loaded
+
+
+def test_validation_is_batch_size_and_order_invariant() -> None:
+    spec = _spec()
+    torch.manual_seed(13)
+    model = RotationAwareFusionModel(spec, hidden_channels=8)
+
+    one = validate(model, _loader(count=5, batch_size=1), spec, loss_config=LossConfig(), seed=17)
+    four = validate(model, _loader(count=5, batch_size=4), spec, loss_config=LossConfig(), seed=17)
+    reversed_order = validate(model, _loader(count=5, batch_size=4, reverse=True), spec, loss_config=LossConfig(), seed=17)
+
+    assert one == four == reversed_order
 
 
 def test_checkpoint_rejects_missing_reproducibility_provenance(tmp_path: Path) -> None:
