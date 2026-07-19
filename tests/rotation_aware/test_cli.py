@@ -10,6 +10,7 @@ from fuse.metadata.mhr70 import mhr_names
 from fuse.rotation_aware import cli
 from fuse.rotation_aware.config import load_skeleton_spec
 from fuse.rotation_aware.cli import (
+    _cache_trial_paths,
     _cached_trials,
     loss_config_for_ablation,
     main,
@@ -183,6 +184,7 @@ def test_prepare_filters_people_without_alignment_and_reports_them(
     assert manifest["prepared_people"] == ["1"]
     assert manifest["selected_people"] == ["1"]
     assert "2" not in manifest["failures"]
+    assert "2" in manifest["excluded_sam3d_people"]
 
 
 def test_ablation_loss_configs_change_the_actual_training_objectives() -> None:
@@ -267,6 +269,58 @@ def test_prepare_explicit_failure_returns_nonzero_after_writing_manifest(
     assert "1" in manifest["failures"]
 
 
+def test_default_prepare_keeps_aligned_people_outside_fold_membership(
+    tmp_path: Path,
+) -> None:
+    sam3d = tmp_path / "sam3d" / "sam3d_body_results"
+    split = tmp_path / "split"
+    for person in ("1", "2"):
+        _write_sam3d(sam3d, "face", person)
+        _write_sam3d(sam3d, "side", person)
+        record = split / f"person_{person}" / f"alignment_record_{person}.json"
+        record.parent.mkdir(parents=True)
+        record.write_text(
+            json.dumps(
+                {
+                    "metadata": {"offset_side_to_face": 0},
+                    "cycles": [
+                        {
+                            "cycle_index": 0,
+                            "face_video_frames": {"start": 0, "end": 4},
+                            "side_video_frames": {"start": 0, "end": 4},
+                        }
+                    ],
+                }
+            )
+        )
+    fold = tmp_path / "fold.json"
+    fold.write_text(json.dumps({"train": [{"person_id": "1"}], "val": [], "test": []}))
+    out = tmp_path / "out"
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n  output_root: {out}\n  skeleton: configs/fuse/skeleton_mhr70.yaml\n  fold_json: {fold}"
+    )
+
+    assert main(["prepare", "--config", str(config)]) == 0
+    assert json.loads((out / "split_manifest.json").read_text())["selected_people"] == [
+        "1",
+        "2",
+    ]
+    assert (out / "cache" / "person_2" / "cycle_000.npz").exists()
+
+
+def test_cache_paths_require_every_manifest_declared_cycle(tmp_path: Path) -> None:
+    person = tmp_path / "person_1"
+    person.mkdir()
+    (person / "cycle_000.npz").touch()
+    (person / "manifest.json").write_text(
+        json.dumps({"person_id": "1", "trials": ["cycle_000", "cycle_001"]})
+    )
+
+    with pytest.raises(FileNotFoundError, match="person_1"):
+        _cache_trial_paths(tmp_path, ["1"])
+
+
 def test_evaluate_combines_a4_a5_a6_runs_with_deterministic_a0_a3(
     tmp_path: Path,
 ) -> None:
@@ -324,6 +378,7 @@ def test_evaluate_combines_a4_a5_a6_runs_with_deterministic_a0_a3(
         "A5",
         "A6",
     }
+    assert len(report["person_metrics"]) == 7
 
 
 def test_inference_rejects_checkpoint_with_different_skeleton_contract() -> None:

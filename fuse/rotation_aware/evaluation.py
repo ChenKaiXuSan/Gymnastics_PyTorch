@@ -309,6 +309,20 @@ def evaluate_person_trials(
             row[f"{diagnostic}_availability"] = (
                 statuses.pop() if len(statuses) == 1 else "mixed"
             )
+        legacy = any(
+            cycle.diagnostic_status.get("swap_error") == "unsupported_legacy_output"
+            for cycle in cycles
+        )
+        for metric in ("rom_retention", "peak_angular_velocity_retention"):
+            row[f"{metric}_availability"] = (
+                "unsupported_legacy_output"
+                if legacy
+                else (
+                    "measured"
+                    if np.isfinite(row[metric])
+                    else "unavailable_missing_reference"
+                )
+            )
         if references is not None:
             external_errors: list[np.ndarray] = []
             external_masks: list[np.ndarray] = []
@@ -500,8 +514,15 @@ def discover_method_sequences(
                     diagnostic = {}
                 swap = diagnostic.get("swap_error")
                 recovery = diagnostic.get("fixed_corruption_recovery")
+                finite_swap = isinstance(swap, (int, float)) and np.isfinite(
+                    float(swap)
+                )
                 status_map = {
-                    "swap_error": "measured" if swap is not None else "unsupported",
+                    "swap_error": (
+                        "measured"
+                        if finite_swap
+                        else "unavailable_no_common_valid_points"
+                    ),
                     "fixed_corruption_recovery": str(
                         diagnostic.get(
                             "fixed_corruption_recovery_status",

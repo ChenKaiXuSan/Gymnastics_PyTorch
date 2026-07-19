@@ -180,23 +180,47 @@ def _validate_checkpoint_skeleton(payload: Mapping[str, object], skeleton) -> No
 
 def _cached_trials(cache: Path, people: Iterable[str], skeleton) -> list:
     trials = []
-    missing: list[str] = []
-    for person in sorted({str(value) for value in people}):
-        person_dir = cache / f"person_{person}"
-        paths = sorted(person_dir.glob("cycle_*.npz")) if person_dir.is_dir() else []
-        if not paths:
-            missing.append(f"person_{person}")
-            continue
+    for person, paths in _cache_trial_paths(cache, people).items():
         for path in paths:
             trial, _ = load_cached_trial(path)
             trials.append(canonicalize_trial(trial, skeleton).trial)
-    if missing:
-        raise FileNotFoundError(
-            f"missing non-empty complete cache for selected people: {', '.join(missing)}"
-        )
     if not trials:
         raise FileNotFoundError(f"No cached trials found under {cache}")
     return trials
+
+
+def _cache_trial_paths(cache: Path, people: Iterable[str]) -> dict[str, list[Path]]:
+    """Require every selected person cache to match its declared cycle manifest."""
+    cached: dict[str, list[Path]] = {}
+    missing: list[str] = []
+    for person in sorted({str(value) for value in people}):
+        person_dir = cache / f"person_{person}"
+        manifest_path = person_dir / "manifest.json"
+        if not person_dir.is_dir() or not manifest_path.is_file():
+            missing.append(f"person_{person}")
+            continue
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            expected = manifest.get("trials") if isinstance(manifest, dict) else None
+            if (
+                not isinstance(expected, list)
+                or not expected
+                or manifest.get("person_id") != person
+                or not all(isinstance(trial_id, str) for trial_id in expected)
+            ):
+                raise ValueError("invalid person cache manifest")
+            paths = [person_dir / f"{trial_id}.npz" for trial_id in expected]
+            if not all(path.is_file() for path in paths):
+                raise ValueError("missing declared cache cycle")
+        except (OSError, ValueError, json.JSONDecodeError):
+            missing.append(f"person_{person}")
+            continue
+        cached[person] = paths
+    if missing:
+        raise FileNotFoundError(
+            f"missing complete cache for selected people: {', '.join(missing)}"
+        )
+    return cached
 
 
 def _manifest_people(manifest, subset: Iterable[str] | None) -> tuple[str, ...]:
@@ -213,18 +237,14 @@ def _cmd_prepare(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     skeleton = load_skeleton_spec(paths["skeleton"])
     fold = resolve_fold(config, args.fold)
     manifest = build_split_manifest(fold)
-    fold_people = set(manifest.train) | set(manifest.val) | set(manifest.test)
     discovered = set(_people(paths, None))
     explicit = set(str(person) for person in args.person) if args.person else None
-    requested = (
-        (explicit if explicit is not None else discovered) & fold_people & discovered
-    )
+    requested = (explicit & discovered) if explicit is not None else discovered
     aligned_people = []
     prepared_people = []
     failures: dict[str, str] = {}
+    excluded: dict[str, str] = {}
     if explicit is not None:
-        for person in sorted(explicit - fold_people):
-            failures[person] = "person is not a member of the selected fold"
         for person in sorted(explicit - discovered):
             failures[person] = "missing SAM3D person directory"
     for person in sorted(requested):
@@ -232,7 +252,11 @@ def _cmd_prepare(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
         if record.is_file():
             aligned_people.append(person)
         else:
-            failures[person] = f"missing split alignment record: {record}"
+            message = f"missing split alignment record: {record}"
+            if explicit is None:
+                excluded[person] = message
+            else:
+                failures[person] = message
     for person in aligned_people:
         try:
             trials = load_person_trials(
@@ -254,10 +278,11 @@ def _cmd_prepare(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
             {
                 **asdict(manifest),
                 "fold_path": str(fold),
-                "selected_people": sorted(requested),
+                "selected_people": sorted(aligned_people),
                 "aligned_people": aligned_people,
                 "prepared_people": prepared_people,
                 "failures": failures,
+                "excluded_sam3d_people": excluded,
             },
             indent=2,
             sort_keys=True,
@@ -341,6 +366,8 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
         else [train_set[index]["window_id"] for index in range(len(train_set))],
         seed=int(training.get("seed", 0)),
         config=corruption,
+        window_length=window.length,
+        stride=window.eval_stride,
     )
     provenance = {
         "split_hash": _hash(asdict(manifest)),
@@ -434,28 +461,48 @@ def _cmd_infer(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     if not isinstance(raw_corruption_config, Mapping):
         raise ValueError("checkpoint corruption_config must be a mapping")
     corruption_config = CorruptionConfig(**dict(raw_corruption_config))
+    provenance = payload.get("provenance", {})
+    if not isinstance(provenance, Mapping):
+        raise ValueError("checkpoint provenance must be a mapping")
     manifest_path = checkpoint.parents[1] / "corruption_manifest.json"
     corruption_manifest = (
         json.loads(manifest_path.read_text(encoding="utf-8"))
         if manifest_path.is_file()
         else {}
     )
+    expected_manifest_hash = str(provenance.get("corruption_manifest_hash", ""))
+    if not corruption_manifest or _hash(corruption_manifest) != expected_manifest_hash:
+        raise ValueError(
+            "run corruption manifest is missing or does not match checkpoint provenance"
+        )
+    window = WindowConfig(**dict(config.get("window", {})))
+    manifest_window = corruption_manifest.get("window")
+    if manifest_window != {"length": window.length, "stride": window.eval_stride}:
+        raise ValueError(
+            "run corruption manifest window contract does not match inference config"
+        )
     if args.fold:
         manifest = build_split_manifest(resolve_fold(config, args.fold))
         allowed = _manifest_people(manifest, args.person)
     else:
         allowed = tuple(args.person or [])
-    people = (
-        _people(paths, allowed)
-        if allowed
-        else [
-            path.name.removeprefix("person_")
-            for path in paths["cache"].glob("person_*")
-        ]
-    )
-    provenance = payload.get("provenance", {})
-    if not isinstance(provenance, Mapping):
-        raise ValueError("checkpoint provenance must be a mapping")
+    if allowed:
+        people = list(allowed)
+    else:
+        prepared_manifest = paths["output"] / "split_manifest.json"
+        if not prepared_manifest.is_file():
+            raise FileNotFoundError(
+                "default infer requires prepare split_manifest.json"
+            )
+        prepared = json.loads(prepared_manifest.read_text(encoding="utf-8")).get(
+            "prepared_people"
+        )
+        if not isinstance(prepared, list) or not all(
+            isinstance(item, str) for item in prepared
+        ):
+            raise ValueError("prepare split manifest has no valid prepared_people list")
+        people = sorted(set(prepared))
+    cache_paths = _cache_trial_paths(paths["cache"], people)
     inference_provenance = {
         **dict(provenance),
         "checkpoint_path": str(checkpoint),
@@ -468,9 +515,7 @@ def _cmd_infer(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
         "inference_config_hash": _hash(config),
     }
     for person in people:
-        for raw_path in sorted(
-            (paths["cache"] / f"person_{person}").glob("cycle_*.npz")
-        ):
+        for raw_path in cache_paths[person]:
             raw, _ = load_cached_trial(raw_path)
             run_inference(
                 model,
@@ -478,6 +523,8 @@ def _cmd_infer(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
                 skeleton,
                 output_root=paths["output"] / "inference" / args.run_id,
                 run_id=args.run_id,
+                window_length=window.length,
+                stride=window.eval_stride,
                 provenance=inference_provenance,
                 corruption_config=corruption_config,
                 resolved_config=config,
@@ -504,6 +551,7 @@ def _cmd_evaluate(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
             for root in roots
             for path in root.glob("person_*")
         ]
+    people = sorted({str(person) for person in people})
     rows = []
     joints = []
     availability: dict[str, dict[str, str]] = {}
@@ -536,6 +584,21 @@ def _cmd_evaluate(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
                     sequences.append(sequence)
         availability[str(person)] = status
         if sequences:
+            aliases = {
+                "face_only": "A0",
+                "side_only": "A1",
+                "canonical_arithmetic": "A2",
+                "quality_mean": "A3",
+            }
+            available_methods = {sequence.method for sequence in sequences}
+            sequences = [
+                sequence
+                for sequence in sequences
+                if not (
+                    sequence.method in aliases
+                    and aliases[sequence.method] in available_methods
+                )
+            ]
             new_sequences = [
                 sequence
                 for sequence in sequences
@@ -591,7 +654,9 @@ def _cmd_evaluate(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
                         "peak_omega",
                         "trunk_angular_jerk",
                         "rom_retention",
+                        "rom_retention_availability",
                         "peak_angular_velocity_retention",
+                        "peak_angular_velocity_retention_availability",
                         "swap_error",
                         "swap_error_availability",
                     )

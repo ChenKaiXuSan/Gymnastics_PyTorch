@@ -249,6 +249,24 @@ def test_old_full_sequence_is_sliced_by_new_trial_frame_maps(tmp_path: Path) -> 
     assert legacy[0].timestamps[1] - legacy[0].timestamps[0] == 2 / 50.0
 
 
+def test_legacy_retention_metrics_have_explicit_unsupported_availability() -> None:
+    sequence = _sequence()
+    legacy = MethodSequence(
+        "legacy",
+        sequence.kpts_world,
+        sequence.timestamps,
+        diagnostic_status={"swap_error": "unsupported_legacy_output"},
+    )
+
+    row = evaluate_person_trials("1", [legacy], SPEC).person_metrics[0]
+
+    assert row["rom_retention_availability"] == "unsupported_legacy_output"
+    assert (
+        row["peak_angular_velocity_retention_availability"]
+        == "unsupported_legacy_output"
+    )
+
+
 def test_external_percentiles_are_computed_from_all_valid_points_not_cycle_means() -> (
     None
 ):

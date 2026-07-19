@@ -246,23 +246,26 @@ def _overlap_fuse(
     return fused, base, point_weight
 
 
-def _manifest_corruption(
+def _manifest_overlap_fuse(
+    model: RotationAwareFusionModel,
     source: PosePairTrial,
     manifest: Mapping[str, Any],
     skeleton: SkeletonSpec,
     config: CorruptionConfig | None,
     window_length: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Replay the validation manifest on its own windows without a full-cycle seed."""
-    face, side = np.array(source.face, copy=True), np.array(source.side, copy=True)
-    valid_face = np.array(source.valid_face, copy=True)
-    valid_side = np.array(source.valid_side, copy=True)
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
+    """Independently corrupt clean manifest windows and aggregate their OLA outputs."""
+    frames, joints = source.face.shape[:2]
+    fused_sum = np.zeros((frames, joints, 3), dtype=np.float64)
+    weight_sum = np.zeros((frames, joints), dtype=np.float64)
     mask = np.zeros(source.face.shape[:2], dtype=bool)
     windows = manifest.get("windows")
     if not isinstance(windows, Mapping):
-        return face, side, valid_face, valid_side, mask
+        return np.zeros_like(source.face), weight_sum, mask, False
     prefix = f"person_{source.person_id}/{source.trial_id}/"
-    for window_id, seed in windows.items():
+    taper = overlap_taper(window_length)
+    matched = False
+    for window_id, seed in sorted(windows.items()):
         if not isinstance(window_id, str) or not window_id.startswith(prefix):
             continue
         try:
@@ -270,26 +273,50 @@ def _manifest_corruption(
             seed = int(seed)
         except (TypeError, ValueError):
             continue
-        if start < 0 or start >= len(face):
+        if start < 0 or start >= frames:
             continue
-        end = min(start + window_length, len(face))
+        end = min(start + window_length, frames)
+        count = end - start
         corrupted = apply_corruptions(
-            torch.from_numpy(np.array(face[start:end], copy=True)),
-            torch.from_numpy(np.array(side[start:end], copy=True)),
-            torch.from_numpy(np.array(valid_face[start:end], copy=True)),
-            torch.from_numpy(np.array(valid_side[start:end], copy=True)),
+            torch.from_numpy(np.array(source.face[start:end], copy=True)),
+            torch.from_numpy(np.array(source.side[start:end], copy=True)),
+            torch.from_numpy(np.array(source.valid_face[start:end], copy=True)),
+            torch.from_numpy(np.array(source.valid_side[start:end], copy=True)),
             seed=seed,
             config=config,
             skeleton=skeleton,
         )
-        face[start:end] = corrupted.corrupted_face.numpy()
-        side[start:end] = corrupted.corrupted_side.numpy()
-        valid_face[start:end] = corrupted.corrupted_valid_face.numpy()
-        valid_side[start:end] = corrupted.corrupted_valid_side.numpy()
+        face = torch.zeros((1, window_length, joints, 3), dtype=torch.float32)
+        side = torch.zeros_like(face)
+        valid_face = torch.zeros((1, window_length, joints), dtype=torch.bool)
+        valid_side = torch.zeros_like(valid_face)
+        face[:, :count] = corrupted.corrupted_face
+        side[:, :count] = corrupted.corrupted_side
+        valid_face[:, :count] = corrupted.corrupted_valid_face
+        valid_side[:, :count] = corrupted.corrupted_valid_side
+        dt = torch.zeros((1, window_length), dtype=torch.float32)
+        dt[0, :count] = 1.0 / source.fps
+        if count > 1:
+            dt[0, 1:count] = torch.from_numpy(
+                np.diff(source.timestamps[start:end]).astype(np.float32)
+            )
+        with torch.no_grad():
+            output, _, _ = _forward(
+                model, face, side, valid_face, valid_side, skeleton, dt
+            )
+        valid = output.valid[0, :count].cpu().numpy()
+        weight = taper[:count, None] * valid
+        fused_sum[start:end] += (
+            output.fused_kpts[0, :count].detach().cpu().numpy() * weight[..., None]
+        )
+        weight_sum[start:end] += weight
         mask[start:end] |= (
             corrupted.face_corruption_mask | corrupted.side_corruption_mask
         ).numpy()
-    return face, side, valid_face, valid_side, mask
+        matched = True
+    fused = (fused_sum / np.maximum(weight_sum[..., None], 1e-12)).astype(np.float32)
+    fused[weight_sum == 0] = 0
+    return fused, weight_sum, mask, matched
 
 
 def run_inference(
@@ -358,29 +385,15 @@ def run_inference(
         if common.any()
         else float("nan")
     )
-    (
-        corrupted_face,
-        corrupted_side,
-        corrupted_valid_face,
-        corrupted_valid_side,
-        corruption_mask,
-    ) = _manifest_corruption(
-        source,
-        corruption_manifest or {},
-        skeleton,
-        corruption_config,
-        window_length,
-    )
-    corrupted_fused, _, corrupted_weight = _overlap_fuse(
-        model,
-        source,
-        skeleton,
-        face=corrupted_face,
-        side=corrupted_side,
-        valid_face=corrupted_valid_face,
-        valid_side=corrupted_valid_side,
-        window_length=window_length,
-        stride=stride,
+    corrupted_fused, corrupted_weight, corruption_mask, has_manifest_windows = (
+        _manifest_overlap_fuse(
+            model,
+            source,
+            corruption_manifest or {},
+            skeleton,
+            corruption_config,
+            window_length,
+        )
     )
     pseudo_target, pseudo_valid, _ = _pseudo_target(
         full_face,
@@ -446,7 +459,9 @@ def run_inference(
             "fixed_corruption_recovery": fixed_corruption_recovery,
             "fixed_corruption_recovery_status": "measured"
             if recovery_mask.any()
-            else "unavailable_no_manifest_window",
+            else "unavailable_no_manifest_window"
+            if not has_manifest_windows
+            else "unavailable_no_corrupted_valid_points",
         },
     }
     fused_tensor = torch.from_numpy(fused).unsqueeze(0)

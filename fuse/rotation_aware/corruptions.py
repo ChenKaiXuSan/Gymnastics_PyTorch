@@ -249,6 +249,8 @@ def write_corruption_manifest(
     *,
     seed: int,
     config: CorruptionConfig | None = None,
+    window_length: int | None = None,
+    stride: int | None = None,
 ) -> dict[str, object]:
     """Persist stable per-window seeds for a fixed evaluation corruption suite."""
     if len(set(window_ids)) != len(window_ids):
@@ -258,6 +260,10 @@ def write_corruption_manifest(
         "config": json.loads(json.dumps(asdict(config or CorruptionConfig()))),
         "windows": {window_id: stable_window_seed(seed, window_id) for window_id in sorted(window_ids)},
     }
+    if window_length is not None or stride is not None:
+        if not isinstance(window_length, int) or not isinstance(stride, int):
+            raise ValueError("window_length and stride must be supplied together")
+        manifest["window"] = {"length": window_length, "stride": stride}
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")

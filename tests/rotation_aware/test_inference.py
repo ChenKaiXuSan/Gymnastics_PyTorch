@@ -217,7 +217,7 @@ def test_swap_diagnostic_uses_the_same_overlap_add_path_as_primary_inference(
         provenance={"corruption_seed": "17", "corruption_manifest_hash": "manifest"},
     )
 
-    assert len(calls) == 3
+    assert len(calls) == 2
     np.testing.assert_allclose(calls[1][0], calls[0][1])
     np.testing.assert_allclose(calls[1][1], calls[0][0])
     assert calls[0][2] == calls[1][2] == 64
@@ -229,13 +229,43 @@ def test_swap_diagnostic_uses_the_same_overlap_add_path_as_primary_inference(
 
 def test_fixed_corruption_replays_manifest_window_seeds_deterministically() -> None:
     trial = canonicalize_trial(_trial(8), SPEC).trial
-    manifest = {"windows": {"person_1/cycle_000/0": 123}}
+    manifest = {"windows": {"person_1/cycle_000/0": 123, "person_1/cycle_000/2": 456}}
     corruption = CorruptionConfig(
         enabled_families=("spike_noise",), spike_probability=1.0
     )
+    model = RotationAwareFusionModel(SPEC, hidden_channels=8)
 
-    first = inference._manifest_corruption(trial, manifest, SPEC, corruption, 8)
-    second = inference._manifest_corruption(trial, manifest, SPEC, corruption, 8)
+    first = inference._manifest_overlap_fuse(
+        model, trial, manifest, SPEC, corruption, 8
+    )
+    second = inference._manifest_overlap_fuse(
+        model, trial, manifest, SPEC, corruption, 8
+    )
 
-    assert first[-1].any()
+    assert first[2].any()
     np.testing.assert_allclose(first[0], second[0])
+
+
+def test_manifest_overlap_windows_are_each_corrupted_from_clean_reference(
+    monkeypatch,
+) -> None:
+    trial = canonicalize_trial(_trial(8), SPEC).trial
+    seen = []
+    original = inference.apply_corruptions
+
+    def wrapped(face, side, *args, **kwargs):
+        seen.append(face.numpy().copy())
+        return original(face, side, *args, **kwargs)
+
+    monkeypatch.setattr(inference, "apply_corruptions", wrapped)
+    inference._manifest_overlap_fuse(
+        RotationAwareFusionModel(SPEC, hidden_channels=8),
+        trial,
+        {"windows": {"person_1/cycle_000/0": 1, "person_1/cycle_000/2": 2}},
+        SPEC,
+        CorruptionConfig(enabled_families=("spike_noise",), spike_probability=1.0),
+        6,
+    )
+
+    np.testing.assert_allclose(seen[0], trial.face[:6])
+    np.testing.assert_allclose(seen[1], trial.face[2:])
