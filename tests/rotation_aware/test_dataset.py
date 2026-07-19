@@ -5,6 +5,7 @@ import numpy as np
 import torch
 
 from fuse.metadata.mhr70 import mhr_names
+from fuse.rotation_aware import dataset as dataset_module
 from fuse.rotation_aware.dataset import (
     PosePairWindowDataset,
     SplitManifest,
@@ -107,6 +108,23 @@ def test_complete_cycle_is_true_only_for_an_entire_trial_window():
 
     assert not dataset[0]["complete_cycle"]
     assert not dataset[1]["complete_cycle"]
+
+
+def test_complete_cycle_dataset_emits_long_trial_without_padding() -> None:
+    manifest = SplitManifest(train=("1",), val=(), test=())
+    windows = PosePairWindowDataset(
+        [_trial("1", 257)], skeleton=SPEC, manifest=manifest, split="train"
+    )
+    cycles = dataset_module.PosePairCompleteCycleDataset(
+        [_trial("1", 257)], skeleton=SPEC, manifest=manifest, split="train"
+    )
+
+    assert not any(windows[index]["complete_cycle"] for index in range(len(windows)))
+    sample = cycles[0]
+    assert sample["face"].shape == (257, len(mhr_names), 3)
+    assert sample["padding_mask"].all()
+    assert sample["complete_cycle"]
+    assert sample["window_id"] == "person_1/cycle_000/complete_cycle"
 
 
 def test_collate_stacks_window_tensors_without_unmasking_padding():

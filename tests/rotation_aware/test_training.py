@@ -25,7 +25,14 @@ def _spec() -> SkeletonSpec:
         "right_acromion": RoleSpec("joint", ("right-acromion",)),
         "neck": RoleSpec("joint", ("neck",)),
     }
-    return SkeletonSpec("tiny", names, ((0, 1), (2, 3), (0, 2), (1, 3)), roles, tuple(roles))
+    return SkeletonSpec(
+        "tiny",
+        names,
+        ((0, 1), (2, 3), (0, 2), (1, 3)),
+        roles,
+        tuple(roles),
+        {"upper_body": names[2:]},
+    )
 
 
 def _samples(count: int = 8) -> list[dict[str, object]]:
@@ -65,6 +72,47 @@ def _loader(*, count: int = 8, batch_size: int = 4, reverse: bool = False) -> Da
     return DataLoader(list(reversed(samples)) if reverse else samples, batch_size=batch_size, shuffle=False, collate_fn=collate_pose_pair_windows)
 
 
+def _checkpoint_provenance() -> dict[str, object]:
+    return {
+        "split_hash": "split",
+        "corruption_manifest_hash": "corrupt",
+        "git_commit": "abc",
+        "cache_manifests": {
+            "person-1": {
+                "layout": "legacy_direct",
+                "person_id": "person-1",
+                "trials": ["trial-1"],
+                "generation": None,
+                "source_hash": None,
+                "config_hash": None,
+                "manifest_hash": "manifest",
+            }
+        },
+    }
+
+
+def _complete_cycle_batch(frames: int = 129) -> dict[str, object]:
+    sample = _samples(1)[0]
+    face = sample["face"][:1].repeat(frames, 1, 1)
+    side = sample["side"][:1].repeat(frames, 1, 1)
+    valid = sample["valid_face"][:1].repeat(frames, 1)
+    sample.update(
+        {
+            "face": face,
+            "side": side,
+            "valid_face": valid,
+            "valid_side": valid.clone(),
+            "padding_mask": torch.ones(frames, dtype=torch.bool),
+            "loss_mask": valid.clone(),
+            "dt": torch.ones(frames),
+            "global_frame_index": torch.arange(frames),
+            "complete_cycle": True,
+            "window_id": "person_person-1/trial-1/complete_cycle",
+        }
+    )
+    return collate_pose_pair_windows([sample])
+
+
 def test_cpu_tiny_overfit_is_finite_and_reduces_loss() -> None:
     torch.manual_seed(4)
     spec = _spec()
@@ -92,6 +140,92 @@ def test_cpu_tiny_overfit_is_finite_and_reduces_loss() -> None:
     final = validate(model, _loader(), spec, loss_config=config, corruption_config=corruption, seed=9)["losses"]["corruption_recovery"]
     assert torch.isfinite(torch.tensor(final))
     assert final < initial
+
+
+def test_a6_training_runs_a_separate_complete_cycle_pass() -> None:
+    class RecordingModel(RotationAwareFusionModel):
+        def __init__(self, spec: SkeletonSpec) -> None:
+            super().__init__(spec, hidden_channels=8)
+            self.frame_lengths: list[int] = []
+
+        def forward(self, face, *args, **kwargs):
+            self.frame_lengths.append(face.shape[1])
+            return super().forward(face, *args, **kwargs)
+
+    spec = _spec()
+    model = RecordingModel(spec)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    config = LossConfig(
+        corruption_recovery_weight=0.0,
+        high_consensus_identity_weight=0.0,
+        circular_axial_rotation_weight=0.0,
+        so3_rotation_weight=0.0,
+        trial_bone_length_weight=0.0,
+        local_rigidity_weight=0.0,
+        adaptive_temporal_acceleration_weight=0.0,
+        minimal_residual_weight=0.0,
+    )
+
+    train_one_epoch(
+        model,
+        _loader(count=1, batch_size=1),
+        optimizer,
+        spec,
+        loss_config=config,
+        complete_cycle_loader=[_complete_cycle_batch()],
+        seed=3,
+    )
+
+    assert model.frame_lengths == [5, 129]
+
+
+def test_a5_training_does_not_consume_complete_cycle_loader() -> None:
+    class UnexpectedLoader:
+        def __iter__(self):
+            raise AssertionError("A5 must not run the complete-cycle ROM pass")
+
+    spec = _spec()
+    model = RotationAwareFusionModel(spec, hidden_channels=8)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    config = LossConfig(complete_cycle_rom_weight=0.0)
+
+    train_one_epoch(
+        model,
+        _loader(count=1, batch_size=1),
+        optimizer,
+        spec,
+        loss_config=config,
+        complete_cycle_loader=UnexpectedLoader(),
+        seed=3,
+    )
+
+
+def test_validation_runs_complete_cycle_rom_on_long_sequences() -> None:
+    class RecordingModel(RotationAwareFusionModel):
+        def __init__(self, spec: SkeletonSpec) -> None:
+            super().__init__(spec, hidden_channels=8)
+            self.frame_lengths: list[int] = []
+            self.training_modes: list[bool] = []
+
+        def forward(self, face, *args, **kwargs):
+            self.frame_lengths.append(face.shape[1])
+            self.training_modes.append(self.training)
+            return super().forward(face, *args, **kwargs)
+
+    spec = _spec()
+    model = RecordingModel(spec)
+
+    validate(
+        model,
+        _loader(count=1, batch_size=1),
+        spec,
+        complete_cycle_loader=[_complete_cycle_batch()],
+        seed=3,
+    )
+
+    assert model.frame_lengths == [5, 129]
+    assert model.training_modes == [False, False]
+    assert model.training
 
 
 def test_training_combines_temporal_mask_before_feature_extraction() -> None:
@@ -127,7 +261,7 @@ def test_validation_score_and_checkpoint_metadata_exclude_external_ground_truth(
         optimizer,
         loss_config=LossConfig(),
         skeleton=spec,
-        provenance={"split_hash": "split", "corruption_manifest_hash": "corrupt", "git_commit": "abc"},
+        provenance=_checkpoint_provenance(),
         training_config={"batch_size": 4},
         corruption_config=__import__("fuse.rotation_aware.corruptions", fromlist=["CorruptionConfig"]).CorruptionConfig(),
         score=metrics_a["score"],

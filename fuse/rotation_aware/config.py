@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
@@ -30,6 +30,7 @@ class SkeletonSpec:
     bones: tuple[tuple[int, int], ...]
     roles: Mapping[str, RoleSpec]
     required_roles: tuple[str, ...]
+    joint_groups: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         joint_names = tuple(self.joint_names)
@@ -41,9 +42,25 @@ class SkeletonSpec:
             raise ValueError("SkeletonSpec bones must contain integer index pairs")
         if not all(isinstance(role, str) for role in required_roles):
             raise ValueError("SkeletonSpec required_roles must contain strings")
+        joint_groups = {
+            name: tuple(joints) for name, joints in self.joint_groups.items()
+        }
+        for name, joints in joint_groups.items():
+            if not isinstance(name, str) or not name or not joints:
+                raise ValueError("SkeletonSpec joint groups need non-empty names and joints")
+            if not all(isinstance(joint, str) for joint in joints):
+                raise ValueError(f"SkeletonSpec joint group {name} must contain joint names")
+            if len(joints) != len(set(joints)):
+                raise ValueError(f"SkeletonSpec joint group {name} contains duplicate joints")
+            unknown = set(joints) - set(joint_names)
+            if unknown:
+                raise ValueError(
+                    f"SkeletonSpec joint group {name} references unknown joints: {sorted(unknown)}"
+                )
         object.__setattr__(self, "joint_names", joint_names)
         object.__setattr__(self, "bones", bones)
         object.__setattr__(self, "required_roles", required_roles)
+        object.__setattr__(self, "joint_groups", MappingProxyType(joint_groups))
         if not self.name:
             raise ValueError("SkeletonSpec name must be non-empty")
         if len(self.joint_names) != len(set(self.joint_names)):
@@ -68,6 +85,13 @@ class SkeletonSpec:
             return self.roles[role_name]
         except KeyError as error:
             raise KeyError(f"Unknown skeleton role: {role_name}") from error
+
+    def joint_group(self, group_name: str) -> tuple[int, ...]:
+        try:
+            names = self.joint_groups[group_name]
+        except KeyError as error:
+            raise KeyError(f"Unknown skeleton joint group: {group_name}") from error
+        return tuple(self.joint_index(name) for name in names)
 
 
 def _as_names(value: object, field: str) -> tuple[str, ...]:
@@ -134,10 +158,21 @@ def load_skeleton_spec(path: str | Path) -> SkeletonSpec:
             raise ValueError(f"Bone references an unknown joint: {bone}") from error
 
     required_roles = _as_names(raw.get("required_roles"), "required_roles")
+    raw_joint_groups = raw.get("joint_groups", {})
+    if not isinstance(raw_joint_groups, dict):
+        raise ValueError("joint_groups must be a mapping")
+    joint_groups = {
+        name: _as_names(joints, f"joint_groups.{name}")
+        for name, joints in raw_joint_groups.items()
+        if isinstance(name, str)
+    }
+    if len(joint_groups) != len(raw_joint_groups):
+        raise ValueError("joint_groups must use string names")
     return SkeletonSpec(
         name=str(raw.get("name", "")),
         joint_names=joint_names,
         bones=tuple(bones),
         roles=roles,
         required_roles=required_roles,
+        joint_groups=joint_groups,
     )

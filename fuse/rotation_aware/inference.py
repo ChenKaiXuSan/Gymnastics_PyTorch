@@ -497,6 +497,9 @@ def run_inference(
         "coordinate_system": "face_reference_uncalibrated",
         "run_id": run_id,
         "checkpoint_provenance": dict(provenance or {}),
+        "consumed_cache_manifest": dict(
+            (provenance or {}).get("consumed_cache_manifest", {})
+        ),
         "person_id": trial.person_id,
         "trial_id": trial.trial_id,
         "fps": trial.fps,

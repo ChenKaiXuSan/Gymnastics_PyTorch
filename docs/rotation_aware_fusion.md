@@ -86,7 +86,9 @@ metadata. `runs/<run_id>/` holds `config_resolved.yaml`,
 `split_manifest.json`, `corruption_manifest.json`, checkpoints,
 `train_metrics.csv`, and `run_metadata.json`. The latter records
 `no_pseudo_gt_training: true` and the split/config/corruption provenance used
-to select checkpoints.
+to select checkpoints. Checkpoint and run provenance also bind every selected
+person to the exact consumed cache layout, generation, source/config hashes,
+trial list, and manifest hash.
 
 Prepared person caches use immutable internal generations:
 `cache/person_<id>/.generations/<generation>/` contains that generation's
@@ -121,7 +123,9 @@ Each inference cycle writes `fused_sequence.npz`, `config.json`, and
 Inference metadata includes the person/trial/run identifiers, checkpoint path
 and SHA-256, split/config/corruption-manifest hashes, model configuration,
 ablation, seed, and nested checkpoint provenance. It also records that
-training used no pseudo-GT.
+training used no pseudo-GT. Inference accepts a subset of checkpoint people,
+but rejects people from a different split and rejects caches republished after
+training; each cycle records its verified `consumed_cache_manifest` identity.
 
 `evaluation/<run_id>/` contains `metrics_by_person.csv`,
 `metrics_by_joint.csv`, `corruption_metrics.csv`,

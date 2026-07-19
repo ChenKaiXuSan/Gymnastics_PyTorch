@@ -192,6 +192,74 @@ def _rom_loss(prediction: Tensor, target: Tensor, valid: Tensor, complete: Tenso
     return torch.stack(values).mean()
 
 
+def compute_complete_cycle_rom_loss(
+    output: FusionOutput,
+    batch: Mapping[str, object],
+    config: LossConfig,
+    skeleton: SkeletonSpec,
+) -> Tensor:
+    """Compute only complete-cycle ROM, avoiding full-loss activations on long trials."""
+    fused = output.fused_kpts
+    if fused.ndim != 4 or fused.shape[-1] != 3:
+        raise ValueError("FusionOutput.fused_kpts must have shape [B, T, J, 3]")
+    batch_size, frames, joints, _ = fused.shape
+    shape = (batch_size, frames, joints)
+    if output.valid.shape != shape:
+        raise ValueError("FusionOutput.valid must have shape [B, T, J]")
+    if joints != len(skeleton.joint_names):
+        raise ValueError("fused pose joint dimension must match the supplied SkeletonSpec")
+    reference_face = _require_tensor(batch, "reference_face", fused.shape).to(
+        device=fused.device, dtype=fused.dtype
+    )
+    reference_side = _require_tensor(batch, "reference_side", fused.shape).to(
+        device=fused.device, dtype=fused.dtype
+    )
+    valid_face = _require_tensor(batch, "valid_face", shape).bool().to(fused.device)
+    valid_side = _require_tensor(batch, "valid_side", shape).bool().to(fused.device)
+    loss_mask = _require_tensor(batch, "loss_mask", shape).bool().to(fused.device)
+    padding_mask = (
+        _require_tensor(batch, "padding_mask", (batch_size, frames))
+        .bool()
+        .to(fused.device)
+    )
+    dt = _require_tensor(batch, "dt", (batch_size, frames)).to(
+        device=fused.device, dtype=fused.dtype
+    )
+    quality_face = _require_tensor(batch, "quality_face", (batch_size, frames)).to(
+        device=fused.device, dtype=fused.dtype
+    )
+    quality_side = _require_tensor(batch, "quality_side", (batch_size, frames)).to(
+        device=fused.device, dtype=fused.dtype
+    )
+    coordinate_mask = loss_mask & padding_mask[..., None]
+    target, target_valid, _ = _pseudo_target(
+        reference_face,
+        reference_side,
+        valid_face,
+        valid_side,
+        quality_face,
+        quality_side,
+        config,
+    )
+    fused, fused_valid = _safe_points(
+        fused, output.valid.to(device=fused.device) & coordinate_mask
+    )
+    coordinate_mask &= fused_valid & target_valid
+    target_trunk = extract_trunk_features(
+        target, target_valid & coordinate_mask, skeleton, dt=dt
+    )
+    fused_trunk = extract_trunk_features(fused, fused_valid, skeleton, dt=dt)
+    axial_mask = (
+        _frame_mask(coordinate_mask)
+        & target_trunk.angle_valid
+        & fused_trunk.angle_valid
+    )
+    complete = _complete_cycle_mask(
+        batch, frames, fused.device, batch_size=batch_size
+    )
+    return _rom_loss(fused_trunk.angle, target_trunk.angle, axial_mask, complete)
+
+
 def compute_self_supervised_losses(
     output: FusionOutput,
     batch: Mapping[str, object],

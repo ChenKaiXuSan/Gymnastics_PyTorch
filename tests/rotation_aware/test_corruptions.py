@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 import torch
@@ -8,7 +9,7 @@ from fuse.rotation_aware.corruptions import (
     apply_corruptions,
     write_corruption_manifest,
 )
-from fuse.rotation_aware.config import RoleSpec, SkeletonSpec
+from fuse.rotation_aware.config import RoleSpec, SkeletonSpec, load_skeleton_spec
 
 
 def _inputs():
@@ -29,6 +30,14 @@ def _skeleton() -> SkeletonSpec:
             )
         },
         required_roles=("thorax",),
+        joint_groups={
+            "upper_body": (
+                "left-thorax",
+                "right-thorax",
+                "left-fallback",
+                "right-fallback",
+            )
+        },
     )
 
 
@@ -39,6 +48,14 @@ def _joint_fallback_skeleton() -> SkeletonSpec:
         bones=(),
         roles={"thorax": RoleSpec(kind="joint", joints=("thorax",), fallback=("fallback-thorax",))},
         required_roles=("thorax",),
+        joint_groups={
+            "upper_body": (
+                "thorax",
+                "other",
+                "fallback-thorax",
+                "other-fallback",
+            )
+        },
     )
 
 
@@ -164,3 +181,39 @@ def test_thorax_rotation_uses_joint_role_fallback_from_skeleton():
 
     torch.testing.assert_close(batch.corrupted_face[1, 2], batch.reference_face[1, 2])
     assert batch.face_corruption_mask[1, 3]
+
+
+def test_thorax_rotation_moves_only_named_upper_body_about_local_y() -> None:
+    skeleton = load_skeleton_spec(Path("configs/fuse/skeleton_mhr70.yaml"))
+    joints = len(skeleton.joint_names)
+    face = torch.arange(2 * joints * 3, dtype=torch.float32).reshape(2, joints, 3) + 1
+    valid = torch.ones((2, joints), dtype=torch.bool)
+    left_acromion = skeleton.joint_index("left-acromion")
+    right_acromion = skeleton.joint_index("right-acromion")
+    face[:, left_acromion] = torch.tensor([-1.0, 2.0, 0.0])
+    face[:, right_acromion] = torch.tensor([1.0, 2.0, 0.0])
+    upper_body = skeleton.joint_group("upper_body")
+    lower_body = tuple(index for index in range(joints) if index not in upper_body)
+
+    batch = apply_corruptions(
+        face,
+        face,
+        valid,
+        valid,
+        seed=2,
+        config=CorruptionConfig(
+            enabled_families=("thorax_rotation_bias",),
+            rotation_probability=1.0,
+            rotation_degrees=30.0,
+        ),
+        skeleton=skeleton,
+    )
+
+    torch.testing.assert_close(batch.corrupted_face[:, lower_body], face[:, lower_body])
+    torch.testing.assert_close(batch.corrupted_face[:, upper_body, 1], face[:, upper_body, 1])
+    torch.testing.assert_close(
+        batch.corrupted_face[:, [left_acromion, right_acromion]].mean(dim=1),
+        face[:, [left_acromion, right_acromion]].mean(dim=1),
+    )
+    assert batch.face_corruption_mask[:, upper_body].any()
+    assert not batch.face_corruption_mask[:, lower_body].any()

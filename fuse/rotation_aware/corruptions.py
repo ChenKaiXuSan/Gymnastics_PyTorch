@@ -137,17 +137,25 @@ def _apply_view(
     if "thorax_rotation_bias" in config.enabled_families and skeleton is not None:
         selected_frames = _bernoulli((frames,), config.rotation_probability, generator)
         pivot, pivot_valid = _resolve_thorax_pivot(output, output_valid, skeleton)
+        upper_body = torch.zeros(joints, dtype=torch.bool)
+        upper_body[list(skeleton.joint_group("upper_body"))] = True
         angles = (torch.rand((frames,), generator=generator) * 2 - 1) * torch.deg2rad(
             torch.tensor(config.rotation_degrees, dtype=output.dtype)
         )
         cos, sin = torch.cos(angles), torch.sin(angles)
         rotation = torch.zeros((frames, 3, 3), dtype=output.dtype)
-        rotation[:, 0, 0], rotation[:, 0, 1] = cos, -sin
-        rotation[:, 1, 0], rotation[:, 1, 1] = sin, cos
-        rotation[:, 2, 2] = 1
+        rotation[:, 0, 0], rotation[:, 0, 2] = cos, sin
+        rotation[:, 1, 1] = 1
+        rotation[:, 2, 0], rotation[:, 2, 2] = -sin, cos
         rotated = torch.einsum("tjc,tdc->tjd", output - pivot, rotation) + pivot
+        affected = (
+            selected_frames[:, None]
+            & pivot_valid[:, None]
+            & upper_body[None]
+            & output_valid
+        )
         output = torch.where(
-            selected_frames[:, None, None] & pivot_valid[:, None, None] & output_valid.unsqueeze(-1),
+            affected.unsqueeze(-1),
             rotated,
             output,
         )

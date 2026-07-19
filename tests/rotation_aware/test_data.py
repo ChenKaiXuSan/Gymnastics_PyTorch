@@ -57,6 +57,9 @@ def test_load_skeleton_spec_resolves_mhr70_virtual_roles(spec):
     assert spec.joint_index("left-hip") == 9
     assert spec.role("pelvis").kind == "midpoint"
     assert spec.role("thorax").fallback == ("left-shoulder", "right-shoulder")
+    upper_body = {spec.joint_names[index] for index in spec.joint_group("upper_body")}
+    assert {"neck", "left-acromion", "right-acromion", "left-wrist", "right-wrist"} <= upper_body
+    assert {"left-hip", "right-hip", "left-knee", "right-knee"}.isdisjoint(upper_body)
 
 
 def test_load_person_trials_uses_split_cycle_boundaries(tmp_path, monkeypatch, spec):
@@ -475,6 +478,12 @@ def test_load_cached_trial_keeps_legacy_direct_cache_compatible(tmp_path):
 
     assert restored.face[0, 0, 0] == pytest.approx(3.0)
     assert metadata == legacy_manifest
+    identity = data.cache_manifest_identity(metadata)
+    assert identity["layout"] == "legacy_direct"
+    assert identity["generation"] is None
+    assert identity["source_hash"] is None
+    assert identity["config_hash"] is None
+    assert identity["trials"] == ["cycle_000"]
 
 
 def test_write_person_cache_requires_nonempty_provenance(tmp_path, monkeypatch, spec):

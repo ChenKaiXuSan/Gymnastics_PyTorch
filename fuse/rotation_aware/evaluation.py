@@ -131,6 +131,7 @@ def _trunk(
 def _external_errors(
     candidate: np.ndarray,
     reference: np.ndarray,
+    skeleton: SkeletonSpec,
     candidate_valid: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     candidate, reference = (
@@ -139,35 +140,50 @@ def _external_errors(
     )
     if candidate.shape != reference.shape:
         raise ValueError("candidate and external reference shapes must match")
+    hip_indices: list[int] = []
+    for role_name in ("left_hip", "right_hip"):
+        role = skeleton.role(role_name)
+        if role.kind != "joint" or len(role.joints) != 1:
+            raise ValueError(f"Skeleton role {role_name} must resolve exactly one joint")
+        hip_indices.append(skeleton.joint_index(role.joints[0]))
+    left_hip, right_hip = hip_indices
     root_a, root_b = (
-        0.5 * (candidate[:, 9] + candidate[:, 10]),
-        0.5 * (reference[:, 9] + reference[:, 10]),
+        0.5 * (candidate[:, left_hip] + candidate[:, right_hip]),
+        0.5 * (reference[:, left_hip] + reference[:, right_hip]),
     )
     errors = np.linalg.norm(
         (candidate - root_a[:, None]) - (reference - root_b[:, None]), axis=-1
     )
     valid = np.isfinite(candidate).all(axis=-1) & np.isfinite(reference).all(axis=-1)
-    reference_roots = np.any(reference[:, 9] != 0, axis=-1) & np.any(
-        reference[:, 10] != 0, axis=-1
+    reference_roots = np.any(reference[:, left_hip] != 0, axis=-1) & np.any(
+        reference[:, right_hip] != 0, axis=-1
     )
-    candidate_roots = np.any(candidate[:, 9] != 0, axis=-1) & np.any(
-        candidate[:, 10] != 0, axis=-1
+    candidate_roots = np.any(candidate[:, left_hip] != 0, axis=-1) & np.any(
+        candidate[:, right_hip] != 0, axis=-1
     )
-    valid &= (valid[:, 9] & valid[:, 10] & reference_roots & candidate_roots)[:, None]
+    valid &= (
+        valid[:, left_hip]
+        & valid[:, right_hip]
+        & reference_roots
+        & candidate_roots
+    )[:, None]
     if candidate_valid is not None:
         candidate_valid = np.asarray(candidate_valid, dtype=bool)
         valid &= candidate_valid
-        valid &= (candidate_valid[:, 9] & candidate_valid[:, 10])[:, None]
+        valid &= (
+            candidate_valid[:, left_hip] & candidate_valid[:, right_hip]
+        )[:, None]
     return errors, valid
 
 
 def external_metrics_from_reference(
     candidate: np.ndarray,
     reference: np.ndarray,
+    skeleton: SkeletonSpec,
     candidate_valid: np.ndarray | None = None,
 ) -> tuple[dict[str, float], list[dict[str, float]]]:
     """Optional pseudo-GT metrics; this is intentionally isolated from training."""
-    errors, valid = _external_errors(candidate, reference, candidate_valid)
+    errors, valid = _external_errors(candidate, reference, skeleton, candidate_valid)
     values = errors[valid]
     summary = {
         name: (float(fn(values)) if len(values) else float("nan"))
@@ -201,69 +217,133 @@ def external_metrics_from_reference(
     return summary, joints
 
 
-def _self_metrics(sequence: MethodSequence, skeleton: SkeletonSpec) -> dict[str, float]:
-    points, timestamps, valid = (
-        np.asarray(sequence.kpts_world, dtype=np.float32),
-        np.asarray(sequence.timestamps, dtype=np.float64),
-        _valid(sequence),
-    )
-    if points.shape[0] != len(timestamps):
-        raise ValueError(f"timestamps length does not match {sequence.trial_id}")
-    cvs, rigidity = [], []
-    for left, right in skeleton.bones:
-        lengths = np.linalg.norm(points[:, left] - points[:, right], axis=-1)
-        values = lengths[valid[:, left] & valid[:, right]]
-        if len(values):
-            baseline = max(abs(float(np.median(values))), 1e-8)
-            cvs.append(float(np.std(values) / baseline))
-            rigidity.append(float(np.mean(np.abs(values - baseline) / baseline)))
-    theta, omega, theta_valid, omega_valid = _trunk(points, valid, timestamps, skeleton)
-    rom, peak = (
-        _circular_rom(theta, theta_valid),
-        float(np.max(np.abs(omega[omega_valid]))) if omega_valid.any() else 0.0,
-    )
-    rom_retention = peak_retention = float("nan")
-    if sequence.reference_kpts is not None:
-        reference = np.asarray(sequence.reference_kpts, dtype=np.float32)
-        if reference.shape != points.shape:
-            raise ValueError(f"reference_kpts shape does not match {sequence.trial_id}")
-        ref_theta, ref_omega, ref_theta_valid, ref_omega_valid = _trunk(
-            reference,
-            np.isfinite(reference).all(axis=-1) & np.any(reference != 0, axis=-1),
-            timestamps,
-            skeleton,
+def _pooled_self_metrics(
+    sequences: Sequence[MethodSequence], skeleton: SkeletonSpec
+) -> dict[str, float]:
+    bone_samples: list[list[np.ndarray]] = [[] for _ in skeleton.bones]
+    joint_jerk_samples: list[np.ndarray] = []
+    trunk_jerk_samples: list[np.ndarray] = []
+    cycle_roms: list[float] = []
+    cycle_peaks: list[float] = []
+    matched_roms: list[float] = []
+    matched_peaks: list[float] = []
+    reference_roms: list[float] = []
+    reference_peaks: list[float] = []
+    valid_frames = 0.0
+    valid_points = 0.0
+    diagnostic_weights: list[float] = []
+    swap_errors: list[float] = []
+    corruption_recoveries: list[float] = []
+
+    for sequence in sequences:
+        points = np.asarray(sequence.kpts_world, dtype=np.float32)
+        timestamps = np.asarray(sequence.timestamps, dtype=np.float64)
+        valid = _valid(sequence)
+        if points.shape[0] != len(timestamps):
+            raise ValueError(f"timestamps length does not match {sequence.trial_id}")
+        valid_frames += float(valid.any(axis=1).sum())
+        cycle_valid_points = float(valid.sum())
+        valid_points += cycle_valid_points
+        diagnostic_weights.append(cycle_valid_points)
+        swap_errors.append(
+            float(sequence.swap_error)
+            if sequence.swap_error is not None
+            else float("nan")
         )
-        ref_rom, ref_peak = (
-            _circular_rom(ref_theta, ref_theta_valid),
-            float(np.max(np.abs(ref_omega[ref_omega_valid])))
-            if ref_omega_valid.any()
-            else 0.0,
+        corruption_recoveries.append(
+            float(sequence.corruption_recovery)
+            if sequence.corruption_recovery is not None
+            else float("nan")
         )
-        rom_retention, peak_retention = (
-            rom / ref_rom if ref_rom > 1e-8 else float("nan"),
-            peak / ref_peak if ref_peak > 1e-8 else float("nan"),
+
+        for bone_index, (left, right) in enumerate(skeleton.bones):
+            lengths = np.linalg.norm(points[:, left] - points[:, right], axis=-1)
+            usable = valid[:, left] & valid[:, right] & np.isfinite(lengths)
+            if usable.any():
+                bone_samples[bone_index].append(lengths[usable])
+
+        theta, omega, theta_valid, omega_valid = _trunk(
+            points, valid, timestamps, skeleton
         )
-    jerk, jerk_valid = _derivative(points, timestamps, 3, valid)
-    angular_jerk, angular_jerk_valid = _derivative(theta, timestamps, 3, theta_valid)
+        rom = _circular_rom(theta, theta_valid)
+        peak = float(np.max(np.abs(omega[omega_valid]))) if omega_valid.any() else 0.0
+        cycle_roms.append(rom)
+        cycle_peaks.append(peak)
+        jerk, jerk_valid = _derivative(points, timestamps, 3, valid)
+        if jerk_valid.any():
+            joint_jerk_samples.append(np.abs(jerk[jerk_valid]).reshape(-1))
+        angular_jerk, angular_jerk_valid = _derivative(
+            theta, timestamps, 3, theta_valid
+        )
+        if angular_jerk_valid.any():
+            trunk_jerk_samples.append(np.abs(angular_jerk[angular_jerk_valid]))
+
+        if sequence.reference_kpts is not None:
+            reference = np.asarray(sequence.reference_kpts, dtype=np.float32)
+            if reference.shape != points.shape:
+                raise ValueError(f"reference_kpts shape does not match {sequence.trial_id}")
+            ref_theta, ref_omega, ref_theta_valid, ref_omega_valid = _trunk(
+                reference,
+                np.isfinite(reference).all(axis=-1)
+                & np.any(reference != 0, axis=-1),
+                timestamps,
+                skeleton,
+            )
+            matched_roms.append(rom)
+            matched_peaks.append(peak)
+            reference_roms.append(_circular_rom(ref_theta, ref_theta_valid))
+            reference_peaks.append(
+                float(np.max(np.abs(ref_omega[ref_omega_valid])))
+                if ref_omega_valid.any()
+                else 0.0
+            )
+
+    cvs: list[float] = []
+    rigidity: list[float] = []
+    for samples in bone_samples:
+        if not samples:
+            continue
+        values = np.concatenate(samples)
+        baseline = max(abs(float(np.median(values))), 1e-8)
+        cvs.append(float(np.std(values) / baseline))
+        rigidity.append(float(np.mean(np.abs(values - baseline) / baseline)))
+
+    def pooled_mean(samples: list[np.ndarray]) -> float:
+        return float(np.mean(np.concatenate(samples))) if samples else float("nan")
+
+    def weighted_diagnostic(values: list[float]) -> float:
+        array = np.asarray(values, dtype=np.float64)
+        weights = np.asarray(diagnostic_weights, dtype=np.float64)
+        usable = np.isfinite(array) & (weights > 0)
+        return (
+            float(np.average(array[usable], weights=weights[usable]))
+            if usable.any()
+            else float("nan")
+        )
+
+    rom = max(cycle_roms, default=0.0)
+    peak = max(cycle_peaks, default=0.0)
+    matched_rom = max(matched_roms, default=0.0)
+    matched_peak = max(matched_peaks, default=0.0)
+    reference_rom = max(reference_roms, default=0.0)
+    reference_peak = max(reference_peaks, default=0.0)
     return {
-        "valid_frames": float(valid.any(axis=1).sum()),
-        "valid_points": float(valid.sum()),
+        "valid_frames": valid_frames,
+        "valid_points": valid_points,
         "bone_cv": float(np.mean(cvs)) if cvs else float("nan"),
         "rigidity": float(np.mean(rigidity)) if rigidity else float("nan"),
-        "joint_jerk": float(np.mean(np.abs(jerk[jerk_valid])))
-        if jerk_valid.any()
-        else float("nan"),
-        "trunk_angular_jerk": float(np.mean(np.abs(angular_jerk[angular_jerk_valid])))
-        if angular_jerk_valid.any()
-        else float("nan"),
-        "rom_retention": rom_retention,
-        "peak_angular_velocity_retention": peak_retention,
-        "swap_error": float(sequence.swap_error)
-        if sequence.swap_error is not None
-        else float("nan"),
-        "fixed_corruption_recovery": float(sequence.corruption_recovery)
-        if sequence.corruption_recovery is not None
-        else float("nan"),
+        "joint_jerk": pooled_mean(joint_jerk_samples),
+        "trunk_angular_jerk": pooled_mean(trunk_jerk_samples),
+        "rom_retention": (
+            matched_rom / reference_rom if reference_rom > 1e-8 else float("nan")
+        ),
+        "peak_angular_velocity_retention": (
+            matched_peak / reference_peak
+            if reference_peak > 1e-8
+            else float("nan")
+        ),
+        "swap_error": weighted_diagnostic(swap_errors),
+        "fixed_corruption_recovery": weighted_diagnostic(corruption_recoveries),
         "theta_rom": rom,
         "peak_omega": peak,
     }
@@ -281,24 +361,13 @@ def evaluate_person_trials(
     rows: list[dict[str, Any]] = []
     joint_rows: list[dict[str, Any]] = []
     for method, cycles in grouped.items():
-        metrics = [_self_metrics(cycle, skeleton) for cycle in cycles]
+        metrics = _pooled_self_metrics(cycles, skeleton)
         row: dict[str, Any] = {
             "person_id": str(person_id),
             "method": method,
             "cycles": len(cycles),
+            **metrics,
         }
-        weights = np.asarray(
-            [item["valid_points"] for item in metrics], dtype=np.float64
-        )
-        for key in metrics[0]:
-            values = np.asarray([item[key] for item in metrics], dtype=np.float64)
-            usable = np.isfinite(values) & (weights > 0)
-            if key in {"valid_frames", "valid_points"}:
-                row[key] = float(values.sum())
-            elif usable.any():
-                row[key] = float(np.average(values[usable], weights=weights[usable]))
-            else:
-                row[key] = float("nan")
         for diagnostic in ("swap_error", "fixed_corruption_recovery"):
             statuses = {
                 cycle.diagnostic_status.get(
@@ -337,7 +406,7 @@ def evaluate_person_trials(
                         f"external reference length/shape mismatch for {cycle.trial_id}"
                     )
                 errors, mask = _external_errors(
-                    cycle.kpts_world, reference, _valid(cycle)
+                    cycle.kpts_world, reference, skeleton, _valid(cycle)
                 )
                 external_errors.append(errors)
                 external_masks.append(mask)

@@ -165,6 +165,115 @@ def resolve_cache_manifest(person_cache: str | Path) -> tuple[Path, dict[str, An
     return generation_dir, manifest
 
 
+def cache_manifest_identity(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the exact serializable identity of one resolved cache manifest."""
+    normalized = _validate_metadata(manifest, "cache manifest")
+    person_id = normalized.get("person_id")
+    trials = normalized.get("trials")
+    if not isinstance(person_id, str) or not person_id:
+        raise ValueError("cache manifest requires a non-empty person_id")
+    if (
+        not isinstance(trials, list)
+        or not trials
+        or not all(isinstance(trial, str) and trial for trial in trials)
+    ):
+        raise ValueError("cache manifest requires a non-empty trials list")
+    generation = normalized.get("generation")
+    if generation is not None and (
+        not isinstance(generation, str) or not generation
+    ):
+        raise ValueError("cache manifest generation must be a non-empty string")
+    hashes: dict[str, str | None] = {}
+    for name in ("source", "config"):
+        hash_name = f"{name}_hash"
+        value = normalized.get(hash_name)
+        if value is not None and (not isinstance(value, str) or not value):
+            raise ValueError(f"cache manifest {hash_name} must be a non-empty string")
+        metadata = normalized.get(name)
+        if isinstance(metadata, Mapping) and value is not None:
+            expected = _metadata_hash(metadata)
+            if value != expected:
+                raise ValueError(f"cache manifest {hash_name} does not match {name}")
+        hashes[hash_name] = value
+    return {
+        "layout": "immutable_generation" if generation is not None else "legacy_direct",
+        "person_id": person_id,
+        "trials": list(trials),
+        "generation": generation,
+        **hashes,
+        "manifest_hash": _metadata_hash(normalized),
+    }
+
+
+def validate_cache_manifest_identities(
+    value: object, *, field_name: str = "cache_manifests"
+) -> dict[str, dict[str, Any]]:
+    """Validate checkpoint/run cache identities without access to cache files."""
+    if not isinstance(value, Mapping) or not value:
+        raise ValueError(f"{field_name} must be a non-empty mapping")
+    identities: dict[str, dict[str, Any]] = {}
+    for person, raw_identity in value.items():
+        if not isinstance(person, str) or not isinstance(raw_identity, Mapping):
+            raise ValueError(f"{field_name} must map person ids to identities")
+        identity = _plain_metadata(raw_identity)
+        assert isinstance(identity, dict)
+        if identity.get("person_id") != person:
+            raise ValueError(f"{field_name} person key does not match identity: {person}")
+        layout = identity.get("layout")
+        generation = identity.get("generation")
+        if layout not in {"immutable_generation", "legacy_direct"}:
+            raise ValueError(f"{field_name} has invalid layout for person {person}")
+        if layout == "immutable_generation" and not isinstance(generation, str):
+            raise ValueError(f"{field_name} has invalid generation for person {person}")
+        if layout == "legacy_direct" and generation is not None:
+            raise ValueError(
+                f"{field_name} legacy identity has a generation for person {person}"
+            )
+        trials = identity.get("trials")
+        if (
+            not isinstance(trials, list)
+            or not trials
+            or not all(isinstance(trial, str) and trial for trial in trials)
+        ):
+            raise ValueError(f"{field_name} has invalid trials for person {person}")
+        for hash_name in ("source_hash", "config_hash"):
+            if identity.get(hash_name) is not None and not isinstance(
+                identity[hash_name], str
+            ):
+                raise ValueError(
+                    f"{field_name} has invalid {hash_name} for person {person}"
+                )
+        manifest_hash = identity.get("manifest_hash")
+        if not isinstance(manifest_hash, str) or not manifest_hash:
+            raise ValueError(
+                f"{field_name} has invalid manifest_hash for person {person}"
+            )
+        identities[person] = identity
+    return identities
+
+
+def verify_cache_manifest_identities(
+    expected: Mapping[str, Mapping[str, Any]],
+    consumed: Mapping[str, Mapping[str, Any]],
+) -> None:
+    """Reject inference from people or cache publications absent from a checkpoint."""
+    expected_identities = validate_cache_manifest_identities(
+        expected, field_name="checkpoint cache_manifests"
+    )
+    consumed_identities = validate_cache_manifest_identities(
+        consumed, field_name="inference cache_manifests"
+    )
+    unknown = sorted(set(consumed_identities) - set(expected_identities))
+    if unknown:
+        raise ValueError(
+            "inference cache selection targets people outside checkpoint provenance; "
+            f"different splits are not supported: {unknown}"
+        )
+    for person, identity in consumed_identities.items():
+        if identity != expected_identities[person]:
+            raise ValueError(f"cache manifest identity mismatch for person {person}")
+
+
 def _acquire_publication_lock(person_cache: Path) -> int:
     """Acquire the permanent Linux flock guard for one cache publication."""
     lock_path = person_cache / CACHE_PUBLICATION_LOCK

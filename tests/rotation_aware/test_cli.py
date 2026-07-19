@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import torch
 
 from fuse.metadata.mhr70 import mhr_names
 from fuse.rotation_aware import cli
@@ -162,6 +163,77 @@ def test_train_infer_evaluate_smoke_uses_canonical_cached_trials(
         out / "inference" / "tiny" / "person_1" / "cycle_000" / "fused_sequence.npz"
     ).exists()
     assert (out / "evaluation" / "tiny" / "metrics_by_person.csv").exists()
+    checkpoint = torch.load(
+        out / "runs" / "tiny" / "checkpoints" / "best.pt",
+        map_location="cpu",
+        weights_only=False,
+    )
+    cache_identity = checkpoint["provenance"]["cache_manifests"]["1"]
+    run_metadata = json.loads((out / "runs" / "tiny" / "run_metadata.json").read_text())
+    inference_metadata = json.loads(
+        (
+            out
+            / "inference"
+            / "tiny"
+            / "person_1"
+            / "cycle_000"
+            / "metadata.json"
+        ).read_text()
+    )
+    assert run_metadata["provenance"]["cache_manifests"]["1"] == cache_identity
+    assert inference_metadata["consumed_cache_manifest"] == cache_identity
+
+
+def test_infer_rejects_cache_generation_republished_after_training(
+    tmp_path: Path,
+) -> None:
+    sam3d = tmp_path / "sam3d" / "sam3d_body_results"
+    _write_sam3d(sam3d, "face")
+    _write_sam3d(sam3d, "side")
+    split = tmp_path / "split"
+    record = split / "person_1" / "alignment_record_1.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(
+        json.dumps(
+            {
+                "metadata": {"offset_side_to_face": 0, "fps": 60.0},
+                "cycles": [
+                    {
+                        "cycle_index": 0,
+                        "face_video_frames": {"start": 0, "end": 4},
+                        "side_video_frames": {"start": 0, "end": 4},
+                    }
+                ],
+            }
+        )
+    )
+    fold = tmp_path / "fold.json"
+    fold.write_text(json.dumps({"train": [{"person_id": "1"}], "val": [], "test": []}))
+    out = tmp_path / "out"
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n  output_root: {out}\n  skeleton: configs/fuse/skeleton_mhr70.yaml\n  fold_json: {fold}\ntraining:\n  epochs: 1\n  batch_size: 1\n  hidden_channels: 8\n  seed: 3"
+    )
+
+    assert main(["prepare", "--config", str(config), "--person", "1"]) == 0
+    assert main(["train", "--config", str(config), "--run-id", "stale"]) == 0
+    checkpoint = torch.load(
+        out / "runs" / "stale" / "checkpoints" / "best.pt",
+        map_location="cpu",
+        weights_only=False,
+    )
+    trained_generation = checkpoint["provenance"]["cache_manifests"]["1"][
+        "generation"
+    ]
+
+    assert main(["prepare", "--config", str(config), "--person", "1"]) == 0
+    current_manifest = json.loads(
+        (out / "cache" / "person_1" / "manifest.json").read_text()
+    )
+    assert current_manifest["generation"] != trained_generation
+
+    with pytest.raises(ValueError, match="cache manifest identity mismatch.*person 1"):
+        main(["infer", "--config", str(config), "--run-id", "stale", "--person", "1"])
 
 
 def test_fold_resolver_uses_active_default_and_accepts_index_or_json_path(
@@ -260,7 +332,9 @@ def test_train_person_subset_without_train_trials_fails_clearly(
         }
     }
     monkeypatch.setattr(
-        cli, "_cached_trials", lambda *_: [SimpleNamespace(person_id="2")]
+        cli,
+        "_cached_trials_with_provenance",
+        lambda *_: ([SimpleNamespace(person_id="2")], {}),
     )
 
     with pytest.raises(ValueError, match="no selected canonical trials"):

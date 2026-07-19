@@ -15,6 +15,7 @@ from fuse.rotation_aware.evaluation import (
     external_metrics_from_reference,
     load_triangulated_references,
 )
+from tests.rotation_aware.test_geometry import synthetic_mhr70_pose
 
 
 SPEC = load_skeleton_spec(Path("configs/fuse/skeleton_mhr70.yaml"))
@@ -28,6 +29,27 @@ def _sequence(offset: float = 0.0) -> MethodSequence:
         method="rotation_aware_self_supervised",
         kpts_world=values,
         timestamps=np.arange(8) / 60.0,
+    )
+
+
+def _rotation_sequence(
+    angles: list[float], trial_id: str, *, reference_angles: list[float] | None = None
+) -> MethodSequence:
+    def points(values: list[float]) -> np.ndarray:
+        frames = [
+            synthetic_mhr70_pose(theta_deg=angle, frames=1)[0][0, 0].numpy()
+            for angle in values
+        ]
+        return np.stack(frames)
+
+    candidate = points(angles)
+    reference = points(reference_angles) if reference_angles is not None else None
+    return MethodSequence(
+        method="rotation_aware_self_supervised",
+        kpts_world=candidate,
+        timestamps=np.arange(len(angles), dtype=np.float64) / 60.0,
+        trial_id=trial_id,
+        reference_kpts=reference,
     )
 
 
@@ -87,7 +109,7 @@ def test_external_reference_matching_requires_matching_shape_but_allows_missing_
 def test_external_gt_metrics_are_optional_and_root_normalized() -> None:
     candidate = _sequence().kpts_world
     reference = candidate + np.array([10.0, 0.0, 0.0], dtype=np.float32)
-    metrics, joints = external_metrics_from_reference(candidate, reference)
+    metrics, joints = external_metrics_from_reference(candidate, reference, SPEC)
 
     assert metrics["mpjpe"] < 1e-5
     assert len(joints) == len(mhr_names)
@@ -102,7 +124,9 @@ def test_external_metrics_exclude_frames_with_zero_reference_or_invalid_candidat
     candidate_valid = np.ones(candidate.shape[:2], dtype=bool)
     candidate_valid[1, 9] = False
 
-    metrics, _ = external_metrics_from_reference(candidate, reference, candidate_valid)
+    metrics, _ = external_metrics_from_reference(
+        candidate, reference, SPEC, candidate_valid
+    )
 
     assert metrics["matched_frames"] == len(candidate) - 2
 
@@ -187,6 +211,52 @@ def test_person_metrics_are_weighted_by_valid_points_and_masked_static_joints_ha
 
     assert report.person_metrics[0]["joint_jerk"] == 0.0
     assert report.person_metrics[0]["valid_points"] == 5 * (8 + 40)
+
+
+def test_person_nonlinear_metrics_are_computed_after_pooling_cycles() -> None:
+    short = _rotation_sequence(
+        [0.0, 10.0], "cycle_000", reference_angles=[0.0, 20.0]
+    )
+    long = _rotation_sequence(
+        [0.0, 60.0, 0.0, 60.0],
+        "cycle_001",
+        reference_angles=[0.0, 30.0, 0.0, 30.0],
+    )
+    short.kpts_world[:, [9, 10], 0] *= 0.5
+    long.kpts_world[:, [9, 10], 0] *= 2.0
+
+    row = evaluate_person_trials("1", [short, long], SPEC).person_metrics[0]
+
+    assert row["bone_cv"] > 0.1
+    np.testing.assert_allclose(row["theta_rom"], np.deg2rad(60.0), atol=1e-5)
+    np.testing.assert_allclose(row["rom_retention"], 2.0, atol=1e-5)
+
+
+def test_external_root_normalization_resolves_hip_roles_from_skeleton() -> None:
+    names = list(SPEC.joint_names)
+    names[0], names[9] = names[9], names[0]
+    names[1], names[10] = names[10], names[1]
+    reordered = SPEC.__class__(
+        SPEC.name,
+        tuple(names),
+        SPEC.bones,
+        SPEC.roles,
+        SPEC.required_roles,
+        SPEC.joint_groups,
+    )
+    candidate = np.ones((3, len(names), 3), dtype=np.float32)
+    candidate[:, reordered.joint_index("left-hip")] = [-1.0, 0.0, 0.0]
+    candidate[:, reordered.joint_index("right-hip")] = [1.0, 0.0, 0.0]
+    reference = candidate + np.array([10.0, 0.0, 0.0], dtype=np.float32)
+    candidate_valid = np.ones(candidate.shape[:2], dtype=bool)
+    candidate_valid[:, [9, 10]] = False
+
+    metrics, _ = external_metrics_from_reference(
+        candidate, reference, reordered, candidate_valid
+    )
+
+    assert metrics["matched_frames"] == 3
+    assert metrics["mpjpe"] < 1e-5
 
 
 def test_circular_rom_and_unavailable_diagnostics_are_not_fabricated() -> None:

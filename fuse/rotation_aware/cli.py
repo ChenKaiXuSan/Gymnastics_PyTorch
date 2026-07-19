@@ -24,12 +24,16 @@ from .corruptions import CorruptionConfig, write_corruption_manifest
 from .data import (
     CACHE_MANIFEST_FILENAME,
     CACHE_PUBLICATION_LOCK,
+    cache_manifest_identity,
     load_cached_trial,
     load_person_trials,
     resolve_cache_manifest,
+    validate_cache_manifest_identities,
+    verify_cache_manifest_identities,
     write_person_cache,
 )
 from .dataset import (
+    PosePairCompleteCycleDataset,
     PosePairWindowDataset,
     WindowConfig,
     build_split_manifest,
@@ -181,6 +185,9 @@ def _skeleton_metadata(skeleton) -> dict[str, object]:
             for name, role in skeleton.roles.items()
         },
         "required_roles": list(skeleton.required_roles),
+        "joint_groups": {
+            name: list(joints) for name, joints in skeleton.joint_groups.items()
+        },
     }
 
 
@@ -189,14 +196,26 @@ def _validate_checkpoint_skeleton(payload: Mapping[str, object], skeleton) -> No
         raise ValueError("checkpoint skeleton does not match the current SkeletonSpec")
 
 
-def _cached_trials(cache: Path, people: Iterable[str], skeleton) -> list:
+def _cached_trials_with_provenance(
+    cache: Path, people: Iterable[str], skeleton
+) -> tuple[list, dict[str, dict[str, Any]]]:
     trials = []
-    for person, paths in _cache_trial_paths(cache, people).items():
+    paths_by_person, identities = _resolve_cache_selection(cache, people)
+    for person, paths in paths_by_person.items():
         for path in paths:
-            trial, _ = load_cached_trial(path)
+            trial, manifest = load_cached_trial(path)
+            if cache_manifest_identity(manifest) != identities[person]:
+                raise ValueError(
+                    f"loaded cache manifest identity changed for person {person}"
+                )
             trials.append(canonicalize_trial(trial, skeleton).trial)
     if not trials:
         raise FileNotFoundError(f"No cached trials found under {cache}")
+    return trials, identities
+
+
+def _cached_trials(cache: Path, people: Iterable[str], skeleton) -> list:
+    trials, _ = _cached_trials_with_provenance(cache, people, skeleton)
     return trials
 
 
@@ -219,9 +238,12 @@ def _release_shared_publication_guard(descriptor: int) -> None:
         os.close(descriptor)
 
 
-def _cache_trial_paths(cache: Path, people: Iterable[str]) -> dict[str, list[Path]]:
+def _resolve_cache_selection(
+    cache: Path, people: Iterable[str]
+) -> tuple[dict[str, list[Path]], dict[str, dict[str, Any]]]:
     """Resolve immutable generation paths, waiting only for a first publication."""
     cached: dict[str, list[Path]] = {}
+    identities: dict[str, dict[str, Any]] = {}
     missing: list[str] = []
     for person in sorted({str(value) for value in people}):
         person_dir = cache / f"person_{person}"
@@ -247,6 +269,7 @@ def _cache_trial_paths(cache: Path, people: Iterable[str]) -> dict[str, list[Pat
                     missing.append(f"person_{person}")
                     break
                 cached[person] = paths
+                identities[person] = cache_manifest_identity(manifest)
                 break
             if not person_dir.is_dir():
                 missing.append(f"person_{person}")
@@ -272,7 +295,12 @@ def _cache_trial_paths(cache: Path, people: Iterable[str]) -> dict[str, list[Pat
         raise FileNotFoundError(
             f"missing complete cache for selected people: {', '.join(missing)}"
         )
-    return cached
+    return cached, identities
+
+
+def _cache_trial_paths(cache: Path, people: Iterable[str]) -> dict[str, list[Path]]:
+    paths, _ = _resolve_cache_selection(cache, people)
+    return paths
 
 
 def _manifest_people(manifest, subset: Iterable[str] | None) -> tuple[str, ...]:
@@ -354,7 +382,9 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     fold = resolve_fold(config, args.fold)
     manifest = build_split_manifest(fold)
     selected = _manifest_people(manifest, args.person)
-    trials = _cached_trials(paths["cache"], selected, skeleton)
+    trials, cache_manifests = _cached_trials_with_provenance(
+        paths["cache"], selected, skeleton
+    )
     actual_people = tuple(sorted({trial.person_id for trial in trials}))
     if actual_people != selected:
         raise ValueError(
@@ -379,6 +409,17 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
         if val_trials
         else None
     )
+    train_cycles = PosePairCompleteCycleDataset(
+        train_trials, skeleton=skeleton, manifest=manifest, split="train"
+    )
+    validation_cycle_trials = val_trials or train_trials
+    validation_cycle_split = "val" if val_trials else "train"
+    val_cycles = PosePairCompleteCycleDataset(
+        validation_cycle_trials,
+        skeleton=skeleton,
+        manifest=manifest,
+        split=validation_cycle_split,
+    )
     batch_size = int(training.get("batch_size", 4))
     generator = torch.Generator().manual_seed(int(training.get("seed", 0)))
     loader = DataLoader(
@@ -397,6 +438,19 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
         )
         if val_set
         else loader
+    )
+    complete_cycle_loader = DataLoader(
+        train_cycles,
+        batch_size=1,
+        shuffle=True,
+        generator=generator,
+        collate_fn=collate_pose_pair_windows,
+    )
+    val_complete_cycle_loader = DataLoader(
+        val_cycles,
+        batch_size=1,
+        shuffle=False,
+        collate_fn=collate_pose_pair_windows,
     )
     model = RotationAwareFusionModel(
         skeleton, hidden_channels=int(training.get("hidden_channels", 128))
@@ -434,6 +488,7 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
         or "unknown",
         "selected_people": list(selected),
         "prepared_people": list(actual_people),
+        "cache_manifests": cache_manifests,
     }
     history = []
     best = float("-inf")
@@ -447,6 +502,7 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
                 skeleton,
                 loss_config=loss_config,
                 corruption_config=corruption,
+                complete_cycle_loader=complete_cycle_loader,
                 seed=int(training.get("seed", 0)),
                 epoch=epoch,
             ),
@@ -457,6 +513,7 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
             skeleton,
             loss_config=loss_config,
             corruption_config=corruption,
+            complete_cycle_loader=val_complete_cycle_loader,
             seed=int(training.get("seed", 0)),
         )["score"]
         row["val_score"] = score
@@ -556,7 +613,15 @@ def _cmd_infer(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
         ):
             raise ValueError("prepare split manifest has no valid prepared_people list")
         people = sorted(set(prepared))
-    cache_paths = _cache_trial_paths(paths["cache"], people)
+    cache_paths, consumed_cache_manifests = _resolve_cache_selection(
+        paths["cache"], people
+    )
+    checkpoint_cache_manifests = validate_cache_manifest_identities(
+        provenance.get("cache_manifests"), field_name="checkpoint cache_manifests"
+    )
+    verify_cache_manifest_identities(
+        checkpoint_cache_manifests, consumed_cache_manifests
+    )
     inference_provenance = {
         **dict(provenance),
         "checkpoint_path": str(checkpoint),
@@ -567,10 +632,16 @@ def _cmd_infer(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
         },
         "training_config_hash": str(provenance.get("training_config_hash", "")),
         "inference_config_hash": _hash(config),
+        "inference_cache_manifests": consumed_cache_manifests,
     }
     for person in people:
         for raw_path in cache_paths[person]:
-            raw, _ = load_cached_trial(raw_path)
+            raw, cache_manifest = load_cached_trial(raw_path)
+            consumed_identity = cache_manifest_identity(cache_manifest)
+            if consumed_identity != consumed_cache_manifests[person]:
+                raise ValueError(
+                    f"loaded cache manifest identity changed for person {person}"
+                )
             run_inference(
                 model,
                 raw,
@@ -579,7 +650,10 @@ def _cmd_infer(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
                 run_id=args.run_id,
                 window_length=window.length,
                 stride=window.eval_stride,
-                provenance=inference_provenance,
+                provenance={
+                    **inference_provenance,
+                    "consumed_cache_manifest": consumed_identity,
+                },
                 corruption_config=corruption_config,
                 resolved_config=config,
                 corruption_manifest=corruption_manifest,

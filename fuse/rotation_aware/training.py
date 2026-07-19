@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -11,8 +11,13 @@ from torch import Tensor, nn
 
 from .config import SkeletonSpec
 from .corruptions import CorruptionConfig, apply_corruptions, stable_window_seed
+from .data import validate_cache_manifest_identities
 from .features import FeatureBundle, compute_disagreement_features, compute_quality_features, extract_pose_features
-from .losses import LossConfig, compute_self_supervised_losses
+from .losses import (
+    LossConfig,
+    compute_complete_cycle_rom_loss,
+    compute_self_supervised_losses,
+)
 from .model import FusionOutput, RotationAwareFusionModel
 from .trunk import extract_trunk_features
 
@@ -166,6 +171,7 @@ def train_one_epoch(
     *,
     loss_config: LossConfig | None = None,
     corruption_config: CorruptionConfig | None = None,
+    complete_cycle_loader: Iterable[Mapping[str, object]] | None = None,
     seed: int = 0,
     epoch: int = 0,
     device: str | torch.device = "cpu",
@@ -175,6 +181,11 @@ def train_one_epoch(
     target_device = torch.device(device)
     model.to(target_device)
     config = loss_config or LossConfig()
+    window_config = (
+        replace(config, complete_cycle_rom_weight=0.0)
+        if complete_cycle_loader is not None
+        else config
+    )
     torch.manual_seed(int(seed) + int(epoch))
     history: list[dict[str, float]] = []
     for batch_index, batch in enumerate(loader):
@@ -183,13 +194,42 @@ def train_one_epoch(
             model, batch, skeleton, seed=int(seed), corruption_config=corruption_config,
             device=target_device, epoch=epoch,
         )
-        losses = compute_self_supervised_losses(output, prepared, config, skeleton)
+        losses = compute_self_supervised_losses(
+            output, prepared, window_config, skeleton
+        )
         if not torch.isfinite(losses.total):
             raise FloatingPointError("self-supervised loss is non-finite")
         losses.total.backward()
         optimizer.step()
         history.append({name: float(value.detach().cpu()) for name, value in losses.as_dict().items()})
     means = _mean_metrics(history)
+    if complete_cycle_loader is not None and config.complete_cycle_rom_weight > 0:
+        rom_values: list[float] = []
+        for batch in complete_cycle_loader:
+            optimizer.zero_grad(set_to_none=True)
+            output, prepared = _forward_window(
+                model,
+                batch,
+                skeleton,
+                seed=int(seed),
+                corruption_config=corruption_config,
+                device=target_device,
+                epoch=epoch,
+            )
+            rom = compute_complete_cycle_rom_loss(output, prepared, config, skeleton)
+            if not torch.isfinite(rom):
+                raise FloatingPointError("complete-cycle ROM loss is non-finite")
+            weighted_rom = config.complete_cycle_rom_weight * rom
+            if weighted_rom.requires_grad:
+                weighted_rom.backward()
+                optimizer.step()
+            rom_values.append(float(rom.detach().cpu()))
+        if not rom_values:
+            raise ValueError("complete-cycle ROM loader produced no batches")
+        means["complete_cycle_rom"] = sum(rom_values) / len(rom_values)
+        means["total"] += (
+            config.complete_cycle_rom_weight * means["complete_cycle_rom"]
+        )
     return {"loss": means["total"], **means}
 
 
@@ -200,6 +240,7 @@ def validate(
     *,
     loss_config: LossConfig | None = None,
     corruption_config: CorruptionConfig | None = None,
+    complete_cycle_loader: Iterable[Mapping[str, object]] | None = None,
     seed: int = 0,
     device: str | torch.device = "cpu",
 ) -> dict[str, Any]:
@@ -209,6 +250,11 @@ def validate(
     target_device = torch.device(device)
     model.to(target_device)
     config = loss_config or LossConfig()
+    window_config = (
+        replace(config, complete_cycle_rom_weight=0.0)
+        if complete_cycle_loader is not None
+        else config
+    )
     samples: list[tuple[str, dict[str, float], FusionOutput, dict[str, object]]] = []
     with torch.no_grad():
         for batch in loader:
@@ -218,15 +264,39 @@ def validate(
                     model, _single_sample(batch, sample_index), skeleton, seed=int(seed),
                     corruption_config=corruption_config, device=target_device,
                 )
-                losses = compute_self_supervised_losses(output, prepared, config, skeleton)
+                losses = compute_self_supervised_losses(
+                    output, prepared, window_config, skeleton
+                )
                 window_ids = prepared.get("window_id")
                 if not isinstance(window_ids, list) or len(window_ids) != 1 or not isinstance(window_ids[0], str):
                     raise ValueError("validation samples require one stable string window_id")
                 samples.append((window_ids[0], {name: float(value.cpu()) for name, value in losses.as_dict().items()}, output, prepared))
-    if was_training:
-        model.train()
     samples.sort(key=lambda value: value[0])
     means = _mean_metrics([metrics for _, metrics, _, _ in samples])
+    if complete_cycle_loader is not None:
+        rom_values: list[float] = []
+        with torch.no_grad():
+            for batch in complete_cycle_loader:
+                output, prepared = _forward_window(
+                    model,
+                    batch,
+                    skeleton,
+                    seed=int(seed),
+                    corruption_config=corruption_config,
+                    device=target_device,
+                )
+                rom = compute_complete_cycle_rom_loss(
+                    output, prepared, config, skeleton
+                )
+                rom_values.append(float(rom.cpu()))
+        if not rom_values:
+            raise ValueError("complete-cycle ROM loader produced no batches")
+        means["complete_cycle_rom"] = sum(rom_values) / len(rom_values)
+        means["total"] += (
+            config.complete_cycle_rom_weight * means["complete_cycle_rom"]
+        )
+    if was_training:
+        model.train()
     bone_cv = _trial_level_bone_cv(samples, skeleton)
     components = {
         "corruption_recovery": 1.0 / (1.0 + means["corruption_recovery"]),
@@ -298,6 +368,9 @@ def _skeleton_metadata(skeleton: SkeletonSpec) -> dict[str, object]:
             for name, role in skeleton.roles.items()
         },
         "required_roles": list(skeleton.required_roles),
+        "joint_groups": {
+            name: list(joints) for name, joints in skeleton.joint_groups.items()
+        },
     }
 
 
@@ -320,6 +393,10 @@ def save_checkpoint(
         value = provenance.get(name)
         if not isinstance(value, str) or not value:
             raise ValueError(f"provenance requires non-empty {name}")
+    normalized_provenance = dict(provenance)
+    normalized_provenance["cache_manifests"] = validate_cache_manifest_identities(
+        provenance.get("cache_manifests")
+    )
     if not training_config:
         raise ValueError("training_config must be non-empty")
     payload: dict[str, object] = {
@@ -329,7 +406,7 @@ def save_checkpoint(
         "training_config": dict(training_config),
         "corruption_config": asdict(corruption_config),
         "skeleton": _skeleton_metadata(skeleton),
-        "provenance": dict(provenance),
+        "provenance": normalized_provenance,
         "score": float(score),
     }
     if scheduler is not None and hasattr(scheduler, "state_dict"):
@@ -358,6 +435,11 @@ def load_checkpoint(
         value = provenance.get(name)
         if not isinstance(value, str) or not value:
             raise ValueError(f"provenance requires non-empty {name}")
+    normalized_provenance = dict(provenance)
+    normalized_provenance["cache_manifests"] = validate_cache_manifest_identities(
+        provenance.get("cache_manifests")
+    )
+    payload["provenance"] = normalized_provenance
     if not isinstance(payload.get("training_config"), Mapping) or not payload["training_config"]:
         raise ValueError("checkpoint requires non-empty training_config")
     if not isinstance(payload.get("corruption_config"), Mapping):

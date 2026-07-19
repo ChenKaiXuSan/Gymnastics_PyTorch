@@ -6,6 +6,7 @@ import pytest
 import torch
 
 from fuse.rotation_aware.config import RoleSpec, SkeletonSpec
+from fuse.rotation_aware import losses as losses_module
 from fuse.rotation_aware.features import extract_pose_features
 from fuse.rotation_aware.losses import LossConfig, _complete_cycle_mask, _rom_loss, compute_self_supervised_losses
 from fuse.rotation_aware.model import FusionOutput
@@ -157,6 +158,23 @@ def test_complete_cycle_rom_excludes_incomplete_windows() -> None:
     losses = compute_self_supervised_losses(shifted, batch, LossConfig(), spec)
 
     assert losses.complete_cycle_rom.item() == pytest.approx(0.0, abs=1e-7)
+
+
+def test_complete_cycle_rom_helper_excludes_padded_suffix() -> None:
+    batch, output, spec = _batch_and_output()
+    batch["padding_mask"][:, -1] = False
+    batch["loss_mask"][:, -1] = False
+    baseline = losses_module.compute_complete_cycle_rom_loss(
+        output, batch, LossConfig(), spec
+    )
+    shifted = replace(output, fused_kpts=output.fused_kpts.clone())
+    shifted.fused_kpts[:, -1] = 1e6
+
+    masked = losses_module.compute_complete_cycle_rom_loss(
+        shifted, batch, LossConfig(), spec
+    )
+
+    torch.testing.assert_close(masked, baseline, atol=0, rtol=0)
 
 
 def test_so3_exact_agreement_has_finite_backward_gradient() -> None:
