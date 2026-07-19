@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import numpy as np
@@ -6,6 +7,8 @@ from fuse.metadata.mhr70 import mhr_names
 from fuse.rotation_aware.config import load_skeleton_spec
 from fuse.rotation_aware.evaluation import (
     MethodSequence,
+    _circular_rom,
+    _derivative,
     discover_method_sequences,
     evaluate_person_trials,
     external_metrics_from_reference,
@@ -62,15 +65,17 @@ def test_retention_uses_matched_trial_reference_not_a_perfect_placeholder() -> N
     assert report.person_metrics[0]["rom_retention"] != 1.0
 
 
-def test_external_reference_matching_rejects_unmatched_or_wrong_length_trials() -> None:
+def test_external_reference_matching_requires_matching_shape_but_allows_missing_trials() -> (
+    None
+):
     sequence = _sequence()
     sequence = MethodSequence(
         sequence.method, sequence.kpts_world, sequence.timestamps, trial_id="cycle_000"
     )
-    with np.testing.assert_raises(ValueError):
-        evaluate_person_trials(
-            "1", [sequence], SPEC, references={"cycle_001": sequence.kpts_world}
-        )
+    report = evaluate_person_trials(
+        "1", [sequence], SPEC, references={"cycle_001": sequence.kpts_world}
+    )
+    assert np.isnan(report.person_metrics[0]["mpjpe"])
     with np.testing.assert_raises(ValueError):
         evaluate_person_trials(
             "1", [sequence], SPEC, references={"cycle_000": sequence.kpts_world[:-1]}
@@ -112,6 +117,7 @@ def test_discovery_reports_only_saved_new_baselines_as_available(
         joint_valid=np.ones(values.shape[:2], dtype=bool),
         face_map=np.arange(len(values)),
         side_map=np.arange(len(values)),
+        metadata=np.asarray(json.dumps({"ablation": "A4"})),
     )
 
     sequences, status = discover_method_sequences(
@@ -123,6 +129,139 @@ def test_discovery_reports_only_saved_new_baselines_as_available(
         "side_only",
         "canonical_arithmetic",
         "quality_mean",
-        "rotation_aware_self_supervised",
+        "A4",
     }
-    assert status["A0"] == "absent"
+    assert status["A0"] == "available"
+    assert status["A4"] == "available"
+
+
+def test_person_metrics_are_weighted_by_valid_points_and_masked_static_joints_have_no_jerk() -> (
+    None
+):
+    short = _sequence()
+    long = _sequence()
+    long = MethodSequence(
+        long.method,
+        np.repeat(long.kpts_world[:1], 40, axis=0),
+        np.arange(40) / 50.0,
+        joint_valid=np.ones((40, len(mhr_names)), dtype=bool),
+        trial_id="cycle_001",
+    )
+    short = MethodSequence(
+        short.method,
+        short.kpts_world,
+        short.timestamps,
+        joint_valid=np.ones(short.kpts_world.shape[:2], dtype=bool),
+        trial_id="cycle_000",
+    )
+    report = evaluate_person_trials("1", [short, long], SPEC)
+
+    assert report.person_metrics[0]["joint_jerk"] == 0.0
+    assert report.person_metrics[0]["valid_points"] == 5 * (8 + 40)
+
+
+def test_circular_rom_and_unavailable_diagnostics_are_not_fabricated() -> None:
+    sequence = _sequence()
+    sequence.kpts_world[:, 5, 2] = np.array(
+        [0.1, -0.1, 0.1, -0.1, 0.1, -0.1, 0.1, -0.1]
+    )
+    report = evaluate_person_trials("1", [sequence], SPEC)
+
+    row = report.person_metrics[0]
+    assert row["theta_rom"] < np.pi
+    assert np.isnan(row["swap_error"])
+    assert np.isnan(row["fixed_corruption_recovery"])
+
+
+def test_circular_rom_does_not_unwrap_across_missing_frame_gaps() -> None:
+    theta = np.array([0.0, 0.1, 0.0, 0.0, 3.0, -3.0])
+    valid = np.array([True, True, False, False, True, True])
+
+    assert _circular_rom(theta, valid) < 0.5
+
+
+def test_old_full_sequence_is_sliced_by_new_trial_frame_maps(tmp_path: Path) -> None:
+    inference = tmp_path / "inference" / "person_1"
+    values = _sequence().kpts_world
+    for trial_id, frame_ids in (("cycle_000", [0, 2]), ("cycle_001", [4, 6])):
+        root = inference / trial_id
+        root.mkdir(parents=True)
+        np.savez_compressed(
+            root / "fused_sequence.npz",
+            kpts_world=values[:2],
+            kpts_face_world=values[:2],
+            kpts_side_world=values[:2],
+            kpts_arithmetic_world=values[:2],
+            kpts_base_world=values[:2],
+            frame_valid=np.ones(2, dtype=bool),
+            joint_valid=np.ones(values[:2].shape[:2], dtype=bool),
+            face_map=np.array(frame_ids),
+            side_map=np.array(frame_ids),
+        )
+    old = tmp_path / "old" / "legacy_method" / "person_1"
+    old.mkdir(parents=True)
+    np.savez_compressed(
+        old / "fused_sequence.npz",
+        kpts_world=values,
+        face_map=np.arange(len(values)),
+        side_map=np.arange(len(values)),
+        fps=np.array(50.0),
+    )
+
+    sequences, _ = discover_method_sequences(
+        tmp_path / "inference", tmp_path / "old", "1"
+    )
+    legacy = [sequence for sequence in sequences if sequence.method == "legacy_method"]
+
+    assert [(sequence.trial_id, len(sequence.kpts_world)) for sequence in legacy] == [
+        ("cycle_000", 2),
+        ("cycle_001", 2),
+    ]
+    assert legacy[0].timestamps[1] - legacy[0].timestamps[0] == 2 / 50.0
+
+
+def test_external_percentiles_are_computed_from_all_valid_points_not_cycle_means() -> (
+    None
+):
+    short, long = _sequence(), _sequence()
+    short = MethodSequence(
+        short.method,
+        short.kpts_world[:2],
+        short.timestamps[:2],
+        trial_id="cycle_000",
+    )
+    long = MethodSequence(
+        long.method,
+        np.repeat(long.kpts_world[:1], 30, axis=0),
+        np.arange(30, dtype=np.float64) / 60.0,
+        trial_id="cycle_001",
+    )
+    short_reference, long_reference = short.kpts_world.copy(), long.kpts_world.copy()
+    for points, error in ((short_reference, 1.0), (long_reference, 10.0)):
+        points[:, [2, 5, 6], 0] += error
+
+    report = evaluate_person_trials(
+        "1",
+        [short, long],
+        SPEC,
+        references={"cycle_000": short_reference, "cycle_001": long_reference},
+    )
+
+    row = report.person_metrics[0]
+    assert row["median"] == 10.0
+    assert row["p95"] == 10.0
+
+
+def test_derivatives_return_validity_masks_so_missing_intervals_are_not_averaged() -> (
+    None
+):
+    values = np.array([[0.0], [1.0], [20.0], [3.0], [4.0]])
+    derivative, valid = _derivative(
+        values,
+        np.arange(len(values), dtype=np.float64),
+        1,
+        np.array([[True], [True], [False], [True], [True]]),
+    )
+
+    assert valid[:, 0].tolist() == [True, False, False, True]
+    assert np.mean(np.abs(derivative[valid])) == 1.0

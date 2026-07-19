@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -11,6 +12,16 @@ import torch
 
 from .config import SkeletonSpec
 from .trunk import extract_trunk_features
+
+ABLATION_REGISTRY = {
+    "A0": "face_only",
+    "A1": "side_only",
+    "A2": "canonical_arithmetic",
+    "A3": "quality_mean",
+    "A4": "learned_spatial",
+    "A5": "learned_rotation_temporal",
+    "A6": "rotation_aware_self_supervised",
+}
 
 
 @dataclass(frozen=True)
@@ -44,19 +55,48 @@ def _valid(sequence: MethodSequence) -> np.ndarray:
     return valid
 
 
-def _derivative(values: np.ndarray, timestamps: np.ndarray, order: int) -> np.ndarray:
+def _derivative(
+    values: np.ndarray,
+    timestamps: np.ndarray,
+    order: int,
+    valid: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
     result, times = (
         np.asarray(values, dtype=np.float64),
         np.asarray(timestamps, dtype=np.float64),
     )
+    mask = (
+        np.asarray(valid, dtype=bool)
+        if valid is not None
+        else np.ones(
+            result.shape[:-1] if result.ndim == 3 else result.shape, dtype=bool
+        )
+    )
     for _ in range(order):
         if len(result) < 2:
-            return np.zeros_like(result)
+            return np.zeros_like(result), np.zeros_like(mask, dtype=bool)
         result = np.diff(result, axis=0) / np.maximum(
             np.diff(times).reshape((-1,) + (1,) * (result.ndim - 1)), 1e-8
         )
+        mask = mask[1:] & mask[:-1]
+        result = np.where(mask[..., None] if result.ndim == 3 else mask, result, 0.0)
         times = 0.5 * (times[1:] + times[:-1])
-    return result
+    return result, mask
+
+
+def _circular_rom(theta: np.ndarray, valid: np.ndarray) -> float:
+    values, mask = np.asarray(theta, dtype=np.float64), np.asarray(valid, dtype=bool)
+    runs: list[np.ndarray] = []
+    start: int | None = None
+    for index, is_valid in enumerate(mask):
+        if is_valid and start is None:
+            start = index
+        elif not is_valid and start is not None:
+            runs.append(values[start:index])
+            start = None
+    if start is not None:
+        runs.append(values[start:])
+    return float(max((np.ptp(np.unwrap(run)) for run in runs), default=0.0))
 
 
 def _trunk(
@@ -64,7 +104,7 @@ def _trunk(
     valid: np.ndarray,
     timestamps: np.ndarray,
     skeleton: SkeletonSpec,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     median_dt = float(np.median(np.diff(timestamps)))
     dt = np.r_[1.0 / max(median_dt, 1e-8), np.diff(timestamps)].astype(np.float32)
     result = extract_trunk_features(
@@ -73,15 +113,19 @@ def _trunk(
         skeleton,
         torch.from_numpy(dt[None]),
     )
-    return result.angle.squeeze(0).numpy(), result.omega.squeeze(0).numpy()
+    return (
+        result.angle.squeeze(0).numpy(),
+        result.omega.squeeze(0).numpy(),
+        result.angle_valid.squeeze(0).numpy(),
+        result.omega_valid.squeeze(0).numpy(),
+    )
 
 
-def external_metrics_from_reference(
+def _external_errors(
     candidate: np.ndarray,
     reference: np.ndarray,
     candidate_valid: np.ndarray | None = None,
-) -> tuple[dict[str, float], list[dict[str, float]]]:
-    """Optional pseudo-GT metrics; this is intentionally isolated from training."""
+) -> tuple[np.ndarray, np.ndarray]:
     candidate, reference = (
         np.asarray(candidate, dtype=np.float64),
         np.asarray(reference, dtype=np.float64),
@@ -96,8 +140,19 @@ def external_metrics_from_reference(
         (candidate - root_a[:, None]) - (reference - root_b[:, None]), axis=-1
     )
     valid = np.isfinite(candidate).all(axis=-1) & np.isfinite(reference).all(axis=-1)
+    valid &= (valid[:, 9] & valid[:, 10])[:, None]
     if candidate_valid is not None:
         valid &= np.asarray(candidate_valid, dtype=bool)
+    return errors, valid
+
+
+def external_metrics_from_reference(
+    candidate: np.ndarray,
+    reference: np.ndarray,
+    candidate_valid: np.ndarray | None = None,
+) -> tuple[dict[str, float], list[dict[str, float]]]:
+    """Optional pseudo-GT metrics; this is intentionally isolated from training."""
+    errors, valid = _external_errors(candidate, reference, candidate_valid)
     values = errors[valid]
     summary = {
         name: (float(fn(values)) if len(values) else float("nan"))
@@ -107,9 +162,12 @@ def external_metrics_from_reference(
             ("p95", lambda item: np.percentile(item, 95)),
         )
     }
+    summary["matched_frames"] = float(valid.any(axis=1).sum())
+    summary["matched_points"] = float(valid.sum())
     joints = [
         {
             "joint": joint,
+            "valid_points": float(valid[:, joint].sum()),
             **{
                 name: (
                     float(fn(errors[:, joint][valid[:, joint]]))
@@ -123,7 +181,7 @@ def external_metrics_from_reference(
                 )
             },
         }
-        for joint in range(candidate.shape[1])
+        for joint in range(errors.shape[1])
     ]
     return summary, joints
 
@@ -144,40 +202,44 @@ def _self_metrics(sequence: MethodSequence, skeleton: SkeletonSpec) -> dict[str,
             baseline = max(abs(float(np.median(values))), 1e-8)
             cvs.append(float(np.std(values) / baseline))
             rigidity.append(float(np.mean(np.abs(values - baseline) / baseline)))
-    theta, omega = _trunk(points, valid, timestamps, skeleton)
+    theta, omega, theta_valid, omega_valid = _trunk(points, valid, timestamps, skeleton)
     rom, peak = (
-        float(np.ptp(theta)),
-        float(np.max(np.abs(omega))) if len(omega) else 0.0,
+        _circular_rom(theta, theta_valid),
+        float(np.max(np.abs(omega[omega_valid]))) if omega_valid.any() else 0.0,
     )
     rom_retention = peak_retention = float("nan")
     if sequence.reference_kpts is not None:
         reference = np.asarray(sequence.reference_kpts, dtype=np.float32)
         if reference.shape != points.shape:
             raise ValueError(f"reference_kpts shape does not match {sequence.trial_id}")
-        ref_theta, ref_omega = _trunk(
+        ref_theta, ref_omega, ref_theta_valid, ref_omega_valid = _trunk(
             reference,
             np.isfinite(reference).all(axis=-1) & np.any(reference != 0, axis=-1),
             timestamps,
             skeleton,
         )
         ref_rom, ref_peak = (
-            float(np.ptp(ref_theta)),
-            float(np.max(np.abs(ref_omega))) if len(ref_omega) else 0.0,
+            _circular_rom(ref_theta, ref_theta_valid),
+            float(np.max(np.abs(ref_omega[ref_omega_valid])))
+            if ref_omega_valid.any()
+            else 0.0,
         )
         rom_retention, peak_retention = (
             rom / ref_rom if ref_rom > 1e-8 else float("nan"),
             peak / ref_peak if ref_peak > 1e-8 else float("nan"),
         )
-    jerk, angular_jerk = (
-        _derivative(points, timestamps, 3),
-        _derivative(theta, timestamps, 3),
-    )
+    jerk, jerk_valid = _derivative(points, timestamps, 3, valid)
+    angular_jerk, angular_jerk_valid = _derivative(theta, timestamps, 3, theta_valid)
     return {
+        "valid_frames": float(valid.any(axis=1).sum()),
+        "valid_points": float(valid.sum()),
         "bone_cv": float(np.mean(cvs)) if cvs else float("nan"),
         "rigidity": float(np.mean(rigidity)) if rigidity else float("nan"),
-        "joint_jerk": float(np.mean(np.abs(jerk))) if jerk.size else float("nan"),
-        "trunk_angular_jerk": float(np.mean(np.abs(angular_jerk)))
-        if angular_jerk.size
+        "joint_jerk": float(np.mean(np.abs(jerk[jerk_valid])))
+        if jerk_valid.any()
+        else float("nan"),
+        "trunk_angular_jerk": float(np.mean(np.abs(angular_jerk[angular_jerk_valid])))
+        if angular_jerk_valid.any()
         else float("nan"),
         "rom_retention": rom_retention,
         "peak_angular_velocity_retention": peak_retention,
@@ -210,41 +272,80 @@ def evaluate_person_trials(
             "method": method,
             "cycles": len(cycles),
         }
+        weights = np.asarray(
+            [item["valid_points"] for item in metrics], dtype=np.float64
+        )
         for key in metrics[0]:
-            row[key] = (
-                float(np.nanmean([item[key] for item in metrics]))
-                if np.isfinite([item[key] for item in metrics]).any()
-                else float("nan")
-            )
+            values = np.asarray([item[key] for item in metrics], dtype=np.float64)
+            usable = np.isfinite(values) & (weights > 0)
+            if key in {"valid_frames", "valid_points"}:
+                row[key] = float(values.sum())
+            elif usable.any():
+                row[key] = float(np.average(values[usable], weights=weights[usable]))
+            else:
+                row[key] = float("nan")
         if references is not None:
-            external = []
+            external_errors: list[np.ndarray] = []
+            external_masks: list[np.ndarray] = []
+            missing_trials = 0
             for cycle in cycles:
                 if cycle.trial_id not in references:
-                    raise ValueError(f"missing external reference for {cycle.trial_id}")
+                    missing_trials += 1
+                    continue
                 reference = np.asarray(references[cycle.trial_id])
                 if reference.shape != cycle.kpts_world.shape:
                     raise ValueError(
                         f"external reference length/shape mismatch for {cycle.trial_id}"
                     )
-                external.append(
-                    external_metrics_from_reference(
-                        cycle.kpts_world, reference, _valid(cycle)
-                    )
+                errors, mask = _external_errors(
+                    cycle.kpts_world, reference, _valid(cycle)
                 )
-            for key in external[0][0]:
-                row[key] = float(np.nanmean([item[0][key] for item in external]))
-            for joint in range(cycles[0].kpts_world.shape[1]):
-                joint_rows.append(
+                external_errors.append(errors)
+                external_masks.append(mask)
+            row["external_matched_trials"] = len(external_errors)
+            row["external_missing_trials"] = missing_trials
+            if external_errors:
+                errors = np.concatenate(external_errors, axis=0)
+                mask = np.concatenate(external_masks, axis=0)
+                values = errors[mask]
+                for key, function in (
+                    ("mpjpe", np.mean),
+                    ("median", np.median),
+                    ("p95", lambda item: np.percentile(item, 95)),
+                ):
+                    row[key] = float(function(values)) if len(values) else float("nan")
+                row["external_matched_frames"] = float(mask.any(axis=1).sum())
+                row["external_valid_points"] = float(mask.sum())
+                for joint in range(cycles[0].kpts_world.shape[1]):
+                    joint_values = errors[:, joint][mask[:, joint]]
+                    joint_rows.append(
+                        {
+                            "person_id": str(person_id),
+                            "method": method,
+                            "joint": joint,
+                            "valid_points": float(len(joint_values)),
+                            **{
+                                key: (
+                                    float(function(joint_values))
+                                    if len(joint_values)
+                                    else float("nan")
+                                )
+                                for key, function in (
+                                    ("mpjpe", np.mean),
+                                    ("median", np.median),
+                                    ("p95", lambda item: np.percentile(item, 95)),
+                                )
+                            },
+                        }
+                    )
+            else:
+                row.update(
                     {
-                        "person_id": str(person_id),
-                        "method": method,
-                        "joint": joint,
-                        **{
-                            key: float(
-                                np.nanmean([item[1][joint][key] for item in external])
-                            )
-                            for key in ("mpjpe", "median", "p95")
-                        },
+                        "mpjpe": float("nan"),
+                        "median": float("nan"),
+                        "p95": float("nan"),
+                        "external_matched_frames": 0.0,
+                        "external_valid_points": 0.0,
                     }
                 )
         rows.append(row)
@@ -257,8 +358,16 @@ def load_triangulated_references(
     """Isolated adapter for active triangulation outputs, matched by face/side maps."""
     from analysis.compare_fused_triangulated import load_triangulated_sequence
 
-    by_trial = {sequence.trial_id: sequence for sequence in sequences}
-    references: dict[str, np.ndarray] = {}
+    by_trial: dict[str, MethodSequence] = {}
+    for sequence in sequences:
+        if sequence.method in {"A6", "rotation_aware_self_supervised"}:
+            by_trial[sequence.trial_id] = sequence
+        else:
+            by_trial.setdefault(sequence.trial_id, sequence)
+    references: dict[str, np.ndarray] = {
+        trial_id: np.full_like(sequence.kpts_world, np.nan)
+        for trial_id, sequence in by_trial.items()
+    }
     for root in sorted(
         (Path(triangulated_root) / f"person_{person_id}").glob("cycle_*")
     ):
@@ -279,10 +388,8 @@ def load_triangulated_references(
             (index[pair], tri) for tri, pair in enumerate(pairs) if pair in index
         ]
         if not matched:
-            raise ValueError(f"no triangulation frame pairs match {trial_id}")
-        if len(matched) != len(sequence.kpts_world):
-            raise ValueError(f"triangulation does not cover every frame of {trial_id}")
-        reference = np.empty_like(sequence.kpts_world)
+            continue
+        reference = np.full_like(sequence.kpts_world, np.nan)
         for fused, tri in matched:
             reference[fused] = joints[tri]
         references[trial_id] = reference
@@ -300,16 +407,49 @@ def discover_method_sequences(
         "canonical_arithmetic": "absent",
         "quality_mean": "absent",
         "rotation_aware_self_supervised": "absent",
-        **{f"A{index}": "absent" for index in range(7)},
+        **{name: "absent" for name in ABLATION_REGISTRY},
     }
     for path in sorted(
         (Path(inference_root) / f"person_{person_id}").glob("*/fused_sequence.npz")
     ):
         with np.load(path, allow_pickle=False) as data:
+            metadata = (
+                json.loads(str(data["metadata"].item()))
+                if "metadata" in data.files
+                else {}
+            )
+            if not isinstance(metadata, dict):
+                metadata = {}
+            learned_ablation = str(metadata.get("ablation", "A6"))
+            if learned_ablation not in {"A4", "A5", "A6"}:
+                learned_ablation = "A6"
             frames = np.array(data["frame_valid"])
             joints = np.array(data["joint_valid"]) if "joint_valid" in data else None
             maps = np.array(data["face_map"])
             side_maps = np.array(data["side_map"])
+            timestamps = (
+                np.array(data["timestamps"], dtype=np.float64)
+                if "timestamps" in data.files
+                else np.arange(len(data["kpts_world"]), dtype=np.float64)
+                / float(data["fps"].item() if "fps" in data.files else 60.0)
+            )
+            reference = (
+                np.array(data["reference_kpts_world"])
+                if "reference_kpts_world" in data.files
+                else (
+                    np.array(data["kpts_base_world"])
+                    if "kpts_base_world" in data.files
+                    else None
+                )
+            )
+            swap = (
+                float(data["swap_error"].item()) if "swap_error" in data.files else None
+            )
+            recovery = (
+                float(data["fixed_corruption_recovery"].item())
+                if "fixed_corruption_recovery" in data.files
+                else None
+            )
             for method, field in (
                 ("face_only", "kpts_face_world"),
                 ("side_only", "kpts_side_world"),
@@ -319,33 +459,106 @@ def discover_method_sequences(
             ):
                 if field not in data.files:
                     continue
+                reported_method = (
+                    learned_ablation
+                    if method == "rotation_aware_self_supervised"
+                    else method
+                )
                 found.append(
                     MethodSequence(
-                        method,
+                        reported_method,
                         np.array(data[field]),
-                        np.arange(len(data[field]), dtype=np.float64),
+                        timestamps,
                         frames,
                         joints,
                         path.parent.name,
                         maps,
                         side_maps,
+                        reference,
+                        swap,
+                        recovery,
                     )
                 )
-                status[method] = "available"
+                status[reported_method] = "available"
+                if (
+                    method == "rotation_aware_self_supervised"
+                    and learned_ablation == "A6"
+                ):
+                    status[method] = "available"
+                for ablation, mapped_method in ABLATION_REGISTRY.items():
+                    if mapped_method == method:
+                        if ablation in {"A0", "A1", "A2", "A3"}:
+                            found.append(
+                                MethodSequence(
+                                    ablation,
+                                    np.array(data[field]),
+                                    timestamps,
+                                    frames,
+                                    joints,
+                                    path.parent.name,
+                                    maps,
+                                    side_maps,
+                                    reference,
+                                    swap,
+                                    recovery,
+                                )
+                            )
+                            status[ablation] = "available"
     for method_root in sorted(
         Path(old_fuse_root).glob("*/person_" + str(person_id) + "/fused_sequence.npz")
     ):
         method = method_root.parents[1].name
         with np.load(method_root, allow_pickle=True) as data:
-            found.append(
-                MethodSequence(
-                    method,
-                    np.array(data["kpts_world"]),
-                    np.arange(len(data["kpts_world"]), dtype=np.float64),
-                    trial_id="full_sequence",
-                    face_map=np.array(data["face_map"]),
-                    side_map=np.array(data["side_map"]),
+            points = np.array(data["kpts_world"])
+            face_map, side_map = np.array(data["face_map"]), np.array(data["side_map"])
+            fps = float(data["fps"].item()) if "fps" in data.files else 60.0
+            timestamps = np.arange(len(points), dtype=np.float64) / fps
+            pair_index = {
+                (int(face), int(side)): index
+                for index, (face, side) in enumerate(zip(face_map, side_map))
+            }
+            templates = [
+                sequence
+                for sequence in found
+                if sequence.method
+                in {"A4", "A5", "A6", "rotation_aware_self_supervised"}
+                and sequence.face_map is not None
+                and sequence.side_map is not None
+            ]
+            sliced = 0
+            for template in templates:
+                if template.face_map is None or template.side_map is None:
+                    continue
+                template_face_map = np.asarray(template.face_map)
+                template_side_map = np.asarray(template.side_map)
+                indices = [
+                    pair_index.get((int(face), int(side)))
+                    for face, side in zip(template_face_map, template_side_map)
+                ]
+                if any(index is None for index in indices):
+                    continue
+                selection = np.asarray(indices, dtype=np.int64)
+                found.append(
+                    MethodSequence(
+                        method,
+                        points[selection],
+                        timestamps[selection],
+                        trial_id=template.trial_id,
+                        face_map=template_face_map,
+                        side_map=template_side_map,
+                    )
                 )
-            )
+                sliced += 1
+            if not sliced:
+                found.append(
+                    MethodSequence(
+                        method,
+                        points,
+                        timestamps,
+                        trial_id="full_sequence",
+                        face_map=face_map,
+                        side_map=side_map,
+                    )
+                )
         status[method] = "available"
     return found, status

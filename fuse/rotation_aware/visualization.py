@@ -8,6 +8,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
+from .config import SkeletonSpec
+
 
 @dataclass(frozen=True)
 class VisualizationOutputs:
@@ -17,7 +19,11 @@ class VisualizationOutputs:
 
 
 def visualize_saved_sequence(
-    sequence_path: str | Path, output_dir: str | Path, *, animation: bool = False
+    sequence_path: str | Path,
+    output_dir: str | Path,
+    *,
+    skeleton: SkeletonSpec | None = None,
+    animation: bool = False,
 ) -> VisualizationOutputs:
     """Write curves (and optionally a simple skeleton animation) without changing NPZ data."""
     with np.load(sequence_path, allow_pickle=False) as data:
@@ -69,6 +75,8 @@ def visualize_saved_sequence(
                     f"four-skeleton animation requires saved arrays: {missing}"
                 )
             sequences = [np.array(data[name], copy=True) for name in required]
+        if skeleton is None:
+            raise ValueError("four-skeleton animation requires a SkeletonSpec")
         figure, axes = plt.subplots(2, 2, figsize=(8, 8))
         lines = []
         low, high = (
@@ -78,17 +86,22 @@ def visualize_saved_sequence(
         if low == high:
             low, high = low - 1.0, high + 1.0
         for axis, name in zip(axes.flat, ("face", "side", "base", "fused")):
-            (line,) = axis.plot([], [], "o-")
-            lines.append(line)
+            lines.append([axis.plot([], [], "-")[0] for _ in skeleton.bones])
             axis.set_title(name)
             axis.set_aspect("equal")
             axis.set_xlim(low, high)
             axis.set_ylim(low, high)
 
         def draw(index: int):
-            for line, values in zip(lines, sequences):
-                line.set_data(values[index, :, 0], values[index, :, 1])
-            return tuple(lines)
+            drawn = []
+            for segments, values in zip(lines, sequences):
+                for line, (left, right) in zip(segments, skeleton.bones):
+                    pair = values[index, [left, right]]
+                    line.set_data(pair[:, 0], pair[:, 1]) if np.isfinite(
+                        pair
+                    ).all() and np.any(pair != 0) else line.set_data([], [])
+                    drawn.append(line)
+            return tuple(drawn)
 
         animation_path = target / "four_skeletons.gif"
         FuncAnimation(figure, draw, frames=len(points), blit=True).save(

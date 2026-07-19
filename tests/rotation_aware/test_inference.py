@@ -1,9 +1,11 @@
+import json
 from pathlib import Path
 
 import numpy as np
 import torch
 
 from fuse.metadata.mhr70 import mhr_names
+from fuse.rotation_aware import inference
 from fuse.rotation_aware.config import load_skeleton_spec
 from fuse.rotation_aware.inference import (
     canonicalize_trial,
@@ -20,11 +22,13 @@ SPEC = load_skeleton_spec(Path("configs/fuse/skeleton_mhr70.yaml"))
 def _trial(frames: int = 130) -> PosePairTrial:
     base = np.ones((frames, len(mhr_names), 3), dtype=np.float32)
     base[..., 0] += np.linspace(0.0, 1.0, frames)[:, None]
-    base[:, 9, 0] = -1.0
-    base[:, 10, 0] = 1.0
-    base[:, 5, 1] = 2.0
-    base[:, 6, 1] = 2.0
-    base[:, 2, 1] = 3.0
+    base[:, 9] = [-1.0, 0.0, 0.0]
+    base[:, 10] = [1.0, 0.0, 0.0]
+    base[:, 5] = [-1.0, 2.0, 0.0]
+    base[:, 6] = [1.0, 2.0, 0.0]
+    base[:, SPEC.joint_index("left-acromion")] = [-1.0, 2.0, 0.0]
+    base[:, SPEC.joint_index("right-acromion")] = [1.0, 2.0, 0.0]
+    base[:, SPEC.joint_index("neck")] = [0.0, 3.0, 0.0]
     return PosePairTrial(
         face=base,
         side=base + np.array([3.0, 0.0, 0.0], dtype=np.float32),
@@ -135,3 +139,83 @@ def test_inference_does_not_restore_invalid_canonical_joints_as_fake_world_point
         assert not data["joint_valid"][:, 20].any()
         assert not data["kpts_world"][:, 20].any()
         assert not data["kpts_body"][:, 20].any()
+
+
+def test_inference_exports_timestamps_config_and_transform_invalidity(
+    tmp_path: Path,
+) -> None:
+    trial = _trial(4)
+    face = np.array(trial.face, copy=True)
+    side = np.array(trial.side, copy=True)
+    face[:, 9:11] = 0
+    side[:, 9:11] = 0
+    valid_face = valid_from_points(face)
+    valid_side = valid_from_points(side)
+    degenerate = PosePairTrial(
+        face,
+        side,
+        valid_face,
+        valid_side,
+        trial.timestamps,
+        trial.face_map,
+        trial.side_map,
+        trial.joint_names,
+        "1",
+        "cycle_002",
+        trial.fps,
+    )
+    result = run_inference(
+        RotationAwareFusionModel(SPEC, hidden_channels=8),
+        degenerate,
+        SPEC,
+        output_root=tmp_path,
+        run_id="run",
+        provenance={"config_hash": "cfg", "split_hash": "split"},
+    )
+
+    with np.load(result.sequence_path) as data:
+        assert np.array_equal(data["timestamps"], trial.timestamps)
+        assert not data["frame_valid"].any()
+        assert not data["joint_valid"].any()
+        assert not data["kpts_face_world"].any()
+        assert not data["kpts_side_world"].any()
+    assert result.sequence_path.with_name("config.json").exists()
+
+
+def test_swap_diagnostic_uses_the_same_overlap_add_path_as_primary_inference(
+    tmp_path: Path, monkeypatch
+) -> None:
+    calls = []
+    pseudo_target_calls = []
+    original = inference._overlap_fuse
+    original_target = inference._pseudo_target
+
+    def wrapped(*args, **kwargs):
+        calls.append((kwargs["face"].copy(), kwargs["side"].copy(), kwargs["stride"]))
+        return original(*args, **kwargs)
+
+    def target_wrapped(*args, **kwargs):
+        pseudo_target_calls.append(True)
+        return original_target(*args, **kwargs)
+
+    monkeypatch.setattr(inference, "_overlap_fuse", wrapped)
+    monkeypatch.setattr(inference, "_pseudo_target", target_wrapped)
+    trial = _trial(130)
+    result = run_inference(
+        RotationAwareFusionModel(SPEC, hidden_channels=8),
+        trial,
+        SPEC,
+        output_root=tmp_path,
+        run_id="run",
+        stride=64,
+        provenance={"corruption_seed": "17", "corruption_manifest_hash": "manifest"},
+    )
+
+    assert len(calls) == 2
+    np.testing.assert_allclose(calls[1][0], calls[0][1])
+    np.testing.assert_allclose(calls[1][1], calls[0][0])
+    assert calls[0][2] == calls[1][2] == 64
+    metadata = json.loads(result.sequence_path.with_name("config.json").read_text())
+    assert pseudo_target_calls
+    assert metadata["corruption_seed"] == 17
+    assert metadata["corruption_manifest_hash"] == "manifest"

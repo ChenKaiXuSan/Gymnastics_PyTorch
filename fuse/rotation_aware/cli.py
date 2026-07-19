@@ -9,7 +9,7 @@ import json
 import os
 import re
 import subprocess
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -77,17 +77,58 @@ def load_config(path: str | Path) -> dict[str, Any]:
 def _paths(config: Mapping[str, Any], output_override: str | None) -> dict[str, Path]:
     paths = dict(config.get("paths", {}))
     root = Path(output_override or paths.get("output_root", "logs/fuse_rotation_aware"))
-    fold_value = paths.get("fold_json", paths.get("fold_root"))
-    if not isinstance(fold_value, (str, Path)):
-        fold_value = ""
     return {
         "sam3d": Path(paths["sam3d_root"]),
         "split": Path(paths["split_cycle_root"]),
         "output": root,
         "cache": root / "cache",
         "skeleton": Path(paths.get("skeleton", "configs/fuse/skeleton_mhr70.yaml")),
-        "fold": Path(fold_value),
     }
+
+
+def resolve_fold(config: Mapping[str, Any], value: str | None) -> Path:
+    """Resolve an explicit JSON path or numeric fold index without a cwd fallback."""
+    paths = config.get("paths", {})
+    if not isinstance(paths, Mapping):
+        raise ValueError("rotation-aware config paths must be a mapping")
+    root_value = paths.get("fold_root")
+    default_value = paths.get("default_fold", "fold_00.json")
+    if value is None:
+        if isinstance(paths.get("fold_json"), str):
+            candidate = Path(str(paths["fold_json"]))
+        elif isinstance(root_value, (str, Path)) and isinstance(default_value, str):
+            candidate = Path(root_value) / default_value
+        else:
+            raise ValueError(
+                "fold configuration requires paths.fold_root and paths.default_fold"
+            )
+    elif value.isdigit():
+        if not isinstance(root_value, (str, Path)):
+            raise ValueError("numeric --fold requires paths.fold_root")
+        candidate = Path(root_value) / f"fold_{int(value):02d}.json"
+    else:
+        candidate = Path(value)
+    if candidate == Path(".") or candidate.suffix != ".json" or not candidate.is_file():
+        raise ValueError(f"fold JSON does not exist: {candidate}")
+    return candidate
+
+
+def loss_config_for_ablation(ablation: str) -> LossConfig:
+    """Return the declared self-supervised objective set for A4--A6."""
+    full = LossConfig()
+    if ablation == "A4":
+        return replace(
+            full,
+            circular_axial_rotation_weight=0.0,
+            so3_rotation_weight=0.0,
+            adaptive_temporal_acceleration_weight=0.0,
+            complete_cycle_rom_weight=0.0,
+        )
+    if ablation == "A5":
+        return replace(full, complete_cycle_rom_weight=0.0)
+    if ablation == "A6":
+        return full
+    raise ValueError(f"learned ablation must be A4, A5, or A6: {ablation}")
 
 
 def _people(paths: Mapping[str, Path], wanted: Iterable[str] | None) -> list[str]:
@@ -111,6 +152,10 @@ def _hash(value: Any) -> str:
     ).hexdigest()
 
 
+def _file_hash(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def _cached_trials(cache: Path, people: Iterable[str], skeleton) -> list:
     trials = []
     for person in people:
@@ -123,27 +168,60 @@ def _cached_trials(cache: Path, people: Iterable[str], skeleton) -> list:
     return trials
 
 
+def _manifest_people(manifest, subset: Iterable[str] | None) -> tuple[str, ...]:
+    allowed = set(manifest.train) | set(manifest.val) | set(manifest.test)
+    selected = set(str(value) for value in subset) if subset else allowed
+    unknown = sorted(selected - allowed)
+    if unknown:
+        raise ValueError(f"--person is not present in the selected fold: {unknown}")
+    return tuple(sorted(selected))
+
+
 def _cmd_prepare(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     paths = _paths(config, args.output_root)
     skeleton = load_skeleton_spec(paths["skeleton"])
-    people = _people(paths, args.person)
-    for person in people:
-        trials = load_person_trials(person, paths["sam3d"], paths["split"], skeleton)
-        write_person_cache(
-            trials,
-            paths["cache"],
-            source_metadata=trials[0].source_metadata,
-            config_metadata={"config": config, "skeleton": skeleton.name},
-        )
-    fold = Path(args.fold) if args.fold else paths["fold"]
-    if fold and fold.exists():
-        manifest = build_split_manifest(fold)
-        (paths["output"] / "split_manifest.json").parent.mkdir(
-            parents=True, exist_ok=True
-        )
-        (paths["output"] / "split_manifest.json").write_text(
-            json.dumps(asdict(manifest), indent=2, sort_keys=True), encoding="utf-8"
-        )
+    requested = _people(paths, args.person)
+    aligned_people = []
+    prepared_people = []
+    failures: dict[str, str] = {}
+    for person in requested:
+        record = paths["split"] / f"person_{person}" / f"alignment_record_{person}.json"
+        if record.is_file():
+            aligned_people.append(person)
+        else:
+            failures[person] = f"missing split alignment record: {record}"
+    for person in aligned_people:
+        try:
+            trials = load_person_trials(
+                person, paths["sam3d"], paths["split"], skeleton
+            )
+            write_person_cache(
+                trials,
+                paths["cache"],
+                source_metadata=trials[0].source_metadata,
+                config_metadata={"config": config, "skeleton": skeleton.name},
+            )
+            prepared_people.append(person)
+        except (FileNotFoundError, KeyError, ValueError) as error:
+            failures[person] = str(error)
+    fold = resolve_fold(config, args.fold)
+    manifest = build_split_manifest(fold)
+    target = paths["output"] / "split_manifest.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(
+            {
+                **asdict(manifest),
+                "fold_path": str(fold),
+                "aligned_people": aligned_people,
+                "prepared_people": prepared_people,
+                "failures": failures,
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
     return 0
 
 
@@ -152,21 +230,27 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
         raise ValueError("train requires explicit --run-id")
     paths = _paths(config, args.output_root)
     skeleton = load_skeleton_spec(paths["skeleton"])
-    fold = Path(args.fold) if args.fold else paths["fold"]
+    fold = resolve_fold(config, args.fold)
     manifest = build_split_manifest(fold)
-    trials = _cached_trials(
-        paths["cache"], manifest.train + manifest.val + manifest.test, skeleton
-    )
+    selected = _manifest_people(manifest, args.person)
+    trials = _cached_trials(paths["cache"], selected, skeleton)
     training = dict(config.get("training", {}))
+    training["ablation"] = args.ablation or "A6"
+    loss_config = loss_config_for_ablation(str(training["ablation"]))
+    training["loss_config"] = asdict(loss_config)
     window = WindowConfig(**dict(config.get("window", {})))
+    train_trials = [trial for trial in trials if trial.person_id in manifest.train]
+    val_trials = [trial for trial in trials if trial.person_id in manifest.val]
+    if not train_trials:
+        raise ValueError("no selected canonical trials belong to the training split")
     train_set = PosePairWindowDataset(
-        trials, skeleton=skeleton, manifest=manifest, split="train", config=window
+        train_trials, skeleton=skeleton, manifest=manifest, split="train", config=window
     )
     val_set = (
         PosePairWindowDataset(
-            trials, skeleton=skeleton, manifest=manifest, split="val", config=window
+            val_trials, skeleton=skeleton, manifest=manifest, split="val", config=window
         )
-        if manifest.val
+        if val_trials
         else None
     )
     batch_size = int(training.get("batch_size", 4))
@@ -205,13 +289,17 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     corruption = CorruptionConfig()
     corrupt_manifest = write_corruption_manifest(
         run / "corruption_manifest.json",
-        [train_set[index]["window_id"] for index in range(len(train_set))],
+        [val_set[index]["window_id"] for index in range(len(val_set))]
+        if val_set
+        else [train_set[index]["window_id"] for index in range(len(train_set))],
         seed=int(training.get("seed", 0)),
         config=corruption,
     )
     provenance = {
         "split_hash": _hash(asdict(manifest)),
+        "config_hash": _hash(config),
         "corruption_manifest_hash": _hash(corrupt_manifest),
+        "corruption_seed": str(int(training.get("seed", 0))),
         "git_commit": subprocess.run(
             ["git", "rev-parse", "HEAD"], check=False, capture_output=True, text=True
         ).stdout.strip()
@@ -227,7 +315,7 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
                 loader,
                 optimizer,
                 skeleton,
-                loss_config=LossConfig(),
+                loss_config=loss_config,
                 corruption_config=corruption,
                 seed=int(training.get("seed", 0)),
                 epoch=epoch,
@@ -237,7 +325,7 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
             model,
             val_loader,
             skeleton,
-            loss_config=LossConfig(),
+            loss_config=loss_config,
             corruption_config=corruption,
             seed=int(training.get("seed", 0)),
         )["score"]
@@ -249,7 +337,7 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
                 run / "checkpoints" / "best.pt",
                 model,
                 optimizer,
-                loss_config=LossConfig(),
+                loss_config=loss_config,
                 skeleton=skeleton,
                 provenance=provenance,
                 training_config=training or {"epochs": 1},
@@ -272,40 +360,70 @@ def _cmd_infer(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
         raise ValueError("infer requires explicit --run-id")
     paths = _paths(config, args.output_root)
     skeleton = load_skeleton_spec(paths["skeleton"])
-    training = dict(config.get("training", {}))
-    model = RotationAwareFusionModel(
-        skeleton, hidden_channels=int(training.get("hidden_channels", 128))
-    )
     checkpoint = (
         Path(args.checkpoint)
         if args.checkpoint
         else paths["output"] / "runs" / args.run_id / "checkpoints" / "best.pt"
     )
+    raw_payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    if not isinstance(raw_payload, Mapping):
+        raise ValueError("checkpoint payload must be a mapping")
+    saved_training = raw_payload.get("training_config", {})
+    if not isinstance(saved_training, Mapping):
+        raise ValueError("checkpoint training_config must be a mapping")
+    model = RotationAwareFusionModel(
+        skeleton, hidden_channels=int(saved_training.get("hidden_channels", 128))
+    )
     payload = load_checkpoint(checkpoint, model)
+    saved_ablation = str(saved_training.get("ablation", "A6"))
+    if args.ablation and args.ablation != saved_ablation:
+        raise ValueError(
+            f"--ablation {args.ablation} does not match checkpoint ablation {saved_ablation}"
+        )
+    raw_corruption_config = payload.get("corruption_config", {})
+    if not isinstance(raw_corruption_config, Mapping):
+        raise ValueError("checkpoint corruption_config must be a mapping")
+    corruption_config = CorruptionConfig(**dict(raw_corruption_config))
+    if args.fold:
+        manifest = build_split_manifest(resolve_fold(config, args.fold))
+        allowed = _manifest_people(manifest, args.person)
+    else:
+        allowed = tuple(args.person or [])
     people = (
-        _people(paths, args.person)
-        if args.person
+        _people(paths, allowed)
+        if allowed
         else [
             path.name.removeprefix("person_")
             for path in paths["cache"].glob("person_*")
         ]
     )
-    for trial in _cached_trials(paths["cache"], people, skeleton):
-        raw_path = (
-            paths["cache"] / f"person_{trial.person_id}" / f"{trial.trial_id}.npz"
-        )
-        raw, _ = load_cached_trial(raw_path)
-        provenance = payload.get("provenance", {})
-        if not isinstance(provenance, Mapping):
-            raise ValueError("checkpoint provenance must be a mapping")
-        run_inference(
-            model,
-            raw,
-            skeleton,
-            output_root=paths["output"] / "inference" / args.run_id,
-            run_id=args.run_id,
-            provenance=dict(provenance),
-        )
+    provenance = payload.get("provenance", {})
+    if not isinstance(provenance, Mapping):
+        raise ValueError("checkpoint provenance must be a mapping")
+    inference_provenance = {
+        **dict(provenance),
+        "checkpoint_path": str(checkpoint),
+        "checkpoint_sha256": _file_hash(checkpoint),
+        "ablation": saved_ablation,
+        "model_config": {
+            "hidden_channels": int(saved_training.get("hidden_channels", 128))
+        },
+        "config_hash": _hash(config),
+    }
+    for person in people:
+        for raw_path in sorted(
+            (paths["cache"] / f"person_{person}").glob("cycle_*.npz")
+        ):
+            raw, _ = load_cached_trial(raw_path)
+            run_inference(
+                model,
+                raw,
+                skeleton,
+                output_root=paths["output"] / "inference" / args.run_id,
+                run_id=args.run_id,
+                provenance=inference_provenance,
+                corruption_config=corruption_config,
+            )
     return 0
 
 
@@ -317,9 +435,13 @@ def _cmd_evaluate(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     root = paths["output"] / "inference" / args.run_id
     target = paths["output"] / "evaluation" / args.run_id
     target.mkdir(parents=True, exist_ok=True)
-    people = args.person or [
-        path.name.removeprefix("person_") for path in root.glob("person_*")
-    ]
+    if args.fold:
+        manifest = build_split_manifest(resolve_fold(config, args.fold))
+        people = list(_manifest_people(manifest, args.person))
+    else:
+        people = args.person or [
+            path.name.removeprefix("person_") for path in root.glob("person_*")
+        ]
     rows = []
     joints = []
     availability: dict[str, dict[str, str]] = {}
@@ -365,6 +487,40 @@ def _cmd_evaluate(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     for name, values in (
         ("metrics_by_person.csv", rows),
         ("metrics_by_joint.csv", joints),
+        (
+            "corruption_metrics.csv",
+            [
+                {
+                    key: row.get(key)
+                    for key in (
+                        "person_id",
+                        "method",
+                        "fixed_corruption_recovery",
+                        "valid_points",
+                    )
+                }
+                for row in rows
+            ],
+        ),
+        (
+            "rotation_metrics.csv",
+            [
+                {
+                    key: row.get(key)
+                    for key in (
+                        "person_id",
+                        "method",
+                        "theta_rom",
+                        "peak_omega",
+                        "trunk_angular_jerk",
+                        "rom_retention",
+                        "peak_angular_velocity_retention",
+                        "swap_error",
+                    )
+                }
+                for row in rows
+            ],
+        ),
     ):
         with (target / name).open("w", newline="", encoding="utf-8") as handle:
             if values:
@@ -401,6 +557,9 @@ def make_parser() -> argparse.ArgumentParser:
         child.add_argument("--output-root", default=argparse.SUPPRESS)
         if name in {"train", "infer", "evaluate"}:
             child.add_argument("--run-id")
+            child.add_argument(
+                "--ablation", choices=[f"A{index}" for index in range(4, 7)]
+            )
         if name == "infer":
             child.add_argument("--checkpoint")
     return parser

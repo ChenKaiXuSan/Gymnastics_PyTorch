@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 
 from fuse.metadata.mhr70 import mhr_names
+from fuse.rotation_aware.config import load_skeleton_spec
 from fuse.rotation_aware.visualization import visualize_saved_sequence
 
 
@@ -26,7 +27,12 @@ def test_visualization_writes_curves_without_mutating_saved_arrays(
     )
     before = source.read_bytes()
 
-    outputs = visualize_saved_sequence(source, tmp_path / "figures", animation=True)
+    outputs = visualize_saved_sequence(
+        source,
+        tmp_path / "figures",
+        skeleton=load_skeleton_spec("configs/fuse/skeleton_mhr70.yaml"),
+        animation=True,
+    )
 
     assert outputs.theta_omega_path.exists()
     assert outputs.quality_path.exists()

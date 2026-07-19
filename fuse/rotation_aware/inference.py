@@ -13,6 +13,7 @@ import torch
 from fuse.experiment_matrix import kpts_world_to_body
 
 from .config import SkeletonSpec
+from .corruptions import CorruptionConfig, apply_corruptions
 from .features import (
     compute_disagreement_features,
     compute_quality_features,
@@ -20,6 +21,7 @@ from .features import (
 )
 from .geometry import CanonicalTransform, canonicalize_pose, restore_pose
 from .model import RotationAwareFusionModel
+from .losses import LossConfig, _pseudo_target
 from .schema import PosePairTrial
 from .trunk import extract_trunk_features
 
@@ -44,6 +46,9 @@ class CanonicalTrial:
             .astype(np.float32)
         )
 
+    def restore_side_to_face(self, points: np.ndarray) -> np.ndarray:
+        return self.restore_face(points)
+
 
 @dataclass(frozen=True)
 class InferenceResult:
@@ -62,11 +67,31 @@ def canonicalize_trial(trial: PosePairTrial, skeleton: SkeletonSpec) -> Canonica
     side_canonical = canonicalize_pose(side, side_valid, skeleton)
     metadata = dict(trial.source_metadata)
     metadata["coordinate_system"] = "canonical_pelvis_trial_scale"
+    canonical_face_valid = (
+        face_canonical.valid & face_canonical.transform.valid[..., None]
+    )
+    canonical_side_valid = (
+        side_canonical.valid & side_canonical.transform.valid[..., None]
+    )
     canonical = PosePairTrial(
-        face=face_canonical.points.squeeze(0).cpu().numpy(),
-        side=side_canonical.points.squeeze(0).cpu().numpy(),
-        valid_face=face_canonical.valid.squeeze(0).cpu().numpy(),
-        valid_side=side_canonical.valid.squeeze(0).cpu().numpy(),
+        face=torch.where(
+            canonical_face_valid[..., None],
+            face_canonical.points,
+            torch.zeros_like(face_canonical.points),
+        )
+        .squeeze(0)
+        .cpu()
+        .numpy(),
+        side=torch.where(
+            canonical_side_valid[..., None],
+            side_canonical.points,
+            torch.zeros_like(side_canonical.points),
+        )
+        .squeeze(0)
+        .cpu()
+        .numpy(),
+        valid_face=canonical_face_valid.squeeze(0).cpu().numpy(),
+        valid_side=canonical_side_valid.squeeze(0).cpu().numpy(),
         timestamps=trial.timestamps,
         face_map=trial.face_map,
         side_map=trial.side_map,
@@ -149,46 +174,46 @@ def _forward(
     return output, face_features[1].loss_weight, side_features[1].loss_weight
 
 
-def run_inference(
+def _overlap_fuse(
     model: RotationAwareFusionModel,
-    trial: PosePairTrial,
+    source: PosePairTrial,
     skeleton: SkeletonSpec,
     *,
-    output_root: str | Path,
-    run_id: str,
-    window_length: int = 128,
-    stride: int = 64,
-    provenance: Mapping[str, Any] | None = None,
-) -> InferenceResult:
-    """Fuse a complete raw trial with 128/64-style overlap-add and save one NPZ."""
-    if not run_id:
-        raise ValueError("run_id is required for inference")
-    canonical = canonicalize_trial(trial, skeleton)
-    source = canonical.trial
-    frames, joints = source.face.shape[:2]
+    face: np.ndarray,
+    side: np.ndarray,
+    valid_face: np.ndarray,
+    valid_side: np.ndarray,
+    window_length: int,
+    stride: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Run the exact windowed fusion path used for both normal and swapped inputs."""
+    frames, joints = face.shape[:2]
     weights = overlap_taper(window_length)
     fused_sum = np.zeros((frames, joints, 3), dtype=np.float64)
     base_sum = np.zeros_like(fused_sum)
     point_weight = np.zeros((frames, joints), dtype=np.float64)
-    model.eval()
     with torch.no_grad():
         for start in _starts(frames, window_length, stride):
             count = min(window_length, frames - start)
-            face = torch.zeros((1, window_length, joints, 3), dtype=torch.float32)
-            side = torch.zeros_like(face)
-            valid_face = torch.zeros((1, window_length, joints), dtype=torch.bool)
-            valid_side = torch.zeros_like(valid_face)
-            face[:, :count] = torch.from_numpy(
-                np.array(source.face[start : start + count], copy=True)
+            window_face = torch.zeros(
+                (1, window_length, joints, 3), dtype=torch.float32
             )
-            side[:, :count] = torch.from_numpy(
-                np.array(source.side[start : start + count], copy=True)
+            window_side = torch.zeros_like(window_face)
+            window_face_valid = torch.zeros(
+                (1, window_length, joints), dtype=torch.bool
             )
-            valid_face[:, :count] = torch.from_numpy(
-                np.array(source.valid_face[start : start + count], copy=True)
+            window_side_valid = torch.zeros_like(window_face_valid)
+            window_face[:, :count] = torch.from_numpy(
+                np.array(face[start : start + count], copy=True)
             )
-            valid_side[:, :count] = torch.from_numpy(
-                np.array(source.valid_side[start : start + count], copy=True)
+            window_side[:, :count] = torch.from_numpy(
+                np.array(side[start : start + count], copy=True)
+            )
+            window_face_valid[:, :count] = torch.from_numpy(
+                np.array(valid_face[start : start + count], copy=True)
+            )
+            window_side_valid[:, :count] = torch.from_numpy(
+                np.array(valid_side[start : start + count], copy=True)
             )
             dt = torch.zeros((1, window_length), dtype=torch.float32)
             dt[0, :count] = 1.0 / source.fps
@@ -197,7 +222,13 @@ def run_inference(
                     np.diff(source.timestamps[start : start + count]).astype(np.float32)
                 )
             output, _, _ = _forward(
-                model, face, side, valid_face, valid_side, skeleton, dt
+                model,
+                window_face,
+                window_side,
+                window_face_valid,
+                window_side_valid,
+                skeleton,
+                dt,
             )
             valid = output.valid[0, :count].cpu().numpy()
             weight = weights[:count, None] * valid
@@ -212,6 +243,39 @@ def run_inference(
     base = (base_sum / np.maximum(point_weight[..., None], 1e-12)).astype(np.float32)
     fused[point_weight == 0] = 0
     base[point_weight == 0] = 0
+    return fused, base, point_weight
+
+
+def run_inference(
+    model: RotationAwareFusionModel,
+    trial: PosePairTrial,
+    skeleton: SkeletonSpec,
+    *,
+    output_root: str | Path,
+    run_id: str,
+    window_length: int = 128,
+    stride: int = 64,
+    provenance: Mapping[str, Any] | None = None,
+    corruption_config: CorruptionConfig | None = None,
+) -> InferenceResult:
+    """Fuse a complete raw trial with 128/64-style overlap-add and save one NPZ."""
+    if not run_id:
+        raise ValueError("run_id is required for inference")
+    canonical = canonicalize_trial(trial, skeleton)
+    source = canonical.trial
+    frames = source.face.shape[0]
+    model.eval()
+    fused, base, point_weight = _overlap_fuse(
+        model,
+        source,
+        skeleton,
+        face=source.face,
+        side=source.side,
+        valid_face=source.valid_face,
+        valid_side=source.valid_side,
+        window_length=window_length,
+        stride=stride,
+    )
     full_face = torch.from_numpy(np.array(source.face, copy=True)).unsqueeze(0)
     full_side = torch.from_numpy(np.array(source.side, copy=True)).unsqueeze(0)
     full_face_valid = torch.from_numpy(
@@ -229,6 +293,70 @@ def run_inference(
         skeleton,
         _dt(source),
     )
+    swapped_fused, _, swapped_weight = _overlap_fuse(
+        model,
+        source,
+        skeleton,
+        face=source.side,
+        side=source.face,
+        valid_face=source.valid_side,
+        valid_side=source.valid_face,
+        window_length=window_length,
+        stride=stride,
+    )
+    common = (point_weight > 0) & (swapped_weight > 0)
+    swap_error = (
+        float(np.linalg.norm(fused - swapped_fused, axis=-1)[common].mean())
+        if common.any()
+        else float("nan")
+    )
+    corruption = apply_corruptions(
+        full_face[0],
+        full_side[0],
+        full_face_valid[0],
+        full_side_valid[0],
+        seed=int((provenance or {}).get("corruption_seed", 0)),
+        config=corruption_config,
+        skeleton=skeleton,
+    )
+    corrupted_output, _, _ = _forward(
+        model,
+        corruption.corrupted_face.unsqueeze(0),
+        corruption.corrupted_side.unsqueeze(0),
+        corruption.corrupted_valid_face.unsqueeze(0),
+        corruption.corrupted_valid_side.unsqueeze(0),
+        skeleton,
+        _dt(source),
+    )
+    corruption_mask = (
+        (corruption.face_corruption_mask | corruption.side_corruption_mask)
+        .cpu()
+        .numpy()
+    )
+    pseudo_target, pseudo_valid, _ = _pseudo_target(
+        full_face,
+        full_side,
+        full_face_valid,
+        full_side_valid,
+        quality_face,
+        quality_side,
+        LossConfig(),
+    )
+    recovery_error = np.linalg.norm(
+        corrupted_output.fused_kpts.squeeze(0).detach().cpu().numpy()
+        - pseudo_target.squeeze(0).detach().cpu().numpy(),
+        axis=-1,
+    )
+    recovery_mask = (
+        corruption_mask
+        & pseudo_valid.squeeze(0).detach().cpu().numpy()
+        & corrupted_output.valid.squeeze(0).detach().cpu().numpy()
+    )
+    fixed_corruption_recovery = (
+        float(recovery_error[recovery_mask].mean())
+        if recovery_mask.any()
+        else float("nan")
+    )
     fused_tensor = torch.from_numpy(fused).unsqueeze(0)
     frame_valid = point_weight.any(axis=1)
     trunk = extract_trunk_features(
@@ -243,11 +371,13 @@ def run_inference(
     body = kpts_world_to_body(world)
     body[~joint_valid] = 0
     face_world = np.array(trial.face, copy=True)
-    side_world = np.array(trial.side, copy=True)
-    face_world[~trial.valid_face] = 0
-    side_world[~trial.valid_side] = 0
+    side_world = canonical.restore_side_to_face(source.side)
+    face_world[~source.valid_face] = 0
+    side_world[~source.valid_side] = 0
     arithmetic_valid = source.valid_face | source.valid_side
-    arithmetic_weights = arithmetic_valid.astype(np.float32)
+    arithmetic_weights = source.valid_face.astype(
+        np.float32
+    ) + source.valid_side.astype(np.float32)
     arithmetic = (
         source.face * source.valid_face[..., None]
         + source.side * source.valid_side[..., None]
@@ -267,6 +397,18 @@ def run_inference(
         "window_length": window_length,
         "stride": stride,
         "canonical_source": "complete_trial",
+        "config_hash": str((provenance or {}).get("config_hash", "")),
+        "split_hash": str((provenance or {}).get("split_hash", "")),
+        "checkpoint_path": str((provenance or {}).get("checkpoint_path", "")),
+        "checkpoint_sha256": str((provenance or {}).get("checkpoint_sha256", "")),
+        "model_config": dict((provenance or {}).get("model_config", {})),
+        "ablation": str((provenance or {}).get("ablation", "A6")),
+        "corruption_seed": int((provenance or {}).get("corruption_seed", 0)),
+        "corruption_manifest_hash": str(
+            (provenance or {}).get("corruption_manifest_hash", "")
+        ),
+        "swap_error": swap_error,
+        "fixed_corruption_recovery": fixed_corruption_recovery,
     }
     target = (
         Path(output_root)
@@ -283,12 +425,19 @@ def run_inference(
         kpts_side_world=side_world,
         kpts_arithmetic_world=arithmetic_world,
         kpts_base_world=base_world,
+        timestamps=trial.timestamps,
+        fps=np.asarray(trial.fps, dtype=np.float64),
         kpts_fused_canonical=fused,
         kpts_base_canonical=base,
+        reference_kpts_world=base_world,
         theta_fused_rad=trunk.angle.squeeze(0).cpu().numpy().astype(np.float32),
         omega_fused_rad_s=trunk.omega.squeeze(0).cpu().numpy().astype(np.float32),
         quality_face=quality_face.squeeze(0).cpu().numpy().astype(np.float32),
         quality_side=quality_side.squeeze(0).cpu().numpy().astype(np.float32),
+        swap_error=np.asarray(swap_error, dtype=np.float32),
+        fixed_corruption_recovery=np.asarray(
+            fixed_corruption_recovery, dtype=np.float32
+        ),
         frame_valid=frame_valid,
         joint_valid=joint_valid,
         face_map=trial.face_map,
@@ -296,5 +445,8 @@ def run_inference(
         kpts_face_canonical=source.face,
         kpts_side_canonical=source.side,
         metadata=np.asarray(json.dumps(metadata, sort_keys=True)),
+    )
+    target.with_name("config.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8"
     )
     return InferenceResult(target, frames, metadata)
