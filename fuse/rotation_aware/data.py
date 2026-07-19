@@ -28,6 +28,8 @@ def _load_split_record(split_root: Path, person_id: str) -> tuple[Path, dict[str
     record = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(record, dict) or not isinstance(record.get("cycles"), list):
         raise ValueError(f"Split alignment record has no cycles list for person {person_id}: {path}")
+    if not record["cycles"]:
+        raise ValueError(f"Split alignment record has no cycles for person {person_id}: {path}")
     return path, record
 
 

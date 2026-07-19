@@ -68,6 +68,19 @@ def test_load_person_trials_uses_split_cycle_boundaries(tmp_path, monkeypatch, s
     }
 
 
+def test_load_person_trials_rejects_empty_alignment_cycles(tmp_path, spec):
+    split_root = tmp_path / "split_cycle"
+    record_path = split_root / "person_1" / "alignment_record_1.json"
+    record_path.parent.mkdir(parents=True)
+    record_path.write_text(
+        json.dumps({"metadata": {"offset_side_to_face": 0}, "cycles": []}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="alignment record has no cycles"):
+        data.load_person_trials("1", tmp_path / "sam3d_body_results", split_root, spec)
+
+
 def test_pose_pair_trial_builds_finite_nonzero_valid_mask():
     points = np.array([[[1, 2, 3], [0, 0, 0], [np.nan, 1, 2]]], dtype=np.float32)
 

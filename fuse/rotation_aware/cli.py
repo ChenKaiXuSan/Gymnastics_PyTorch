@@ -262,6 +262,8 @@ def _cmd_prepare(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
             trials = load_person_trials(
                 person, paths["sam3d"], paths["split"], skeleton
             )
+            if not trials:
+                raise ValueError(f"alignment record has no cycles for person {person}")
             write_person_cache(
                 trials,
                 paths["cache"],

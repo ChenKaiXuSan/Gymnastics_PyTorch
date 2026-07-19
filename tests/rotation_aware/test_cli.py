@@ -78,6 +78,27 @@ def test_prepare_smoke_uses_real_tiny_files_and_writes_manifest(tmp_path: Path) 
     assert (tmp_path / "out" / "split_manifest.json").exists()
 
 
+def test_prepare_reports_empty_alignment_cycles_without_index_error(tmp_path: Path) -> None:
+    sam3d = tmp_path / "sam3d" / "sam3d_body_results"
+    _write_sam3d(sam3d, "face")
+    _write_sam3d(sam3d, "side")
+    split = tmp_path / "split"
+    record = split / "person_1" / "alignment_record_1.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"metadata": {"offset_side_to_face": 0}, "cycles": []}))
+    fold = tmp_path / "fold.json"
+    fold.write_text(json.dumps({"train": [{"person_id": "1"}], "val": [], "test": []}))
+    output = tmp_path / "out"
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n  output_root: {output}\n  skeleton: configs/fuse/skeleton_mhr70.yaml\n  fold_json: {fold}"
+    )
+
+    assert main(["prepare", "--config", str(config), "--person", "1"]) == 1
+    report = json.loads((output / "split_manifest.json").read_text())
+    assert "alignment record has no cycles" in report["failures"]["1"]
+
+
 def test_train_infer_evaluate_smoke_uses_canonical_cached_trials(
     tmp_path: Path,
 ) -> None:
