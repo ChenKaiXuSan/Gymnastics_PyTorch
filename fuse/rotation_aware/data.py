@@ -80,6 +80,15 @@ def load_person_trials(
         cycle_face, cycle_side = face[mask], side[mask]
         cycle_face_map, cycle_side_map = face_map[mask], side_map[mask]
         timestamps = np.arange(len(cycle_face), dtype=np.float64) / fps
+        source_metadata = {
+            "alignment_record": str(record_path),
+            "offset_side_to_face": offset,
+            "fps": fps,
+            "person_id": str(person_id),
+            "cycle_index": cycle_index,
+            "face_video_frames": dict(cycle["face_video_frames"]),
+            "side_video_frames": dict(cycle["side_video_frames"]),
+        }
         trials.append(
             PosePairTrial(
                 face=cycle_face,
@@ -93,9 +102,9 @@ def load_person_trials(
                 person_id=str(person_id),
                 trial_id=f"cycle_{cycle_index:03d}",
                 fps=fps,
+                source_metadata=source_metadata,
             )
         )
-    alignment_metadata["alignment_record"] = str(record_path)
     return trials
 
 
@@ -104,12 +113,32 @@ def _metadata_hash(value: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _plain_metadata(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _plain_metadata(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain_metadata(item) for item in value]
+    return value
+
+
+def _validate_metadata(metadata: Mapping[str, Any], field_name: str) -> dict[str, Any]:
+    if not isinstance(metadata, Mapping) or not metadata:
+        raise ValueError(f"{field_name} must be a non-empty mapping")
+    normalized = _plain_metadata(metadata)
+    assert isinstance(normalized, dict)
+    try:
+        json.dumps(normalized, sort_keys=True)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{field_name} must be JSON serializable") from error
+    return normalized
+
+
 def write_person_cache(
     trials: Sequence[PosePairTrial],
     cache_root: str | Path = Path("logs/fuse_rotation_aware/cache"),
     *,
-    source_metadata: Mapping[str, Any] | None = None,
-    config_metadata: Mapping[str, Any] | None = None,
+    source_metadata: Mapping[str, Any],
+    config_metadata: Mapping[str, Any],
 ) -> Path:
     """Write compact per-cycle arrays and traceable source/config metadata."""
     if not trials:
@@ -119,8 +148,15 @@ def write_person_cache(
         raise ValueError("All cached trials must belong to one person")
     person_cache = Path(cache_root) / f"person_{person_id}"
     person_cache.mkdir(parents=True, exist_ok=True)
-    source = dict(source_metadata or {})
-    config = dict(config_metadata or {})
+    source = _validate_metadata(source_metadata, "source_metadata")
+    config = _validate_metadata(config_metadata, "config_metadata")
+    required_source_fields = {"alignment_record", "offset_side_to_face", "fps", "person_id"}
+    missing_source_fields = sorted(required_source_fields - set(source))
+    if missing_source_fields:
+        raise ValueError(f"source_metadata is missing required fields: {missing_source_fields}")
+    source["trial_sources"] = {
+        trial.trial_id: _plain_metadata(trial.source_metadata) for trial in trials
+    }
     for trial in trials:
         np.savez_compressed(
             person_cache / f"{trial.trial_id}.npz",

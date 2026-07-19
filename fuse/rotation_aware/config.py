@@ -32,6 +32,18 @@ class SkeletonSpec:
     required_roles: tuple[str, ...]
 
     def __post_init__(self) -> None:
+        joint_names = tuple(self.joint_names)
+        bones = tuple(tuple(bone) for bone in self.bones)
+        required_roles = tuple(self.required_roles)
+        if not all(isinstance(name, str) for name in joint_names):
+            raise ValueError("SkeletonSpec joint_names must contain strings")
+        if not all(len(bone) == 2 and all(isinstance(index, int) for index in bone) for bone in bones):
+            raise ValueError("SkeletonSpec bones must contain integer index pairs")
+        if not all(isinstance(role, str) for role in required_roles):
+            raise ValueError("SkeletonSpec required_roles must contain strings")
+        object.__setattr__(self, "joint_names", joint_names)
+        object.__setattr__(self, "bones", bones)
+        object.__setattr__(self, "required_roles", required_roles)
         if not self.name:
             raise ValueError("SkeletonSpec name must be non-empty")
         if len(self.joint_names) != len(set(self.joint_names)):
@@ -85,11 +97,20 @@ def load_skeleton_spec(path: str | Path) -> SkeletonSpec:
             raise ValueError("roles must map names to mappings")
         kind = role.get("kind")
         if kind == "joint":
-            joints = (role.get("joint"),)
+            joint = role.get("joint")
+            if not isinstance(joint, str):
+                raise ValueError(f"Joint role {name} needs exactly one joint")
+            joints = (joint,)
         else:
-            joints = tuple(role.get("joints", ()))
-        fallback = tuple(role.get("fallback", ()))
-        if kind not in {"joint", "midpoint"} or not all(isinstance(item, str) for item in joints + fallback):
+            raw_joints = role.get("joints")
+            if not isinstance(raw_joints, list) or not all(isinstance(item, str) for item in raw_joints):
+                raise ValueError(f"Midpoint role {name} needs exactly two joints")
+            joints = tuple(raw_joints)
+        raw_fallback = role.get("fallback", [])
+        if not isinstance(raw_fallback, list) or not all(isinstance(item, str) for item in raw_fallback):
+            raise ValueError(f"Invalid role definition for {name}")
+        fallback = tuple(raw_fallback)
+        if kind not in {"joint", "midpoint"}:
             raise ValueError(f"Invalid role definition for {name}")
         if kind == "joint" and len(joints) != 1:
             raise ValueError(f"Joint role {name} needs exactly one joint")

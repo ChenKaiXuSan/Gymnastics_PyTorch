@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Any, Mapping
 
 import numpy as np
 
@@ -17,10 +19,18 @@ def valid_from_points(points: np.ndarray) -> np.ndarray:
     return np.isfinite(array).all(axis=-1) & np.any(array != 0, axis=-1)
 
 
-def _readonly_array(value: np.ndarray, *, dtype: np.dtype | None = None) -> np.ndarray:
+def _readonly_array(value: np.ndarray, *, dtype: Any | None = None) -> np.ndarray:
     array = np.array(value, dtype=dtype, copy=True)
     array.setflags(write=False)
     return array
+
+
+def _freeze_metadata(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({str(key): _freeze_metadata(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_metadata(item) for item in value)
+    return value
 
 
 @dataclass(frozen=True)
@@ -38,6 +48,7 @@ class PosePairTrial:
     person_id: str
     trial_id: str
     fps: float
+    source_metadata: Mapping[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         face = np.asarray(self.face)
@@ -80,3 +91,6 @@ class PosePairTrial:
         object.__setattr__(self, "face_map", _readonly_array(face_map, dtype=np.int32))
         object.__setattr__(self, "side_map", _readonly_array(side_map, dtype=np.int32))
         object.__setattr__(self, "joint_names", tuple(self.joint_names))
+        if not isinstance(self.source_metadata, Mapping):
+            raise ValueError("source_metadata must be a mapping")
+        object.__setattr__(self, "source_metadata", _freeze_metadata(self.source_metadata))
