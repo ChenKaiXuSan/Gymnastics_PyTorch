@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -164,36 +165,25 @@ def resolve_cache_manifest(person_cache: str | Path) -> tuple[Path, dict[str, An
     return generation_dir, manifest
 
 
-def _acquire_publication_lock(person_cache: Path, token: str) -> Path:
+def _acquire_publication_lock(person_cache: Path) -> int:
+    """Acquire the permanent Linux flock guard for one cache publication."""
     lock_path = person_cache / CACHE_PUBLICATION_LOCK
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
     try:
-        descriptor = os.open(
-            lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
-        )
-    except FileExistsError as error:
-        raise FileExistsError(
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as error:
+        os.close(descriptor)
+        raise BlockingIOError(
             f"Cache publication lock already held for {person_cache}"
         ) from error
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write(token)
-    return lock_path
+    return descriptor
 
 
-def _require_lock_owner(lock_path: Path, token: str) -> None:
+def _release_publication_lock(descriptor: int) -> None:
     try:
-        owner = lock_path.read_text(encoding="utf-8")
-    except OSError as error:
-        raise OSError(f"Cache publication lock ownership lost: {lock_path}") from error
-    if owner != token:
-        raise OSError(f"Cache publication lock ownership lost: {lock_path}")
-
-
-def _release_publication_lock(lock_path: Path, token: str) -> None:
-    try:
-        if lock_path.read_text(encoding="utf-8") == token:
-            lock_path.unlink()
-    except FileNotFoundError:
-        return
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
 
 
 def write_person_cache(
@@ -221,7 +211,7 @@ def write_person_cache(
         trial.trial_id: _plain_metadata(trial.source_metadata) for trial in trials
     }
     token = uuid.uuid4().hex
-    lock_path = _acquire_publication_lock(person_cache, token)
+    lock_descriptor = _acquire_publication_lock(person_cache)
     generations = person_cache / CACHE_GENERATIONS_DIRECTORY
     generation = f"generation_{token}"
     staging = generations / f".staging_{token}"
@@ -258,9 +248,7 @@ def write_person_cache(
         (staging / CACHE_MANIFEST_FILENAME).write_text(
             json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
         )
-        _require_lock_owner(lock_path, token)
         os.replace(staging, final_generation)
-        _require_lock_owner(lock_path, token)
         temporary_pointer = person_cache / f".{CACHE_MANIFEST_FILENAME}.{token}.tmp"
         temporary_pointer.write_text(
             json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
@@ -273,7 +261,7 @@ def write_person_cache(
         if not published:
             shutil.rmtree(staging, ignore_errors=True)
             shutil.rmtree(final_generation, ignore_errors=True)
-        _release_publication_lock(lock_path, token)
+        _release_publication_lock(lock_descriptor)
     return person_cache
 
 

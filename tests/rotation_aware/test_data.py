@@ -1,3 +1,4 @@
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -215,7 +216,7 @@ def test_cache_round_trip_preserves_trial_and_metadata(tmp_path, monkeypatch, sp
     assert metadata["config"]["skeleton"] == "mhr70"
 
 
-def test_write_person_cache_publishes_atomically_and_clears_its_lock(
+def test_write_person_cache_publishes_atomically_and_retains_its_guard(
     tmp_path, monkeypatch
 ):
     lock_seen_while_writing: list[bool] = []
@@ -244,7 +245,7 @@ def test_write_person_cache_publishes_atomically_and_clears_its_lock(
     )
 
     assert lock_seen_while_writing == [True]
-    assert not lock.exists()
+    assert lock.is_file()
     assert (person_cache / "manifest.json").is_file()
     assert any(
         Path(destination) == person_cache / "manifest.json"
@@ -290,7 +291,7 @@ def test_load_cached_trial_from_person_directory_resolves_generation_metadata(tm
     assert trial.face[0, 0, 0] == pytest.approx(1.0)
 
 
-def test_second_writer_is_rejected_by_exclusive_token_lock(tmp_path, monkeypatch):
+def test_second_writer_is_rejected_by_exclusive_flock(tmp_path, monkeypatch):
     original_save = data.np.savez_compressed
     attempted_second_writer = False
 
@@ -298,7 +299,7 @@ def test_second_writer_is_rejected_by_exclusive_token_lock(tmp_path, monkeypatch
         nonlocal attempted_second_writer
         if not attempted_second_writer:
             attempted_second_writer = True
-            with pytest.raises(FileExistsError, match="publication lock"):
+            with pytest.raises(BlockingIOError, match="publication lock"):
                 data.write_person_cache(
                     [_cache_trial(2.0)],
                     tmp_path / "cache",
@@ -317,29 +318,31 @@ def test_second_writer_is_rejected_by_exclusive_token_lock(tmp_path, monkeypatch
     )
 
     assert attempted_second_writer
-    assert not (person_cache / ".publishing.lock").exists()
+    assert (person_cache / ".publishing.lock").is_file()
+    data.write_person_cache(
+        [_cache_trial(3.0)],
+        tmp_path / "cache",
+        source_metadata=_cache_source(),
+        config_metadata={"skeleton": "mhr70"},
+    )
 
 
-def test_lost_lock_owner_never_deletes_replacement_lock(tmp_path, monkeypatch):
-    original_save = data.np.savez_compressed
-    replacement_token = "second-writer-token"
-    lock = tmp_path / "cache" / "person_1" / ".publishing.lock"
+def test_guard_file_remains_after_writer_releases_flock(tmp_path):
+    person_cache = data.write_person_cache(
+        [_cache_trial()],
+        tmp_path / "cache",
+        source_metadata=_cache_source(),
+        config_metadata={"skeleton": "mhr70"},
+    )
 
-    def replace_lock_during_write(path, *args, **kwargs):
-        lock.write_text(replacement_token, encoding="utf-8")
-        return original_save(path, *args, **kwargs)
-
-    monkeypatch.setattr(data.np, "savez_compressed", replace_lock_during_write)
-
-    with pytest.raises(OSError, match="publication lock ownership"):
-        data.write_person_cache(
-            [_cache_trial()],
-            tmp_path / "cache",
-            source_metadata=_cache_source(),
-            config_metadata={"skeleton": "mhr70"},
-        )
-
-    assert lock.read_text(encoding="utf-8") == replacement_token
+    lock_path = person_cache / ".publishing.lock"
+    descriptor = os.open(lock_path, os.O_RDWR)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+    assert lock_path.is_file()
 
 
 def test_failed_generation_write_keeps_previous_pointer_usable(tmp_path, monkeypatch):

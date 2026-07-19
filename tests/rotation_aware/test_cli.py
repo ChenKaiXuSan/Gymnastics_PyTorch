@@ -1,4 +1,6 @@
+import fcntl
 import json
+import os
 from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
@@ -474,9 +476,20 @@ def test_cache_paths_reports_publication_timeout_without_long_sleep(
     person = tmp_path / "person_1"
     person.mkdir()
     (person / ".publishing.lock").write_text("first-writer", encoding="utf-8")
+
+    class ExclusiveGuard:
+        LOCK_SH = 1
+        LOCK_NB = 2
+        LOCK_UN = 4
+
+        def flock(self, _fd: int, operation: int) -> None:
+            if operation & self.LOCK_SH and not operation & self.LOCK_UN:
+                raise BlockingIOError("writer active")
+
     monkeypatch.setattr(
         cli, "time", SimpleNamespace(sleep=lambda _delay: None), raising=False
     )
+    monkeypatch.setattr(cli, "fcntl", ExclusiveGuard(), raising=False)
     monkeypatch.setattr(cli, "_CACHE_PUBLICATION_MAX_ATTEMPTS", 1, raising=False)
 
     with pytest.raises(FileNotFoundError, match="publication.*timed out"):
@@ -503,11 +516,15 @@ def test_cache_paths_reads_old_generation_while_new_writer_holds_lock(
     tmp_path: Path,
 ) -> None:
     person = _write_generation_pointer(tmp_path)
-    (person / ".publishing.lock").write_text("new-writer", encoding="utf-8")
-
-    assert _cache_trial_paths(tmp_path, ["1"]) == {
-        "1": [person / ".generations" / "generation_old" / "cycle_000.npz"]
-    }
+    descriptor = os.open(person / ".publishing.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        assert _cache_trial_paths(tmp_path, ["1"]) == {
+            "1": [person / ".generations" / "generation_old" / "cycle_000.npz"]
+        }
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
 
 
 def test_cache_paths_waits_for_first_generation_pointer_then_reads_it(
@@ -518,6 +535,18 @@ def test_cache_paths_waits_for_first_generation_pointer_then_reads_it(
     lock = person / ".publishing.lock"
     lock.write_text("first-writer", encoding="utf-8")
     waits: list[float] = []
+
+    class FirstWriterGuard:
+        LOCK_SH = 1
+        LOCK_NB = 2
+        LOCK_UN = 4
+
+        def __init__(self) -> None:
+            self.active = True
+
+        def flock(self, _fd: int, operation: int) -> None:
+            if operation & self.LOCK_SH and not operation & self.LOCK_UN and self.active:
+                raise BlockingIOError("writer active")
 
     def publish_generation(delay: float) -> None:
         waits.append(delay)
@@ -533,17 +562,106 @@ def test_cache_paths_waits_for_first_generation_pointer_then_reads_it(
             json.dumps(manifest), encoding="utf-8"
         )
         (person / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-        lock.unlink()
+        guard.active = False
 
+    guard = FirstWriterGuard()
     monkeypatch.setattr(
         cli, "time", SimpleNamespace(sleep=publish_generation), raising=False
     )
+    monkeypatch.setattr(cli, "fcntl", guard, raising=False)
     monkeypatch.setattr(cli, "_CACHE_PUBLICATION_MAX_ATTEMPTS", 2, raising=False)
 
     assert _cache_trial_paths(tmp_path, ["1"]) == {
         "1": [person / ".generations" / "generation_first" / "cycle_000.npz"]
     }
     assert waits
+
+
+def test_cache_paths_rechecks_pointer_after_shared_guard_interleaving(
+    tmp_path: Path, monkeypatch
+) -> None:
+    person = tmp_path / "person_1"
+    person.mkdir(parents=True)
+    (person / ".publishing.lock").touch()
+
+    class SharedGuard:
+        LOCK_SH = 1
+        LOCK_NB = 2
+        LOCK_UN = 4
+
+        def __init__(self) -> None:
+            self.published = False
+
+        def flock(self, _fd: int, operation: int) -> None:
+            if operation & self.LOCK_SH and not operation & self.LOCK_UN:
+                if not self.published:
+                    self.published = True
+                    generation_dir = person / ".generations" / "generation_race"
+                    generation_dir.mkdir(parents=True)
+                    (generation_dir / "cycle_000.npz").touch()
+                    manifest = {
+                        "person_id": "1",
+                        "trials": ["cycle_000"],
+                        "generation": "generation_race",
+                    }
+                    (generation_dir / "manifest.json").write_text(
+                        json.dumps(manifest), encoding="utf-8"
+                    )
+                    (person / "manifest.json").write_text(
+                        json.dumps(manifest), encoding="utf-8"
+                    )
+
+    guard = SharedGuard()
+    monkeypatch.setattr(cli, "fcntl", guard, raising=False)
+    monkeypatch.setattr(
+        cli,
+        "time",
+        SimpleNamespace(
+            sleep=lambda _delay: (_ for _ in ()).throw(
+                AssertionError("reader should recheck under the shared guard")
+            )
+        ),
+        raising=False,
+    )
+
+    assert _cache_trial_paths(tmp_path, ["1"]) == {
+        "1": [person / ".generations" / "generation_race" / "cycle_000.npz"]
+    }
+    assert guard.published
+
+
+def test_cache_paths_reports_missing_only_after_shared_guard_check(
+    tmp_path: Path, monkeypatch
+) -> None:
+    person = tmp_path / "person_1"
+    person.mkdir(parents=True)
+    (person / ".publishing.lock").touch()
+    shared_operations: list[int] = []
+
+    class SharedGuard:
+        LOCK_SH = 1
+        LOCK_NB = 2
+        LOCK_UN = 4
+
+        def flock(self, _fd: int, operation: int) -> None:
+            shared_operations.append(operation)
+
+    guard = SharedGuard()
+    monkeypatch.setattr(cli, "fcntl", guard, raising=False)
+    monkeypatch.setattr(
+        cli,
+        "time",
+        SimpleNamespace(
+            sleep=lambda _delay: (_ for _ in ()).throw(
+                AssertionError("no active writer should not wait")
+            )
+        ),
+        raising=False,
+    )
+
+    with pytest.raises(FileNotFoundError, match="person_1"):
+        _cache_trial_paths(tmp_path, ["1"])
+    assert any(operation & guard.LOCK_SH for operation in shared_operations)
 
 
 def test_evaluate_combines_a4_a5_a6_runs_with_deterministic_a0_a3(

@@ -97,6 +97,14 @@ reader that has already resolved a path remains valid during a later prepare.
 The top-level manifest and the public person-cache API remain compatible with
 legacy caches whose cycle NPZ files live directly under `person_<id>/`.
 
+On Linux, `person_<id>/.publishing.lock` is a permanent POSIX `flock` guard,
+not a publication marker: a writer holds an exclusive lock across staging,
+generation publication, and pointer replacement. A first-time reader with no
+pointer takes a shared lock and rechecks the pointer before declaring the cache
+missing; it retries only while an exclusive writer is active. Readers with an
+existing pointer immediately use its immutable generation, even while a newer
+prepare is publishing.
+
 Each inference cycle writes `fused_sequence.npz`, `config.json`, and
 `metadata.json`. Important NPZ fields are:
 

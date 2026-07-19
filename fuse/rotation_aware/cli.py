@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import fcntl
 import hashlib
 import json
 import os
@@ -199,13 +200,31 @@ def _cached_trials(cache: Path, people: Iterable[str], skeleton) -> list:
     return trials
 
 
+def _try_shared_publication_guard(person_dir: Path) -> int | None:
+    """Return a shared flock descriptor, or None while a writer is active."""
+    lock_path = person_dir / CACHE_PUBLICATION_LOCK
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(descriptor)
+        return None
+    return descriptor
+
+
+def _release_shared_publication_guard(descriptor: int) -> None:
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
+
+
 def _cache_trial_paths(cache: Path, people: Iterable[str]) -> dict[str, list[Path]]:
     """Resolve immutable generation paths, waiting only for a first publication."""
     cached: dict[str, list[Path]] = {}
     missing: list[str] = []
     for person in sorted({str(value) for value in people}):
         person_dir = cache / f"person_{person}"
-        lock_path = person_dir / CACHE_PUBLICATION_LOCK
         manifest_path = person_dir / CACHE_MANIFEST_FILENAME
         for attempt in range(_CACHE_PUBLICATION_MAX_ATTEMPTS + 1):
             if manifest_path.is_file():
@@ -229,13 +248,23 @@ def _cache_trial_paths(cache: Path, people: Iterable[str]) -> dict[str, list[Pat
                     break
                 cached[person] = paths
                 break
-            if lock_path.is_file():
+            if not person_dir.is_dir():
+                missing.append(f"person_{person}")
+                break
+            descriptor = _try_shared_publication_guard(person_dir)
+            if descriptor is None:
                 if attempt == _CACHE_PUBLICATION_MAX_ATTEMPTS:
                     missing.append(
                         f"person_{person} (cache publication timed out)"
                     )
                     break
                 time.sleep(_CACHE_PUBLICATION_SLEEP_SECONDS)
+                continue
+            try:
+                pointer_published = manifest_path.is_file()
+            finally:
+                _release_shared_publication_guard(descriptor)
+            if pointer_published:
                 continue
             missing.append(f"person_{person}")
             break
