@@ -32,6 +32,16 @@ def _skeleton() -> SkeletonSpec:
     )
 
 
+def _joint_fallback_skeleton() -> SkeletonSpec:
+    return SkeletonSpec(
+        name="test-joint-fallback",
+        joint_names=("thorax", "other", "fallback-thorax", "other-fallback"),
+        bones=(),
+        roles={"thorax": RoleSpec(kind="joint", joints=("thorax",), fallback=("fallback-thorax",))},
+        required_roles=("thorax",),
+    )
+
+
 def test_corruption_is_reproducible_and_reference_is_unchanged():
     face, side, valid_face, valid_side = _inputs()
     before = face.clone()
@@ -139,3 +149,18 @@ def test_thorax_rotation_resolves_virtual_midpoint_and_fallback_from_skeleton():
     )
     assert batch.face_corruption_mask[0, :2].any()
     assert batch.face_corruption_mask[1, 2:].any()
+
+
+def test_thorax_rotation_uses_joint_role_fallback_from_skeleton():
+    face, side, valid_face, valid_side = _inputs()
+    valid_face[1, 0] = False
+    valid_side[1, 0] = False
+    config = CorruptionConfig(
+        enabled_families=("thorax_rotation_bias",), rotation_probability=1.0, rotation_degrees=30.0
+    )
+    batch = apply_corruptions(
+        face, side, valid_face, valid_side, seed=2, config=config, skeleton=_joint_fallback_skeleton()
+    )
+
+    torch.testing.assert_close(batch.corrupted_face[1, 2], batch.reference_face[1, 2])
+    assert batch.face_corruption_mask[1, 3]

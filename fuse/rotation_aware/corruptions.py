@@ -183,10 +183,6 @@ def _resolve_thorax_pivot(
         raise ValueError("pose joint dimension must match the supplied SkeletonSpec")
     role = skeleton.role("thorax")
     indices = tuple(skeleton.joint_index(name) for name in role.joints)
-    if role.kind == "joint":
-        index = indices[0]
-        return points[:, index : index + 1], valid[:, index]
-
     primary = points[:, indices].mean(dim=1, keepdim=True)
     primary_valid = valid[:, indices].all(dim=1)
     if not role.fallback:
