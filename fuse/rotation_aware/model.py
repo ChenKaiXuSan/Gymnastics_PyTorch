@@ -38,11 +38,16 @@ class ResidualTCNBlock(nn.Module):
         self.conv2 = nn.Conv1d(channels, channels, kernel_size=3, padding=dilation, dilation=dilation)
         self.activation = nn.GELU()
 
-    def forward(self, values: Tensor) -> Tensor:
+    def forward(self, values: Tensor, mask: Tensor) -> Tensor:
+        if mask.shape != (values.shape[0], 1, values.shape[2]):
+            raise ValueError("TCN mask must have shape [B, 1, T]")
+        mask = mask.to(dtype=values.dtype)
+        values = values * mask
         residual = values
-        values = self.activation(self.conv1(values))
-        values = self.conv2(values)
-        return self.activation(values + residual)
+        values = self.conv1(values) * mask
+        values = self.activation(values) * mask
+        values = self.conv2(values) * mask
+        return self.activation(values + residual) * mask
 
 
 class DilatedResidualTCN(nn.Module):
@@ -52,9 +57,9 @@ class DilatedResidualTCN(nn.Module):
         super().__init__()
         self.blocks = nn.ModuleList(ResidualTCNBlock(channels, dilation) for dilation in (1, 2, 4, 8, 16, 32))
 
-    def forward(self, values: Tensor) -> Tensor:
+    def forward(self, values: Tensor, mask: Tensor) -> Tensor:
         for block in self.blocks:
-            values = block(values)
+            values = block(values, mask)
         return values
 
 
@@ -75,7 +80,18 @@ class SharedViewEncoder(nn.Module):
         )
         self.activation = nn.GELU()
 
-    def forward(self, points: Tensor, valid: Tensor, features: FeatureBundle, trunk_rotation: Tensor, trunk_angle: Tensor, trunk_omega: Tensor, trunk_alpha: Tensor, trunk_valid: Tensor) -> Tensor:
+    def forward(
+        self,
+        points: Tensor,
+        valid: Tensor,
+        effective_mask: Tensor,
+        features: FeatureBundle,
+        trunk_rotation: Tensor,
+        trunk_angle: Tensor,
+        trunk_omega: Tensor,
+        trunk_alpha: Tensor,
+        trunk_valid: Tensor,
+    ) -> Tensor:
         pose = features.pose
         if pose.points.shape != points.shape or pose.valid.shape != valid.shape:
             raise ValueError("FeatureBundle pose features must match the supplied points and valid mask")
@@ -83,6 +99,8 @@ class SharedViewEncoder(nn.Module):
             raise ValueError("FeatureBundle velocity features must match the supplied points and valid mask")
         if features.quality.score.shape != points.shape[:2]:
             raise ValueError("FeatureBundle quality score must have shape [B, T]")
+        if effective_mask.shape != valid.shape:
+            raise ValueError("effective_mask must have shape [B, T, J]")
 
         joint_features = torch.cat(
             (
@@ -105,7 +123,8 @@ class SharedViewEncoder(nn.Module):
             ),
             dim=-1,
         )
-        return self.activation(self.joint(joint_features) + self.trunk(trunk_features).unsqueeze(2))
+        encoded = self.activation(self.joint(joint_features) + self.trunk(trunk_features).unsqueeze(2))
+        return torch.where(effective_mask[..., None], encoded, torch.zeros_like(encoded))
 
 
 class RotationAwareFusionModel(nn.Module):
@@ -163,6 +182,18 @@ class RotationAwareFusionModel(nn.Module):
         )
 
     @staticmethod
+    def _temporal_valid_mask(
+        temporal_valid: Tensor | None,
+        valid_face: Tensor,
+        valid_side: Tensor,
+    ) -> Tensor:
+        if temporal_valid is None:
+            return (valid_face | valid_side).any(dim=-1)
+        if temporal_valid.shape != valid_face.shape[:2]:
+            raise ValueError("temporal_valid must have shape [B, T]")
+        return temporal_valid.bool()
+
+    @staticmethod
     def _cross_features(cross: DisagreementFeatures, shape: tuple[int, int, int], dtype: torch.dtype) -> Tensor:
         batch, frames, joints = shape
         if cross.coordinate_abs_delta.shape != (batch, frames, joints, 3):
@@ -207,13 +238,19 @@ class RotationAwareFusionModel(nn.Module):
         cross: DisagreementFeatures,
         valid_face: Tensor | None = None,
         valid_side: Tensor | None = None,
+        temporal_valid: Tensor | None = None,
     ) -> FusionOutput:
-        """Return a quality-weighted base plus a symmetric bounded residual."""
+        """Return a quality-weighted base plus a masked symmetric bounded residual."""
         if (valid_face is None) != (valid_side is None):
             raise ValueError("valid_face and valid_side must be provided together")
         if valid_face is None or valid_side is None:
             valid_face, valid_side = face_features.pose.valid, side_features.pose.valid
         face, side, valid_face, valid_side = self._safe_inputs(face, side, valid_face, valid_side)
+        temporal_valid = self._temporal_valid_mask(temporal_valid, valid_face, valid_side)
+        valid_face = valid_face & temporal_valid[..., None]
+        valid_side = valid_side & temporal_valid[..., None]
+        face = torch.where(valid_face[..., None], face, torch.zeros_like(face))
+        side = torch.where(valid_side[..., None], side, torch.zeros_like(side))
         base = quality_weighted_fusion(
             face,
             side,
@@ -224,9 +261,11 @@ class RotationAwareFusionModel(nn.Module):
         )
         face_trunk = extract_trunk_features(face, valid_face, self.spec, dt=1.0)
         side_trunk = extract_trunk_features(side, valid_side, self.spec, dt=1.0)
+        effective_mask = valid_face & valid_side
         face_encoded = self.view_encoder(
             face,
             valid_face,
+            effective_mask,
             face_features,
             face_trunk.rotation,
             face_trunk.angle,
@@ -237,6 +276,7 @@ class RotationAwareFusionModel(nn.Module):
         side_encoded = self.view_encoder(
             side,
             valid_side,
+            effective_mask,
             side_features,
             side_trunk.rotation,
             side_trunk.angle,
@@ -245,15 +285,18 @@ class RotationAwareFusionModel(nn.Module):
             side_trunk.rotation_valid,
         )
         symmetric_views = torch.cat(((face_encoded + side_encoded) * 0.5, (face_encoded - side_encoded).abs()), dim=-1)
+        symmetric_views = torch.where(effective_mask[..., None], symmetric_views, torch.zeros_like(symmetric_views))
         cross_encoded = self.cross_encoder(self._cross_features(cross, face.shape[:3], face.dtype))
+        cross_encoded = torch.where(effective_mask[..., None], cross_encoded, torch.zeros_like(cross_encoded))
         fused_features = self.fuse_projection(torch.cat((symmetric_views, cross_encoded), dim=-1))
+        fused_features = torch.where(effective_mask[..., None], fused_features, torch.zeros_like(fused_features))
         batch, frames, joints, channels = fused_features.shape
         temporal = fused_features.permute(0, 2, 3, 1).reshape(batch * joints, channels, frames)
-        temporal = self.tcn(temporal)
+        tcn_mask = effective_mask.permute(0, 2, 1).reshape(batch * joints, 1, frames)
+        temporal = self.tcn(temporal, tcn_mask)
         raw_delta = self.delta_head(temporal.reshape(batch, joints, channels, frames).permute(0, 3, 1, 2))
         bounded_delta = torch.tanh(raw_delta) * self.max_delta_by_joint[None, None, :, None].to(dtype=face.dtype)
-        shared_valid = valid_face & valid_side
-        delta = torch.where(shared_valid[..., None], bounded_delta, torch.zeros_like(bounded_delta))
+        delta = torch.where(effective_mask[..., None], bounded_delta, torch.zeros_like(bounded_delta))
         fused = base.points + delta
         fused_trunk = extract_trunk_features(fused, base.valid, self.spec, dt=1.0)
         return FusionOutput(
