@@ -269,6 +269,47 @@ def test_prepare_explicit_failure_returns_nonzero_after_writing_manifest(
     assert "1" in manifest["failures"]
 
 
+def test_default_prepare_returns_nonzero_after_active_aligned_person_cache_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sam3d = tmp_path / "sam3d" / "sam3d_body_results"
+    _write_sam3d(sam3d, "face", "1")
+    _write_sam3d(sam3d, "side", "1")
+    split = tmp_path / "split"
+    record = split / "person_1" / "alignment_record_1.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(
+        json.dumps(
+            {
+                "metadata": {"offset_side_to_face": 0},
+                "cycles": [
+                    {
+                        "cycle_index": 0,
+                        "face_video_frames": {"start": 0, "end": 4},
+                        "side_video_frames": {"start": 0, "end": 4},
+                    }
+                ],
+            }
+        )
+    )
+    fold = tmp_path / "fold.json"
+    fold.write_text(json.dumps({"train": [{"person_id": "1"}], "val": [], "test": []}))
+    out = tmp_path / "out"
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n  output_root: {out}\n  skeleton: configs/fuse/skeleton_mhr70.yaml\n  fold_json: {fold}"
+    )
+    monkeypatch.setattr(
+        cli,
+        "load_person_trials",
+        lambda *_: (_ for _ in ()).throw(ValueError("bad cache source")),
+    )
+
+    assert main(["prepare", "--config", str(config)]) == 1
+    manifest = json.loads((out / "split_manifest.json").read_text())
+    assert "1" in manifest["failures"]
+
+
 def test_default_prepare_keeps_aligned_people_outside_fold_membership(
     tmp_path: Path,
 ) -> None:

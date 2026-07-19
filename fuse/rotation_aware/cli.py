@@ -289,7 +289,7 @@ def _cmd_prepare(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
         ),
         encoding="utf-8",
     )
-    return 1 if args.person and failures else 0
+    return 1 if failures else 0
 
 
 def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
