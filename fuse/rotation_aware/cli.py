@@ -269,7 +269,7 @@ def _cmd_prepare(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
                 config_metadata={"config": config, "skeleton": skeleton.name},
             )
             prepared_people.append(person)
-        except (FileNotFoundError, KeyError, ValueError) as error:
+        except (KeyError, OSError, ValueError) as error:
             failures[person] = str(error)
     target = paths["output"] / "split_manifest.json"
     target.parent.mkdir(parents=True, exist_ok=True)
