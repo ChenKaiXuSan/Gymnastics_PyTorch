@@ -85,3 +85,64 @@ Controller verification identified Ruff `F401` for the unused `Mapping` import i
    ```
 
    Result: `15 passed in 1.17s`.
+
+## Review Requested Changes
+
+### RED Evidence
+
+After adding the review regression tests, ran:
+
+```bash
+conda run -n gymnastic python -m pytest tests/rotation_aware/test_corruptions.py tests/rotation_aware/test_dataset.py -q
+```
+
+Result: `13 failed, 5 passed in 1.24s`. The failures demonstrated that `apply_corruptions` did not accept `skeleton`, default corruption raised because `thorax_joint_index` was missing, and `PosePairWindowDataset` did not accept or enforce a `SplitManifest`.
+
+### Changes
+
+- Removed the caller-provided `thorax_joint_index` configuration field.
+- Added optional `SkeletonSpec` input to `apply_corruptions`; thorax rotation dynamically resolves the `thorax` role for each view and frame. Midpoint roles use their primary pair when valid and their configured fallback pair otherwise.
+- Kept generic default calls safe: when no skeleton is supplied, default corruption runs all non-semantic families and does not raise.
+- Made `PosePairWindowDataset` require `manifest` and a `train`/`val`/`test` split. It rejects every trial whose person is outside that split rather than silently filtering it.
+
+### GREEN Evidence
+
+1. Focused CPU tests:
+
+   ```bash
+   conda run -n gymnastic python -m pytest tests/rotation_aware/test_corruptions.py tests/rotation_aware/test_dataset.py -q
+   ```
+
+   Result: `18 passed in 1.20s`.
+
+2. Full rotation-aware CPU tests:
+
+   ```bash
+   conda run -n gymnastic python -m pytest tests/rotation_aware -q
+   ```
+
+   Result: `56 passed in 1.54s`.
+
+3. Ruff:
+
+   ```bash
+   conda run -n gymnastic ruff check fuse/rotation_aware tests/rotation_aware
+   ```
+
+   Result: `All checks passed!`
+
+4. Scoped mypy:
+
+   ```bash
+   conda run -n gymnastic mypy --follow-imports=skip fuse/rotation_aware/corruptions.py fuse/rotation_aware/dataset.py
+   ```
+
+   Result: `Success: no issues found in 2 source files`.
+
+5. Plain mypy was also run:
+
+   ```bash
+   conda run -n gymnastic mypy fuse/rotation_aware/corruptions.py fuse/rotation_aware/dataset.py
+   ```
+
+   Result: failed with six pre-existing import-following errors in `fuse/save.py` and `fuse/experiment_matrix.py`; neither file is owned by Task 4 and neither was changed.

@@ -10,6 +10,7 @@ from typing import Sequence
 
 import torch
 
+from .config import SkeletonSpec
 
 _FAMILIES = frozenset(
     {
@@ -43,7 +44,6 @@ class CorruptionConfig:
     drift_scale: float = 0.01
     rotation_probability: float = 0.10
     rotation_degrees: float = 12.0
-    thorax_joint_index: int | None = None
     freeze_probability: float = 0.10
     freeze_length: int = 12
     time_shift_probability: float = 0.10
@@ -103,6 +103,7 @@ def _apply_view(
     valid: torch.Tensor,
     generator: torch.Generator,
     config: CorruptionConfig,
+    skeleton: SkeletonSpec | None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     output, output_valid = points.clone(), valid.clone()
     frames, joints = valid.shape
@@ -133,12 +134,9 @@ def _apply_view(
         drift = torch.cumsum(increments, dim=0) * selected.view(1, joints, 1)
         output = output + drift * output_valid.unsqueeze(-1)
 
-    if "thorax_rotation_bias" in config.enabled_families:
+    if "thorax_rotation_bias" in config.enabled_families and skeleton is not None:
         selected_frames = _bernoulli((frames,), config.rotation_probability, generator)
-        pivot_index = config.thorax_joint_index
-        if pivot_index is None or not 0 <= pivot_index < joints:
-            raise ValueError("thorax_rotation_bias requires thorax_joint_index within the pose joint range")
-        pivot = output[:, pivot_index : pivot_index + 1]
+        pivot, pivot_valid = _resolve_thorax_pivot(output, output_valid, skeleton)
         angles = (torch.rand((frames,), generator=generator) * 2 - 1) * torch.deg2rad(
             torch.tensor(config.rotation_degrees, dtype=output.dtype)
         )
@@ -148,7 +146,11 @@ def _apply_view(
         rotation[:, 1, 0], rotation[:, 1, 1] = sin, cos
         rotation[:, 2, 2] = 1
         rotated = torch.einsum("tjc,tdc->tjd", output - pivot, rotation) + pivot
-        output = torch.where(selected_frames[:, None, None] & output_valid.unsqueeze(-1), rotated, output)
+        output = torch.where(
+            selected_frames[:, None, None] & pivot_valid[:, None, None] & output_valid.unsqueeze(-1),
+            rotated,
+            output,
+        )
 
     if "freeze_segment" in config.enabled_families:
         selected_joints = _bernoulli((joints,), config.freeze_probability, generator)
@@ -173,6 +175,28 @@ def _apply_view(
     return output, output_valid
 
 
+def _resolve_thorax_pivot(
+    points: torch.Tensor, valid: torch.Tensor, skeleton: SkeletonSpec
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Resolve the configured thorax role per frame, including midpoint fallback."""
+    if points.shape[1] != len(skeleton.joint_names):
+        raise ValueError("pose joint dimension must match the supplied SkeletonSpec")
+    role = skeleton.role("thorax")
+    indices = tuple(skeleton.joint_index(name) for name in role.joints)
+    if role.kind == "joint":
+        index = indices[0]
+        return points[:, index : index + 1], valid[:, index]
+
+    primary = points[:, indices].mean(dim=1, keepdim=True)
+    primary_valid = valid[:, indices].all(dim=1)
+    if not role.fallback:
+        return primary, primary_valid
+    fallback_indices = tuple(skeleton.joint_index(name) for name in role.fallback)
+    fallback = points[:, fallback_indices].mean(dim=1, keepdim=True)
+    fallback_valid = valid[:, fallback_indices].all(dim=1)
+    return torch.where(primary_valid[:, None, None], primary, fallback), primary_valid | fallback_valid
+
+
 def apply_corruptions(
     face: torch.Tensor,
     side: torch.Tensor,
@@ -181,19 +205,26 @@ def apply_corruptions(
     *,
     seed: int,
     config: CorruptionConfig | None = None,
+    skeleton: SkeletonSpec | None = None,
 ) -> CorruptionBatch:
-    """Apply seeded corruptions without modifying the supplied reference tensors."""
+    """Apply seeded corruptions without modifying references.
+
+    Thorax rotation is applied only when a ``SkeletonSpec`` is supplied, so the
+    default corruption configuration remains usable for generic pose tensors.
+    """
     _check_inputs(face, valid_face, "face")
     _check_inputs(side, valid_side, "side")
     if face.shape != side.shape:
         raise ValueError("face and side must have equal shape")
+    if skeleton is not None and len(skeleton.joint_names) != face.shape[1]:
+        raise ValueError("pose joint dimension must match the supplied SkeletonSpec")
     config = config or CorruptionConfig()
     generator = torch.Generator(device="cpu")
     generator.manual_seed(int(seed))
     reference_face, reference_side = face.clone(), side.clone()
     reference_valid_face, reference_valid_side = valid_face.clone(), valid_side.clone()
-    corrupted_face, corrupted_valid_face = _apply_view(face, valid_face, generator, config)
-    corrupted_side, corrupted_valid_side = _apply_view(side, valid_side, generator, config)
+    corrupted_face, corrupted_valid_face = _apply_view(face, valid_face, generator, config, skeleton)
+    corrupted_side, corrupted_valid_side = _apply_view(side, valid_side, generator, config, skeleton)
     face_mask = ((corrupted_face != reference_face).any(dim=-1) | (corrupted_valid_face != reference_valid_face))
     side_mask = ((corrupted_side != reference_side).any(dim=-1) | (corrupted_valid_side != reference_valid_side))
     return CorruptionBatch(

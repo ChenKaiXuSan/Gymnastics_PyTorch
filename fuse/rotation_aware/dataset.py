@@ -74,20 +74,23 @@ class _WindowIndex:
 
 
 class PosePairWindowDataset(Dataset[dict[str, Any]]):
-    """Windowed CPU tensors from person-filtered cached ``PosePairTrial`` records."""
+    """Manifest-bound CPU windows from cached ``PosePairTrial`` records."""
 
     def __init__(
         self,
         trials: Sequence[PosePairTrial],
         *,
-        person_ids: Sequence[str],
+        manifest: SplitManifest,
         split: str,
         config: WindowConfig | None = None,
     ) -> None:
-        if split not in {"train", "val", "eval", "test"}:
-            raise ValueError("split must be train, val, eval, or test")
+        if split not in {"train", "val", "test"}:
+            raise ValueError("split must be train, val, or test")
         self.config = config or WindowConfig()
-        included = {str(person_id) for person_id in person_ids}
+        included = set(getattr(manifest, split))
+        unexpected = sorted({trial.person_id for trial in trials} - included)
+        if unexpected:
+            raise ValueError(f"trials are not members of the {split} split: {unexpected}")
         self.split = split
         self._windows: list[_WindowIndex] = []
         stride = self.config.train_stride if split == "train" else self.config.eval_stride

@@ -8,11 +8,28 @@ from fuse.rotation_aware.corruptions import (
     apply_corruptions,
     write_corruption_manifest,
 )
+from fuse.rotation_aware.config import RoleSpec, SkeletonSpec
 
 
 def _inputs():
     values = torch.arange(12 * 4 * 3, dtype=torch.float32).reshape(12, 4, 3) + 1
     return values, values + 100, torch.ones(12, 4, dtype=torch.bool), torch.ones(12, 4, dtype=torch.bool)
+
+
+def _skeleton() -> SkeletonSpec:
+    return SkeletonSpec(
+        name="test",
+        joint_names=("left-thorax", "right-thorax", "left-fallback", "right-fallback"),
+        bones=(),
+        roles={
+            "thorax": RoleSpec(
+                kind="midpoint",
+                joints=("left-thorax", "right-thorax"),
+                fallback=("left-fallback", "right-fallback"),
+            )
+        },
+        required_roles=("thorax",),
+    )
 
 
 def test_corruption_is_reproducible_and_reference_is_unchanged():
@@ -37,7 +54,7 @@ def test_corruption_is_reproducible_and_reference_is_unchanged():
         ("temporal_block_dropout", {"temporal_block_probability": 1.0, "block_length": 12}),
         ("spike_noise", {"spike_probability": 1.0, "spike_scale": 2.0}),
         ("random_walk_drift", {"drift_probability": 1.0, "drift_scale": 0.5}),
-        ("thorax_rotation_bias", {"rotation_probability": 1.0, "rotation_degrees": 30.0, "thorax_joint_index": 0}),
+        ("thorax_rotation_bias", {"rotation_probability": 1.0, "rotation_degrees": 30.0}),
         ("freeze_segment", {"freeze_probability": 1.0, "freeze_length": 12}),
         ("integer_time_shift", {"time_shift_probability": 1.0, "max_time_shift": 2}),
     ],
@@ -51,6 +68,7 @@ def test_each_corruption_family_marks_exactly_the_changed_valid_points(family, c
         valid_side,
         seed=11,
         config=CorruptionConfig(enabled_families=(family,), **config_kwargs),
+        skeleton=_skeleton() if family == "thorax_rotation_bias" else None,
     )
 
     face_changed = (batch.corrupted_face != batch.reference_face).any(dim=-1)
@@ -94,3 +112,30 @@ def test_time_shift_leaves_reference_invalid_targets_and_masks_untouched():
     torch.testing.assert_close(batch.corrupted_side[:, 0], side[:, 0])
     assert not batch.face_corruption_mask[:, 0].any()
     assert not batch.side_corruption_mask[:, 0].any()
+
+
+def test_default_corruptions_do_not_require_a_caller_supplied_thorax_index():
+    face, side, valid_face, valid_side = _inputs()
+
+    batch = apply_corruptions(face, side, valid_face, valid_side, seed=3)
+
+    assert batch.corrupted_face.shape == face.shape
+
+
+def test_thorax_rotation_resolves_virtual_midpoint_and_fallback_from_skeleton():
+    face, side, valid_face, valid_side = _inputs()
+    valid_face[1, :2] = False
+    valid_side[1, :2] = False
+    config = CorruptionConfig(
+        enabled_families=("thorax_rotation_bias",), rotation_probability=1.0, rotation_degrees=30.0
+    )
+    batch = apply_corruptions(face, side, valid_face, valid_side, seed=2, config=config, skeleton=_skeleton())
+
+    torch.testing.assert_close(
+        batch.corrupted_face[0, :2].mean(dim=0), batch.reference_face[0, :2].mean(dim=0)
+    )
+    torch.testing.assert_close(
+        batch.corrupted_face[1, 2:].mean(dim=0), batch.reference_face[1, 2:].mean(dim=0)
+    )
+    assert batch.face_corruption_mask[0, :2].any()
+    assert batch.face_corruption_mask[1, 2:].any()

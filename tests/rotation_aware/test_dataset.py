@@ -6,6 +6,7 @@ import torch
 from fuse.metadata.mhr70 import mhr_names
 from fuse.rotation_aware.dataset import (
     PosePairWindowDataset,
+    SplitManifest,
     WindowConfig,
     build_split_manifest,
     collate_pose_pair_windows,
@@ -63,7 +64,9 @@ def test_split_manifest_rejects_person_leakage():
 
 
 def test_window_defaults_padding_and_train_stride_are_masked_from_loss():
-    dataset = PosePairWindowDataset([_trial("1", 160)], person_ids=("1",), split="train")
+    dataset = PosePairWindowDataset(
+        [_trial("1", 160)], manifest=SplitManifest(train=("1",), val=("2",), test=("3",)), split="train"
+    )
 
     assert dataset.config == WindowConfig()
     assert len(dataset) == 2
@@ -76,7 +79,9 @@ def test_window_defaults_padding_and_train_stride_are_masked_from_loss():
 
 
 def test_eval_windows_use_64_stride_and_short_trial_padding_is_excluded():
-    dataset = PosePairWindowDataset([_trial("1", 40)], person_ids=("1",), split="eval")
+    dataset = PosePairWindowDataset(
+        [_trial("3", 40)], manifest=SplitManifest(train=("1",), val=("2",), test=("3",)), split="test"
+    )
 
     sample = dataset[0]
     assert dataset.config.eval_stride == 64
@@ -86,9 +91,22 @@ def test_eval_windows_use_64_stride_and_short_trial_padding_is_excluded():
 
 
 def test_collate_stacks_window_tensors_without_unmasking_padding():
-    dataset = PosePairWindowDataset([_trial("1", 40)], person_ids=("1",), split="eval")
+    dataset = PosePairWindowDataset(
+        [_trial("3", 40)], manifest=SplitManifest(train=("1",), val=("2",), test=("3",)), split="test"
+    )
     batch = collate_pose_pair_windows([dataset[0], dataset[0]])
 
     assert batch["face"].shape == (2, 128, len(mhr_names), 3)
     assert batch["loss_mask"].shape == (2, 128, len(mhr_names))
     assert not batch["loss_mask"][:, 40:].any()
+
+
+def test_dataset_rejects_trials_outside_the_requested_manifest_split():
+    manifest = SplitManifest(train=("1",), val=("2",), test=("3",))
+
+    try:
+        PosePairWindowDataset([_trial("2", 40)], manifest=manifest, split="train")
+    except ValueError as error:
+        assert "not members" in str(error)
+    else:
+        raise AssertionError("expected wrong-person dataset construction to be rejected")
