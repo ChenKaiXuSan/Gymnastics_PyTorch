@@ -391,6 +391,20 @@ def process_person(
     return person_summary
 
 
+def collect_person_summaries(output_root: Path) -> List[Dict[str, Any]]:
+    """Load every saved per-person summary in numeric person order."""
+    person_dirs = sorted(
+        (path for path in output_root.glob("person_*") if path.is_dir()),
+        key=lambda path: int(path.name.removeprefix("person_")),
+    )
+    summaries = []
+    for person_dir in person_dirs:
+        summary_path = person_dir / "summary.json"
+        if summary_path.is_file():
+            summaries.append(json.loads(summary_path.read_text(encoding="utf-8")))
+    return summaries
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Triangulate SAM3D-Body 2D keypoints using split_cycle alignment."
@@ -471,6 +485,7 @@ def main() -> None:
         )
 
     output_root.mkdir(parents=True, exist_ok=True)
+    all_summaries = collect_person_summaries(output_root)
     save_frame_json(
         output_root / "summary.json",
         {
@@ -479,8 +494,8 @@ def main() -> None:
             "output_root": str(output_root),
             "face_calibration": str(face_calib["path"]),
             "side_calibration": str(side_calib["path"]),
-            "num_persons": len(summaries),
-            "persons": summaries,
+            "num_persons": len(all_summaries),
+            "persons": all_summaries,
         },
     )
     print(f"[DONE] Saved triangulated results to {output_root}")

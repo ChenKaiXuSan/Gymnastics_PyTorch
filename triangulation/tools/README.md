@@ -28,3 +28,25 @@ The cycle CSV records frame ranges, processed frame counts, missing pair counts,
 joint counts, reprojection errors, generated sequence paths, visualization video
 paths, and source cycle directories. The person CSV aggregates cycle counts,
 frame counts, missing pairs, and reprojection error statistics per person.
+
+## Strict Dataset Validation
+
+Validate the triangulated tree against every split-cycle record:
+
+```bash
+conda run -n gymnastic python triangulation/tools/validate_sam3d_triangulated.py \
+  --exclude-person 119
+```
+
+The command checks cycle inventory, `(T, 70, 3)` sequence shapes, finite
+coordinates, processed-frame counts, missing frame pairs, per-frame JSON
+counts, and the merged root summary. Structural errors return a nonzero exit
+code. A per-view mean reprojection error over 60 px is recorded as a warning.
+Person 119 remains subject to every completeness check but is excluded from
+aggregate quality metrics because of its known low two-view overlap.
+
+The machine-readable report is written to:
+
+```text
+logs/analysis/triangulated_results/validation_summary.json
+```
