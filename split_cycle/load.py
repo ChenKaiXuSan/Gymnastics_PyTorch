@@ -48,11 +48,10 @@ def load_sam3d_body_sequence(
         person_id: e.g., "01"
         subdir: e.g., "face" (or "body", "mesh", etc. depends on your export)
         pattern: glob pattern for frame npz files
-        prefer: choose which key list to try first ("kpts3d" is default)
-        strict: if True, raise when cannot find keypoints in a frame.
-
     Returns:
-        Tuple[List[Dict], np.ndarray]: A tuple containing a list of dictionaries with frame information and a numpy array of keypoints.
+        Tuple[List[Dict], np.ndarray]: Lightweight per-frame metadata containing
+        only ``frame_idx`` and ``pred_keypoints_3d``, plus the stacked keypoint
+        sequence.
     """
     root = Path(root)
 
@@ -74,31 +73,23 @@ def load_sam3d_body_sequence(
         raise FileNotFoundError(f"No npz files matched: {base}/{pattern}")
 
     all_kpts: List[np.ndarray] = []
-
     all_info: List[Dict] = []
 
-    one_frame_info_dict: Dict = {}
-
     for fp in files:
+        with np.load(fp, allow_pickle=True) as data:
+            output = data["output"].item()
+            frame_idx = int(np.asarray(output["frame_idx"]).item())
+            pred_keypoints_3d = np.array(
+                output["pred_keypoints_3d"], copy=True
+            )
 
-        info = np.load(fp, allow_pickle=True)["output"].item()
-        pred_keypoints_3d = info[
-            "pred_keypoints_3d"
-        ]  # (J, 3) or (1, J, 3) or (J, 4) etc.
-        frame = info["frame"]  # frame index
-        frame_idx = info["frame_idx"]  # frame index in video
+        frame_info = {
+            "frame_idx": frame_idx,
+            "pred_keypoints_3d": pred_keypoints_3d,
+        }
+        all_info.append(frame_info)
+        all_kpts.append(pred_keypoints_3d)
 
-        one_frame_info_dict[frame_idx] = info
-        one_frame_info_dict["frame"] = frame
-        one_frame_info_dict["pred_keypoints_3d"] = pred_keypoints_3d
-
-        all_info.append(one_frame_info_dict)
-        all_kpts.append(pred_keypoints_3d)  # take (x,y,z)
-
-        # if frame_idx > 60:
-        #     break
-
-    # Stack kpts
-    kpts3d = np.stack(all_kpts, axis=0)  # (T,J,3)
+    kpts3d = np.stack(all_kpts, axis=0)
 
     return all_info, kpts3d
