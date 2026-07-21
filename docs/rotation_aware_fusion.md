@@ -60,16 +60,32 @@ conda run --no-capture-output -n gymnastic python analysis/benchmark_rotation_aw
 ```
 
 The JSON report records the resolved configuration and device, warmup count,
-the scalar-reference and optimized validation diagnostics, per-epoch timings,
-median epoch time, training samples per second, stage timings, measured losses,
-and peak CUDA allocation. It requires at least two measured epochs and
-synchronizes CUDA at each timing boundary.
+source and effective training-device settings, per-epoch timings, median epoch
+time, the end-to-end effective train-window rate, workload counts for train
+windows/cycles and validation windows/cycles, measured losses, and peak CUDA
+allocation. The effective train-window rate is train windows divided by the
+complete epoch wall time, which includes the configured complete-cycle and
+validation work; it is not raw per-loader throughput. It requires at least two
+measured epochs and synchronizes CUDA at each timing boundary.
+
+Warmup and measured epochs use `performance.profile_stages` exactly as the
+training command does. When that setting is false, the report captures stage
+timings in one separately labeled, untimed diagnostic profiled epoch after the
+timing and peak-memory windows. When it is true, stage timings come from the
+configured measured workload.
+
+After the measured epochs, the benchmark validates the trained model on the
+same resolved device and cache through both the retained scalar-reference and
+optimized paths. It records absolute and relative deltas for every loss at
+`1e-6` relative/absolute tolerance and every score component and score at
+`1e-7`. It also applies the training command's shared checkpoint rule,
+`score >= best_score`, against one pre-training scalar-reference baseline. The
+benchmark fails when equivalence or checkpoint-selection agreement fails.
 
 Treat median epoch time and samples per second as the throughput acceptance
 metrics, not GPU utilization alone. Before accepting an optimized batch-64
-path, retain the scalar-versus-batched validation equivalence and checkpoint
-selection checks, require finite losses and timings, confirm an improved
-median epoch time, and keep peak CUDA memory below 22 GiB.
+path, require finite losses and timings, confirm an improved median epoch time,
+and keep peak CUDA memory below 22 GiB.
 
 ## Ablations And Unified Evaluation
 

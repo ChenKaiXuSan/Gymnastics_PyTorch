@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+from copy import deepcopy
 import importlib
 import json
 from pathlib import Path
@@ -10,10 +11,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
+import yaml
 
 from fuse.metadata.mhr70 import mhr_names
 import fuse.rotation_aware.cli as cli
-from fuse.rotation_aware.cli import _training_config_for_ablation, main
+from fuse.rotation_aware.cli import _training_config_for_ablation, load_config, main
 
 
 def _pose(frame: int, side: bool) -> np.ndarray:
@@ -156,46 +158,30 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     output = tmp_path / "outputs"
     old_fuse_root = tmp_path / "legacy_fuse_outputs"
     old_fuse_root.mkdir()
-    config = tmp_path / "rotation_aware_batch64_override.yaml"
-    config.write_text(
-        "\n".join(
-            (
-                "paths:",
-                f"  sam3d_root: {sam3d}",
-                f"  split_cycle_root: {split_root}",
-                f"  output_root: {output}",
-                "  skeleton: configs/fuse/skeleton_mhr70.yaml",
-                f"  fold_json: {fold}",
-                f"  old_fuse_root: {old_fuse_root}",
-                "window:",
-                "  length: 32",
-                "  train_stride: 16",
-                "  eval_stride: 16",
-                "training:",
-                "  epochs: 1",
-                "  batch_size: 64",
-                "  hidden_channels: 8",
-                "  seed: 0",
-                "  device: cpu",
-                "performance:",
-                "  prefetch_batches: 0",
-                "  pin_memory: false",
-                "  non_blocking_transfer: false",
-                "  cache_validation_batches: true",
-                "  profile_stages: false",
-            )
-        ),
-        encoding="utf-8",
-    )
-    scheduled = {
-        "training": {
-            "epochs_by_ablation": {"A4": 200, "A5": 200, "A6": 100},
-            "batch_size": 64,
+    production_config = load_config("configs/fuse/rotation_aware_batch64.yaml")
+    assert _training_config_for_ablation(production_config, "A4")["epochs"] == 200
+    assert _training_config_for_ablation(production_config, "A5")["epochs"] == 200
+    assert _training_config_for_ablation(production_config, "A6")["epochs"] == 100
+    assert _training_config_for_ablation(production_config, "A6")["batch_size"] == 64
+
+    tiny_config = deepcopy(production_config)
+    tiny_config["paths"].update(
+        {
+            "sam3d_root": str(sam3d),
+            "split_cycle_root": str(split_root),
+            "output_root": str(output),
+            "fold_json": str(fold),
+            "old_fuse_root": str(old_fuse_root),
         }
-    }
-    assert _training_config_for_ablation(scheduled, "A4")["epochs"] == 200
-    assert _training_config_for_ablation(scheduled, "A6")["epochs"] == 100
-    assert _training_config_for_ablation(scheduled, "A6")["batch_size"] == 64
+    )
+    tiny_config["window"].update(
+        {"length": 32, "train_stride": 16, "eval_stride": 16}
+    )
+    tiny_training = tiny_config["training"]
+    tiny_training.pop("epochs_by_ablation")
+    tiny_training.update({"epochs": 1, "hidden_channels": 8, "device": "cpu"})
+    config = tmp_path / "rotation_aware_batch64_override.yaml"
+    config.write_text(yaml.safe_dump(tiny_config, sort_keys=False), encoding="utf-8")
 
     step_count = 0
     original_step = torch.optim.Adam.step
@@ -222,7 +208,18 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     assert training_config["ablation"] == "A6"
     assert checkpoint["provenance"]["training_config_hash"]
 
+    tiny_config["training"]["device"] = "cuda:0"
+    config.write_text(yaml.safe_dump(tiny_config, sort_keys=False), encoding="utf-8")
     benchmark = importlib.import_module("analysis.benchmark_rotation_aware_training")
+    profiler_enabled: list[bool] = []
+    original_profiler = benchmark.StageProfiler
+
+    class RecordingProfiler(original_profiler):
+        def __init__(self, enabled: bool, device: torch.device) -> None:
+            profiler_enabled.append(enabled)
+            super().__init__(enabled=enabled, device=device)
+
+    monkeypatch.setattr(benchmark, "StageProfiler", RecordingProfiler)
     benchmark_output = tmp_path / "benchmark.json"
     assert benchmark.main(
         [
@@ -244,10 +241,24 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     assert benchmark_report["measured_epochs"] == 2
     assert len(benchmark_report["epoch_timings_seconds"]) == 2
     assert benchmark_report["median_epoch_seconds"] > 0
-    assert benchmark_report["samples_per_second"]["median"] > 0
+    assert benchmark_report["effective_train_window_rate"]["median_windows_per_second"] > 0
     assert benchmark_report["peak_cuda_memory_bytes"] == 0
-    assert benchmark_report["validation_paths"]["scalar_reference"]["score"]
-    assert benchmark_report["validation_paths"]["optimized"]["score"]
+    assert benchmark_report["workload_counts"] == {
+        "train_windows": 2,
+        "train_complete_cycles": 1,
+        "validation_windows": 2,
+        "validation_complete_cycles": 1,
+    }
+    assert benchmark_report["config"]["source_training"]["device"] == "cuda:0"
+    assert benchmark_report["config"]["effective_training"]["device"] == "cpu"
+    assert profiler_enabled == [False, False, True]
+    assert benchmark_report["stage_timings"]["mode"] == "untimed_diagnostic_epoch"
+    assert benchmark_report["stage_timings"]["diagnostic"]["timed"] is False
+    acceptance = benchmark_report["validation_acceptance"]
+    assert acceptance["equivalent"]
+    assert acceptance["checkpoint_selection"]["agreement"]
+    assert acceptance["accepted"]
+    assert acceptance["losses"]["total"]["absolute_delta"] >= 0
 
 
 def test_benchmark_rejects_single_measured_epoch(tmp_path: Path) -> None:
@@ -268,3 +279,35 @@ def test_benchmark_rejects_single_measured_epoch(tmp_path: Path) -> None:
                 str(tmp_path / "benchmark.json"),
             ]
         )
+
+
+def test_benchmark_rejects_nested_non_finite_report_values() -> None:
+    benchmark = importlib.import_module("analysis.benchmark_rotation_aware_training")
+
+    with pytest.raises(FloatingPointError, match="report.epochs.0.loss"):
+        benchmark._require_finite(
+            {"epochs": [{"loss": float("nan")}]}, "report"
+        )
+
+
+def test_benchmark_validation_acceptance_rejects_divergent_paths() -> None:
+    benchmark = importlib.import_module("analysis.benchmark_rotation_aware_training")
+    reference = {
+        "losses": {"total": 1.0},
+        "components": {"bone_cv": 0.5},
+        "score": 0.75,
+    }
+    optimized = {
+        "losses": {"total": 1.1},
+        "components": {"bone_cv": 0.5},
+        "score": 0.75,
+    }
+
+    acceptance = benchmark._validation_acceptance(
+        reference, optimized, checkpoint_baseline_score=0.5
+    )
+
+    assert not acceptance["equivalent"]
+    assert not acceptance["accepted"]
+    with pytest.raises(AssertionError, match="validation acceptance failed"):
+        benchmark._require_validation_acceptance(acceptance)

@@ -67,7 +67,10 @@ class BenchmarkWorkload:
     training_config: dict[str, Any]
     prepared_validation_loader: list[dict[str, object]] | None
     prepared_validation_complete_cycle_loader: list[dict[str, object]] | None
-    train_samples: int
+    train_window_count: int
+    train_complete_cycle_count: int
+    validation_window_count: int
+    validation_complete_cycle_count: int
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -209,7 +212,10 @@ def _build_workload(
         training_config=training,
         prepared_validation_loader=prepared_validation_loader,
         prepared_validation_complete_cycle_loader=prepared_validation_complete_cycle_loader,
-        train_samples=len(train_set),
+        train_window_count=len(train_set),
+        train_complete_cycle_count=len(train_cycles),
+        validation_window_count=len(validation_loader.dataset),
+        validation_complete_cycle_count=len(validation_cycles),
     )
 
 
@@ -222,15 +228,29 @@ def _require_finite(value: object, description: str) -> None:
     if isinstance(value, Mapping):
         for key, item in value.items():
             _require_finite(item, f"{description}.{key}")
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _require_finite(item, f"{description}.{index}")
     elif isinstance(value, (int, float)) and not isinstance(value, bool):
         if not math.isfinite(float(value)):
             raise FloatingPointError(f"non-finite benchmark value: {description}")
 
 
 def _run_epoch(
-    workload: BenchmarkWorkload, *, epoch: int, device: torch.device
+    workload: BenchmarkWorkload,
+    *,
+    epoch: int,
+    device: torch.device,
+    profiler_enabled: bool | None = None,
 ) -> tuple[dict[str, float], dict[str, Any], StageProfiler]:
-    profiler = StageProfiler(enabled=True, device=device)
+    profiler = StageProfiler(
+        enabled=(
+            workload.throughput_config.profile_stages
+            if profiler_enabled is None
+            else profiler_enabled
+        ),
+        device=device,
+    )
     train_metrics = train_one_epoch(
         workload.model,
         workload.train_loader,
@@ -264,11 +284,16 @@ def _run_epoch(
     return train_metrics, validation_metrics, profiler
 
 
-def _validation_path_report(
-    workload: BenchmarkWorkload, *, device: torch.device
-) -> dict[str, object]:
-    """Record the retained scalar and optimized validation paths before timing."""
-    reference = validate(
+def _validation_result(
+    workload: BenchmarkWorkload, *, device: torch.device, scalar_forward: bool
+) -> dict[str, Any]:
+    prepared_loader = None if scalar_forward else workload.prepared_validation_loader
+    prepared_complete_cycle_loader = (
+        None
+        if scalar_forward
+        else workload.prepared_validation_complete_cycle_loader
+    )
+    return validate(
         workload.model,
         workload.validation_loader,
         workload.skeleton,
@@ -278,28 +303,141 @@ def _validation_path_report(
         seed=int(workload.training_config.get("seed", 0)),
         device=device,
         throughput_config=workload.throughput_config,
-        scalar_forward=True,
+        prepared_loader=prepared_loader,
+        prepared_complete_cycle_loader=prepared_complete_cycle_loader,
+        scalar_forward=scalar_forward,
     )
-    optimized = validate(
-        workload.model,
-        workload.validation_loader,
-        workload.skeleton,
-        loss_config=workload.loss_config,
-        corruption_config=workload.corruption_config,
-        complete_cycle_loader=workload.validation_complete_cycle_loader,
-        seed=int(workload.training_config.get("seed", 0)),
-        device=device,
-        throughput_config=workload.throughput_config,
-        prepared_loader=workload.prepared_validation_loader,
-        prepared_complete_cycle_loader=workload.prepared_validation_complete_cycle_loader,
-        scalar_forward=False,
-    )
-    _require_finite(reference, "scalar_reference")
-    _require_finite(optimized, "optimized")
+
+
+def _metric_comparison(
+    reference: float, optimized: float, *, relative_tolerance: float, absolute_tolerance: float
+) -> dict[str, float | bool]:
+    absolute_delta = abs(optimized - reference)
+    relative_delta = absolute_delta / max(abs(reference), 1e-12)
     return {
         "scalar_reference": reference,
         "optimized": optimized,
+        "absolute_delta": absolute_delta,
+        "relative_delta": relative_delta,
+        "equivalent": math.isclose(
+            reference,
+            optimized,
+            rel_tol=relative_tolerance,
+            abs_tol=absolute_tolerance,
+        ),
     }
+
+
+def _mapping_comparison(
+    reference: Mapping[str, object],
+    optimized: Mapping[str, object],
+    *,
+    relative_tolerance: float,
+    absolute_tolerance: float,
+    description: str,
+) -> dict[str, dict[str, float | bool]]:
+    if set(reference) != set(optimized):
+        raise ValueError(f"scalar and optimized {description} keys differ")
+    return {
+        name: _metric_comparison(
+            float(value),
+            float(optimized[name]),
+            relative_tolerance=relative_tolerance,
+            absolute_tolerance=absolute_tolerance,
+        )
+        for name, value in reference.items()
+    }
+
+
+def _validation_acceptance(
+    reference: Mapping[str, object],
+    optimized: Mapping[str, object],
+    *,
+    checkpoint_baseline_score: float,
+) -> dict[str, object]:
+    """Compare paths using the training command's common ``score >= best`` rule."""
+    reference_losses = reference.get("losses")
+    optimized_losses = optimized.get("losses")
+    reference_components = reference.get("components")
+    optimized_components = optimized.get("components")
+    if not all(
+        isinstance(value, Mapping)
+        for value in (
+            reference_losses,
+            optimized_losses,
+            reference_components,
+            optimized_components,
+        )
+    ):
+        raise ValueError("validation paths require loss and component mappings")
+    losses = _mapping_comparison(
+        reference_losses,
+        optimized_losses,
+        relative_tolerance=1e-6,
+        absolute_tolerance=1e-6,
+        description="loss",
+    )
+    components = _mapping_comparison(
+        reference_components,
+        optimized_components,
+        relative_tolerance=1e-7,
+        absolute_tolerance=1e-7,
+        description="component",
+    )
+    score = _metric_comparison(
+        float(reference["score"]),
+        float(optimized["score"]),
+        relative_tolerance=1e-7,
+        absolute_tolerance=1e-7,
+    )
+    scalar_selected = float(reference["score"]) >= checkpoint_baseline_score
+    optimized_selected = float(optimized["score"]) >= checkpoint_baseline_score
+    equivalent = all(
+        bool(comparison["equivalent"])
+        for comparisons in (losses, components)
+        for comparison in comparisons.values()
+    ) and bool(score["equivalent"])
+    checkpoint_selection = {
+        "baseline_score": checkpoint_baseline_score,
+        "rule": "score >= best_score",
+        "scalar_reference_selected": scalar_selected,
+        "optimized_selected": optimized_selected,
+        "agreement": scalar_selected == optimized_selected,
+    }
+    return {
+        "scalar_reference": dict(reference),
+        "optimized": dict(optimized),
+        "losses": losses,
+        "components": components,
+        "score": score,
+        "equivalent": equivalent,
+        "checkpoint_selection": checkpoint_selection,
+        "accepted": equivalent and bool(checkpoint_selection["agreement"]),
+    }
+
+
+def _require_validation_acceptance(acceptance: Mapping[str, object]) -> None:
+    if not acceptance.get("accepted"):
+        raise AssertionError("validation acceptance failed")
+
+
+def _validation_path_report(
+    workload: BenchmarkWorkload,
+    *,
+    device: torch.device,
+    checkpoint_baseline_score: float,
+) -> dict[str, object]:
+    """Gate optimized validation against scalar validation on the trained state."""
+    reference = _validation_result(workload, device=device, scalar_forward=True)
+    optimized = _validation_result(workload, device=device, scalar_forward=False)
+    _require_finite(reference, "scalar_reference")
+    _require_finite(optimized, "optimized")
+    acceptance = _validation_acceptance(
+        reference, optimized, checkpoint_baseline_score=checkpoint_baseline_score
+    )
+    _require_finite(acceptance, "validation_acceptance")
+    _require_validation_acceptance(acceptance)
+    return acceptance
 
 
 def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
@@ -308,7 +446,13 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     config = load_config(args.config)
     workload = _build_workload(config, args.ablation)
     device = _resolve_device(str(args.device or workload.training_config.get("device", "cpu")))
-    validation_paths = _validation_path_report(workload, device=device)
+    source_training = dict(workload.training_config)
+    effective_training = {**source_training, "device": str(device)}
+    checkpoint_baseline = _validation_result(
+        workload, device=device, scalar_forward=True
+    )
+    _require_finite(checkpoint_baseline, "checkpoint_baseline")
+    checkpoint_baseline_score = float(checkpoint_baseline["score"])
 
     for epoch in range(args.warmup_epochs):
         _synchronize(device)
@@ -318,7 +462,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
     epoch_timings: list[float] = []
-    stage_timings: list[dict[str, dict[str, float | int]]] = []
+    measured_stage_timings: list[dict[str, dict[str, float | int]]] = []
     train_metrics_by_epoch: list[dict[str, float]] = []
     validation_metrics_by_epoch: list[dict[str, Any]] = []
     for measurement_index in range(args.measured_epochs):
@@ -332,18 +476,54 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         elapsed = time.perf_counter() - started
         if not math.isfinite(elapsed) or elapsed <= 0:
             raise FloatingPointError("benchmark epoch time must be finite and positive")
-        stages = profiler.summary()
-        _require_finite(stages, "stages")
+        stages = profiler.summary() if workload.throughput_config.profile_stages else {}
+        _require_finite(stages, "measured_stages")
         epoch_timings.append(elapsed)
-        stage_timings.append(stages)
+        measured_stage_timings.append(stages)
         train_metrics_by_epoch.append(train_metrics)
         validation_metrics_by_epoch.append(validation_metrics)
 
     median_epoch_seconds = statistics.median(epoch_timings)
-    samples_per_second = [workload.train_samples / value for value in epoch_timings]
+    effective_train_window_rate = [
+        workload.train_window_count / value for value in epoch_timings
+    ]
     peak_cuda_memory_bytes = (
         int(torch.cuda.max_memory_allocated(device)) if device.type == "cuda" else 0
     )
+    validation_acceptance = _validation_path_report(
+        workload,
+        device=device,
+        checkpoint_baseline_score=checkpoint_baseline_score,
+    )
+    if workload.throughput_config.profile_stages:
+        stage_timings: dict[str, object] = {
+            "mode": "configured_measured_epochs",
+            "configured_profile_stages": True,
+            "measured_epochs": measured_stage_timings,
+            "diagnostic": None,
+        }
+    else:
+        diagnostic_epoch = args.warmup_epochs + args.measured_epochs
+        _synchronize(device)
+        _, _, diagnostic_profiler = _run_epoch(
+            workload,
+            epoch=diagnostic_epoch,
+            device=device,
+            profiler_enabled=True,
+        )
+        _synchronize(device)
+        diagnostic_stages = diagnostic_profiler.summary()
+        _require_finite(diagnostic_stages, "diagnostic_stages")
+        stage_timings = {
+            "mode": "untimed_diagnostic_epoch",
+            "configured_profile_stages": False,
+            "measured_epochs": measured_stage_timings,
+            "diagnostic": {
+                "epoch": diagnostic_epoch,
+                "timed": False,
+                "stages": diagnostic_stages,
+            },
+        }
     device_report: dict[str, Any] = {
         "resolved": str(device),
         "type": device.type,
@@ -355,7 +535,8 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     report = {
         "config": {
             "path": str(Path(args.config).resolve()),
-            "resolved_training": workload.training_config,
+            "source_training": source_training,
+            "effective_training": effective_training,
             "performance": asdict(workload.throughput_config),
             "window": dict(config.get("window", {})),
         },
@@ -364,12 +545,19 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "measured_epochs": args.measured_epochs,
         "epoch_timings_seconds": epoch_timings,
         "median_epoch_seconds": median_epoch_seconds,
-        "train_samples_per_epoch": workload.train_samples,
-        "samples_per_second": {
-            "per_epoch": samples_per_second,
-            "median": workload.train_samples / median_epoch_seconds,
+        "workload_counts": {
+            "train_windows": workload.train_window_count,
+            "train_complete_cycles": workload.train_complete_cycle_count,
+            "validation_windows": workload.validation_window_count,
+            "validation_complete_cycles": workload.validation_complete_cycle_count,
         },
-        "validation_paths": validation_paths,
+        "effective_train_window_rate": {
+            "definition": "train windows divided by end-to-end epoch wall time",
+            "per_epoch_windows_per_second": effective_train_window_rate,
+            "median_windows_per_second": workload.train_window_count
+            / median_epoch_seconds,
+        },
+        "validation_acceptance": validation_acceptance,
         "stage_timings": stage_timings,
         "train_metrics": train_metrics_by_epoch,
         "validation_metrics": validation_metrics_by_epoch,
@@ -392,7 +580,8 @@ def main(argv: list[str] | None = None) -> int:
         "[benchmark] "
         f"device={report['device']['resolved']} "
         f"median_epoch_seconds={report['median_epoch_seconds']:.6f} "
-        f"samples_per_second={report['samples_per_second']['median']:.3f} "
+        f"effective_train_window_rate="
+        f"{report['effective_train_window_rate']['median_windows_per_second']:.3f} "
         f"output={output}",
         flush=True,
     )
