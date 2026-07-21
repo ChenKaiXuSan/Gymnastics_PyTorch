@@ -19,6 +19,7 @@ from .losses import (
     compute_self_supervised_losses,
 )
 from .model import FusionOutput, RotationAwareFusionModel
+from .profiling import StageProfiler
 from .trunk import extract_trunk_features
 
 
@@ -93,8 +94,12 @@ def _forward_window(
     corruption_config: CorruptionConfig | None,
     device: torch.device,
     epoch: int = 0,
+    profiler: StageProfiler | None = None,
 ) -> tuple[FusionOutput, dict[str, object]]:
-    prepared = _corrupt_batch(batch, seed=seed, skeleton=skeleton, corruption_config=corruption_config, epoch=epoch)
+    if profiler is None:
+        profiler = StageProfiler(enabled=False, device=device)
+    with profiler.stage("corruption"):
+        prepared = _corrupt_batch(batch, seed=seed, skeleton=skeleton, corruption_config=corruption_config, epoch=epoch)
     prepared = _tensor_batch(prepared, device)
     face = _required_tensor(prepared, "face")
     side = _required_tensor(prepared, "side")
@@ -108,17 +113,19 @@ def _forward_window(
     effective_side_valid = valid_side.bool() & temporal_valid.bool()[..., None]
     safe_face = torch.where(effective_face_valid[..., None], face, torch.zeros_like(face))
     safe_side = torch.where(effective_side_valid[..., None], side, torch.zeros_like(side))
-    face_features = _feature_bundle(safe_face, effective_face_valid, skeleton, dt)
-    side_features = _feature_bundle(safe_side, effective_side_valid, skeleton, dt)
-    face_trunk = extract_trunk_features(safe_face, effective_face_valid, skeleton, dt=dt)
-    side_trunk = extract_trunk_features(safe_side, effective_side_valid, skeleton, dt=dt)
-    cross = compute_disagreement_features(
-        safe_face, safe_side, face_trunk, side_trunk, effective_face_valid, effective_side_valid
-    )
-    output = model(
-        safe_face, safe_side, face_features, side_features, cross, effective_face_valid, effective_side_valid,
-        temporal_valid=temporal_valid, dt=dt,
-    )
+    with profiler.stage("features"):
+        face_features = _feature_bundle(safe_face, effective_face_valid, skeleton, dt)
+        side_features = _feature_bundle(safe_side, effective_side_valid, skeleton, dt)
+        face_trunk = extract_trunk_features(safe_face, effective_face_valid, skeleton, dt=dt)
+        side_trunk = extract_trunk_features(safe_side, effective_side_valid, skeleton, dt=dt)
+        cross = compute_disagreement_features(
+            safe_face, safe_side, face_trunk, side_trunk, effective_face_valid, effective_side_valid
+        )
+    with profiler.stage("forward"):
+        output = model(
+            safe_face, safe_side, face_features, side_features, cross, effective_face_valid, effective_side_valid,
+            temporal_valid=temporal_valid, dt=dt,
+        )
     reference_valid_face = _required_tensor(prepared, "reference_valid_face")
     reference_valid_side = _required_tensor(prepared, "reference_valid_side")
     loss_mask = _required_tensor(prepared, "loss_mask")
@@ -128,8 +135,9 @@ def _forward_window(
     effective_reference_side_valid = reference_valid_side.bool() & temporal_valid.bool()[..., None]
     safe_reference_face = torch.where(effective_reference_face_valid[..., None], reference_face, torch.zeros_like(reference_face))
     safe_reference_side = torch.where(effective_reference_side_valid[..., None], reference_side, torch.zeros_like(reference_side))
-    reference_face_features = _feature_bundle(safe_reference_face, effective_reference_face_valid, skeleton, dt)
-    reference_side_features = _feature_bundle(safe_reference_side, effective_reference_side_valid, skeleton, dt)
+    with profiler.stage("reference_features"):
+        reference_face_features = _feature_bundle(safe_reference_face, effective_reference_face_valid, skeleton, dt)
+        reference_side_features = _feature_bundle(safe_reference_side, effective_reference_side_valid, skeleton, dt)
     prepared["valid_face"] = reference_valid_face.bool()
     prepared["valid_side"] = reference_valid_side.bool()
     prepared["loss_mask"] = loss_mask.bool() & temporal_valid.bool()[..., None]
@@ -175,10 +183,12 @@ def train_one_epoch(
     seed: int = 0,
     epoch: int = 0,
     device: str | torch.device = "cpu",
+    profiler: StageProfiler | None = None,
 ) -> dict[str, float]:
     """Run one seeded epoch and return finite averages of the nine objectives."""
     model.train()
     target_device = torch.device(device)
+    profiler = profiler if profiler is not None else StageProfiler(enabled=False, device=target_device)
     model.to(target_device)
     config = loss_config or LossConfig()
     window_config = (
@@ -192,15 +202,16 @@ def train_one_epoch(
         optimizer.zero_grad(set_to_none=True)
         output, prepared = _forward_window(
             model, batch, skeleton, seed=int(seed), corruption_config=corruption_config,
-            device=target_device, epoch=epoch,
+            device=target_device, epoch=epoch, profiler=profiler,
         )
-        losses = compute_self_supervised_losses(
-            output, prepared, window_config, skeleton
-        )
+        with profiler.stage("loss"):
+            losses = compute_self_supervised_losses(output, prepared, window_config, skeleton)
         if not torch.isfinite(losses.total):
             raise FloatingPointError("self-supervised loss is non-finite")
-        losses.total.backward()
-        optimizer.step()
+        with profiler.stage("backward"):
+            losses.total.backward()
+        with profiler.stage("optimizer"):
+            optimizer.step()
         history.append({name: float(value.detach().cpu()) for name, value in losses.as_dict().items()})
     means = _mean_metrics(history)
     if complete_cycle_loader is not None and config.complete_cycle_rom_weight > 0:
@@ -215,14 +226,18 @@ def train_one_epoch(
                 corruption_config=corruption_config,
                 device=target_device,
                 epoch=epoch,
+                profiler=profiler,
             )
-            rom = compute_complete_cycle_rom_loss(output, prepared, config, skeleton)
+            with profiler.stage("complete_cycle_loss"):
+                rom = compute_complete_cycle_rom_loss(output, prepared, config, skeleton)
             if not torch.isfinite(rom):
                 raise FloatingPointError("complete-cycle ROM loss is non-finite")
             weighted_rom = config.complete_cycle_rom_weight * rom
             if weighted_rom.requires_grad:
-                weighted_rom.backward()
-                optimizer.step()
+                with profiler.stage("complete_cycle_backward"):
+                    weighted_rom.backward()
+                with profiler.stage("complete_cycle_optimizer"):
+                    optimizer.step()
             rom_values.append(float(rom.detach().cpu()))
         if not rom_values:
             raise ValueError("complete-cycle ROM loader produced no batches")
@@ -243,11 +258,13 @@ def validate(
     complete_cycle_loader: Iterable[Mapping[str, object]] | None = None,
     seed: int = 0,
     device: str | torch.device = "cpu",
+    profiler: StageProfiler | None = None,
 ) -> dict[str, Any]:
     """Evaluate fixed corruptions and derive a score from five self-supervised measures."""
     was_training = model.training
     model.eval()
     target_device = torch.device(device)
+    profiler = profiler if profiler is not None else StageProfiler(enabled=False, device=target_device)
     model.to(target_device)
     config = loss_config or LossConfig()
     window_config = (
@@ -263,10 +280,10 @@ def validate(
                 output, prepared = _forward_window(
                     model, _single_sample(batch, sample_index), skeleton, seed=int(seed),
                     corruption_config=corruption_config, device=target_device,
+                    profiler=profiler,
                 )
-                losses = compute_self_supervised_losses(
-                    output, prepared, window_config, skeleton
-                )
+                with profiler.stage("loss"):
+                    losses = compute_self_supervised_losses(output, prepared, window_config, skeleton)
                 window_ids = prepared.get("window_id")
                 if not isinstance(window_ids, list) or len(window_ids) != 1 or not isinstance(window_ids[0], str):
                     raise ValueError("validation samples require one stable string window_id")
@@ -284,10 +301,10 @@ def validate(
                     seed=int(seed),
                     corruption_config=corruption_config,
                     device=target_device,
+                    profiler=profiler,
                 )
-                rom = compute_complete_cycle_rom_loss(
-                    output, prepared, config, skeleton
-                )
+                with profiler.stage("complete_cycle_loss"):
+                    rom = compute_complete_cycle_rom_loss(output, prepared, config, skeleton)
                 rom_values.append(float(rom.cpu()))
         if not rom_values:
             raise ValueError("complete-cycle ROM loader produced no batches")

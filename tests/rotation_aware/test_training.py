@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import torch
@@ -9,6 +10,7 @@ from fuse.rotation_aware.config import RoleSpec, SkeletonSpec
 from fuse.rotation_aware.dataset import collate_pose_pair_windows
 from fuse.rotation_aware.losses import LossConfig
 from fuse.rotation_aware.model import RotationAwareFusionModel
+from fuse.rotation_aware.profiling import StageProfiler
 from fuse.rotation_aware.training import _corrupt_batch, _feature_bundle, _forward_window, _fused_bone_cv, load_checkpoint, save_checkpoint, train_one_epoch, validate
 
 
@@ -111,6 +113,18 @@ def _complete_cycle_batch(frames: int = 129) -> dict[str, object]:
         }
     )
     return collate_pose_pair_windows([sample])
+
+
+def test_stage_profiler_collects_cpu_wall_time() -> None:
+    profiler = StageProfiler(enabled=True, device=torch.device("cpu"))
+    with profiler.stage("corruption"):
+        torch.arange(1024).sum()
+    summary = profiler.summary()
+    assert summary["corruption"]["calls"] == 1
+    assert summary["corruption"]["wall_seconds"] >= 0
+    json.dumps(summary)
+
+    assert StageProfiler(enabled=False, device=torch.device("cpu")).summary() == {}
 
 
 def test_cpu_tiny_overfit_is_finite_and_reduces_loss() -> None:
