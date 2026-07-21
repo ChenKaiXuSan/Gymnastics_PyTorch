@@ -12,6 +12,7 @@ import torch
 from fuse.metadata.mhr70 import mhr_names
 from fuse.rotation_aware import cli
 from fuse.rotation_aware.config import load_skeleton_spec
+from fuse.rotation_aware.prefetch import ThroughputConfig
 from fuse.rotation_aware.cli import (
     _cache_trial_paths,
     _cached_trials,
@@ -195,16 +196,29 @@ def test_configured_training_device_is_forwarded(
         f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n"
         f"  output_root: {output}\n  skeleton: configs/fuse/skeleton_mhr70.yaml\n"
         f"  fold_json: {fold}\ntraining:\n  epochs: 1\n  batch_size: 1\n"
-        "  hidden_channels: 8\n  seed: 3\n  device: cuda:1"
+        "  hidden_channels: 8\n  seed: 3\n  device: cuda:1\n"
+        "performance:\n  prefetch_batches: 2\n  pin_memory: true\n"
+        "  non_blocking_transfer: true\n  cache_validation_batches: true\n"
+        "  profile_stages: true"
     )
     seen: list[tuple[str, object]] = []
 
     def fake_train(*args, **kwargs):
         seen.append(("train", kwargs.get("device")))
+        assert kwargs["throughput_config"] == ThroughputConfig(
+            prefetch_batches=2,
+            pin_memory=True,
+            non_blocking_transfer=True,
+            cache_validation_batches=True,
+            profile_stages=True,
+        )
         return {"loss": 1.0}
 
     def fake_validate(*args, **kwargs):
         seen.append(("validate", kwargs.get("device")))
+        assert kwargs["throughput_config"].cache_validation_batches
+        assert kwargs["prepared_loader"] is not None
+        assert kwargs["prepared_complete_cycle_loader"] is not None
         return {"score": 0.5}
 
     monkeypatch.setattr(cli, "train_one_epoch", fake_train)
@@ -214,6 +228,9 @@ def test_configured_training_device_is_forwarded(
     assert main(["train", "--config", str(config), "--run-id", "device-test"]) == 0
     assert seen == [("train", "cuda:1"), ("validate", "cuda:1")]
     assert "[epoch] run_id=device-test epoch=1/1 loss=1 val_score=0.5" in capsys.readouterr().out
+    profile = output / "runs" / "device-test" / "stage_profile.jsonl"
+    assert profile.exists()
+    assert json.loads(profile.read_text().strip())["epoch"] == 0
 
 
 def test_prepare_reports_empty_alignment_cycles_without_index_error(tmp_path: Path) -> None:
@@ -285,6 +302,7 @@ def test_train_infer_evaluate_smoke_uses_canonical_cached_trials(
         out / "inference" / "tiny" / "person_1" / "cycle_000" / "fused_sequence.npz"
     ).exists()
     assert (out / "evaluation" / "tiny" / "metrics_by_person.csv").exists()
+    assert not (out / "runs" / "tiny" / "stage_profile.jsonl").exists()
     checkpoint = torch.load(
         out / "runs" / "tiny" / "checkpoints" / "best.pt",
         map_location="cpu",

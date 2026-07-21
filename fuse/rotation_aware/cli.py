@@ -47,7 +47,15 @@ from .evaluation import (
 from .inference import canonicalize_trial, run_inference
 from .losses import LossConfig
 from .model import RotationAwareFusionModel
-from .training import load_checkpoint, save_checkpoint, train_one_epoch, validate
+from .prefetch import ThroughputConfig
+from .profiling import StageProfiler
+from .training import (
+    load_checkpoint,
+    prepare_validation_batches,
+    save_checkpoint,
+    train_one_epoch,
+    validate,
+)
 
 
 _ENV = re.compile(r"\$\{oc\.env:([^,}]+)(?:,([^}]*))?\}")
@@ -400,6 +408,10 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     if not args.run_id:
         raise ValueError("train requires explicit --run-id")
     training = _training_config_for_ablation(config, args.ablation or "A6")
+    performance = config.get("performance", {})
+    if not isinstance(performance, Mapping):
+        raise ValueError("rotation-aware performance config must be a mapping")
+    throughput = ThroughputConfig(**dict(performance))
     paths = _paths(config, args.output_root)
     skeleton = load_skeleton_spec(paths["skeleton"])
     fold = resolve_fold(config, args.fold)
@@ -459,7 +471,12 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
             collate_fn=collate_pose_pair_windows,
         )
         if val_set
-        else loader
+        else DataLoader(
+            train_set,
+            batch_size=batch_size,
+            shuffle=False,
+            collate_fn=collate_pose_pair_windows,
+        )
     )
     complete_cycle_loader = DataLoader(
         train_cycles,
@@ -515,7 +532,27 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     history = []
     best = float("-inf")
     epochs = int(training.get("epochs", 1))
+    prepared_val_loader = None
+    prepared_val_complete_cycle_loader = None
+    if throughput.cache_validation_batches:
+        prepared_val_loader = prepare_validation_batches(
+            val_loader,
+            skeleton,
+            seed=int(training.get("seed", 0)),
+            corruption_config=corruption,
+            throughput_config=throughput,
+        )
+        prepared_val_complete_cycle_loader = prepare_validation_batches(
+            val_complete_cycle_loader,
+            skeleton,
+            seed=int(training.get("seed", 0)),
+            corruption_config=corruption,
+            throughput_config=throughput,
+    )
     for epoch in range(epochs):
+        profiler = StageProfiler(
+            enabled=throughput.profile_stages, device=torch.device(device)
+        )
         row = {
             "epoch": epoch,
             **train_one_epoch(
@@ -529,6 +566,8 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
                 seed=int(training.get("seed", 0)),
                 epoch=epoch,
                 device=device,
+                profiler=profiler,
+                throughput_config=throughput,
             ),
         }
         score = validate(
@@ -540,6 +579,10 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
             complete_cycle_loader=val_complete_cycle_loader,
             seed=int(training.get("seed", 0)),
             device=device,
+            profiler=profiler,
+            throughput_config=throughput,
+            prepared_loader=prepared_val_loader,
+            prepared_complete_cycle_loader=prepared_val_complete_cycle_loader,
         )["score"]
         row["val_score"] = score
         history.append(row)
@@ -561,6 +604,12 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
                 corruption_config=corruption,
                 score=score,
             )
+        if throughput.profile_stages:
+            with (run / "stage_profile.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps({"epoch": epoch, "stages": profiler.summary()}, sort_keys=True)
+                    + "\n"
+                )
     with (run / "train_metrics.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=history[0].keys())
         writer.writeheader()

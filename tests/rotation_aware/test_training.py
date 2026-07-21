@@ -14,7 +14,7 @@ from fuse.rotation_aware.losses import LossConfig
 from fuse.rotation_aware.model import RotationAwareFusionModel
 from fuse.rotation_aware.prefetch import ThroughputConfig, ordered_prefetch, pin_tensor_batch
 from fuse.rotation_aware.profiling import StageProfiler
-from fuse.rotation_aware.training import _corrupt_batch, _feature_bundle, _forward_window, _fused_bone_cv, _prepare_window, _tensor_batch, load_checkpoint, save_checkpoint, train_one_epoch, validate
+from fuse.rotation_aware.training import _corrupt_batch, _feature_bundle, _forward_window, _fused_bone_cv, _prepare_window, _tensor_batch, load_checkpoint, prepare_validation_batches, save_checkpoint, train_one_epoch, validate
 
 
 def _spec() -> SkeletonSpec:
@@ -457,11 +457,81 @@ def test_validation_is_batch_size_and_order_invariant() -> None:
     torch.manual_seed(13)
     model = RotationAwareFusionModel(spec, hidden_channels=8)
 
-    one = validate(model, _loader(count=5, batch_size=1), spec, loss_config=LossConfig(), seed=17)
-    four = validate(model, _loader(count=5, batch_size=4), spec, loss_config=LossConfig(), seed=17)
-    reversed_order = validate(model, _loader(count=5, batch_size=4, reverse=True), spec, loss_config=LossConfig(), seed=17)
+    one = validate(model, _loader(count=5, batch_size=1), spec, loss_config=LossConfig(), seed=17, scalar_forward=True)
+    four = validate(model, _loader(count=5, batch_size=4), spec, loss_config=LossConfig(), seed=17, scalar_forward=True)
+    reversed_order = validate(model, _loader(count=5, batch_size=4, reverse=True), spec, loss_config=LossConfig(), seed=17, scalar_forward=True)
 
     assert one == four == reversed_order
+
+
+def test_batched_validation_matches_scalar_reference_for_all_metrics() -> None:
+    spec = _spec()
+    torch.manual_seed(13)
+    model = RotationAwareFusionModel(spec, hidden_channels=8)
+
+    optimized = validate(
+        model,
+        _loader(count=5, batch_size=4),
+        spec,
+        loss_config=LossConfig(),
+        seed=17,
+        scalar_forward=False,
+    )
+    reference = validate(
+        model,
+        _loader(count=5, batch_size=4),
+        spec,
+        loss_config=LossConfig(),
+        seed=17,
+        scalar_forward=True,
+    )
+
+    assert optimized["losses"].keys() == reference["losses"].keys()
+    for name in optimized["losses"]:
+        assert optimized["losses"][name] == pytest.approx(
+            reference["losses"][name], rel=1e-6, abs=1e-6
+        )
+    assert optimized["components"].keys() == reference["components"].keys()
+    for name in optimized["components"]:
+        assert optimized["components"][name] == pytest.approx(
+            reference["components"][name], rel=1e-6, abs=1e-6
+        )
+    assert optimized["score"] == pytest.approx(reference["score"], rel=1e-7, abs=1e-7)
+    assert (optimized["score"] >= 0.5) == (reference["score"] >= 0.5)
+
+
+def test_validation_prepared_cache_is_exact_reusable_and_leaves_source_unchanged() -> None:
+    spec = _spec()
+    loader = _loader(count=5, batch_size=4)
+    source = list(loader)
+    source_face = [batch["face"].clone() for batch in source]
+    source_metadata = [list(batch["window_id"]) for batch in source]
+
+    cached_once = prepare_validation_batches(
+        source, spec, seed=17, corruption_config=None
+    )
+    cached_twice = prepare_validation_batches(
+        source, spec, seed=17, corruption_config=None
+    )
+
+    assert len(cached_once) == len(cached_twice)
+    for first, second in zip(cached_once, cached_twice, strict=True):
+        assert first["window_id"] == second["window_id"]
+        for name in (
+            "face", "side", "corrupted_valid_face", "corrupted_valid_side",
+            "reference_face", "reference_side", "reference_valid_face",
+            "reference_valid_side", "face_corruption_mask", "side_corruption_mask",
+        ):
+            assert torch.equal(first[name], second[name])
+    for batch, face, metadata in zip(source, source_face, source_metadata, strict=True):
+        assert torch.equal(batch["face"], face)
+        assert batch["window_id"] == metadata
+
+    torch.manual_seed(13)
+    model = RotationAwareFusionModel(spec, hidden_channels=8)
+    first = validate(model, source, spec, seed=17, prepared_loader=cached_once)
+    second = validate(model, source, spec, seed=17, prepared_loader=cached_once)
+    assert first == second
 
 
 def test_checkpoint_rejects_missing_reproducibility_provenance(tmp_path: Path) -> None:

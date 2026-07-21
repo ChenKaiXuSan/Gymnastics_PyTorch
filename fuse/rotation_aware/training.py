@@ -214,6 +214,44 @@ def _single_sample(batch: Mapping[str, object], index: int) -> dict[str, object]
     return sample
 
 
+def _single_output(output: FusionOutput, index: int) -> FusionOutput:
+    """Select one output while retaining the batch dimension for loss code."""
+    return FusionOutput(
+        fused_kpts=output.fused_kpts[index : index + 1],
+        base_kpts=output.base_kpts[index : index + 1],
+        delta_kpts=output.delta_kpts[index : index + 1],
+        valid=output.valid[index : index + 1],
+        fused_theta=output.fused_theta[index : index + 1],
+        fused_theta_valid=output.fused_theta_valid[index : index + 1],
+        fused_r_pt=output.fused_r_pt[index : index + 1],
+        fused_r_pt_valid=output.fused_r_pt_valid[index : index + 1],
+    )
+
+
+def prepare_validation_batches(
+    loader: Iterable[Mapping[str, object]],
+    skeleton: SkeletonSpec,
+    *,
+    seed: int,
+    corruption_config: CorruptionConfig | None,
+    throughput_config: ThroughputConfig | None = None,
+) -> list[dict[str, object]]:
+    """Materialize fixed CPU validation corruptions without model-derived values."""
+    throughput = throughput_config or ThroughputConfig()
+
+    def prepare(batch: Mapping[str, object]) -> dict[str, object]:
+        return _prepare_window(
+            batch,
+            seed=int(seed),
+            skeleton=skeleton,
+            corruption_config=corruption_config,
+        )
+
+    return list(
+        ordered_prefetch(loader, prepare, depth=throughput.prefetch_batches)
+    )
+
+
 def train_one_epoch(
     model: RotationAwareFusionModel,
     loader: Iterable[Mapping[str, object]],
@@ -324,6 +362,10 @@ def validate(
     seed: int = 0,
     device: str | torch.device = "cpu",
     profiler: StageProfiler | None = None,
+    throughput_config: ThroughputConfig | None = None,
+    prepared_loader: Iterable[Mapping[str, object]] | None = None,
+    prepared_complete_cycle_loader: Iterable[Mapping[str, object]] | None = None,
+    scalar_forward: bool = False,
 ) -> dict[str, Any]:
     """Evaluate fixed corruptions and derive a score from five self-supervised measures."""
     was_training = model.training
@@ -332,42 +374,96 @@ def validate(
     profiler = profiler if profiler is not None else StageProfiler(enabled=False, device=target_device)
     model.to(target_device)
     config = loss_config or LossConfig()
+    throughput = throughput_config or ThroughputConfig()
     window_config = (
         replace(config, complete_cycle_rom_weight=0.0)
         if complete_cycle_loader is not None
         else config
     )
     samples: list[tuple[str, dict[str, float], FusionOutput, dict[str, object]]] = []
+
+    def append_sample(output: FusionOutput, prepared: dict[str, object]) -> None:
+        window_ids = prepared.get("window_id")
+        if not isinstance(window_ids, list) or len(window_ids) != 1 or not isinstance(window_ids[0], str):
+            raise ValueError("validation samples require one stable string window_id")
+        with profiler.stage("loss"):
+            losses = compute_self_supervised_losses(output, prepared, window_config, skeleton)
+        samples.append(
+            (
+                window_ids[0],
+                {name: float(value.cpu()) for name, value in losses.as_dict().items()},
+                output,
+                prepared,
+            )
+        )
+
+    def forward_prepared_batch(batch: Mapping[str, object]) -> tuple[FusionOutput, dict[str, object]]:
+        prepared = pin_tensor_batch(batch) if throughput.pin_memory else dict(batch)
+        return _forward_prepared(
+            model,
+            prepared,
+            skeleton,
+            device=target_device,
+            non_blocking=throughput.non_blocking_transfer,
+            profiler=profiler,
+        )
+
     with torch.no_grad():
-        for batch in loader:
-            face = _required_tensor(batch, "face")
-            for sample_index in range(face.shape[0]):
-                output, prepared = _forward_window(
-                    model, _single_sample(batch, sample_index), skeleton, seed=int(seed),
-                    corruption_config=corruption_config, device=target_device,
-                    profiler=profiler,
+        if scalar_forward and prepared_loader is None:
+            for batch in loader:
+                face = _required_tensor(batch, "face")
+                for sample_index in range(face.shape[0]):
+                    output, prepared = _forward_window(
+                        model,
+                        _single_sample(batch, sample_index),
+                        skeleton,
+                        seed=int(seed),
+                        corruption_config=corruption_config,
+                        device=target_device,
+                        profiler=profiler,
+                    )
+                    append_sample(output, prepared)
+        else:
+            batches = prepared_loader
+            if batches is None:
+                batches = prepare_validation_batches(
+                    loader,
+                    skeleton,
+                    seed=int(seed),
+                    corruption_config=corruption_config,
+                    throughput_config=throughput,
                 )
-                with profiler.stage("loss"):
-                    losses = compute_self_supervised_losses(output, prepared, window_config, skeleton)
-                window_ids = prepared.get("window_id")
-                if not isinstance(window_ids, list) or len(window_ids) != 1 or not isinstance(window_ids[0], str):
-                    raise ValueError("validation samples require one stable string window_id")
-                samples.append((window_ids[0], {name: float(value.cpu()) for name, value in losses.as_dict().items()}, output, prepared))
+            for batch in batches:
+                if scalar_forward:
+                    face = _required_tensor(batch, "face")
+                    for sample_index in range(face.shape[0]):
+                        output, prepared = forward_prepared_batch(
+                            _single_sample(batch, sample_index)
+                        )
+                        append_sample(output, prepared)
+                    continue
+                output, prepared = forward_prepared_batch(batch)
+                for sample_index in range(output.fused_kpts.shape[0]):
+                    append_sample(
+                        _single_output(output, sample_index),
+                        _single_sample(prepared, sample_index),
+                    )
     samples.sort(key=lambda value: value[0])
     means = _mean_metrics([metrics for _, metrics, _, _ in samples])
     if complete_cycle_loader is not None:
         rom_values: list[float] = []
         with torch.no_grad():
-            for batch in complete_cycle_loader:
-                output, prepared = _forward_window(
-                    model,
-                    batch,
+            cycle_batches = prepared_complete_cycle_loader
+            if cycle_batches is None:
+                cycle_batches = prepare_validation_batches(
+                    complete_cycle_loader,
                     skeleton,
                     seed=int(seed),
                     corruption_config=corruption_config,
-                    device=target_device,
-                    profiler=profiler,
+                    throughput_config=throughput,
                 )
+            for batch in cycle_batches:
+                output, prepared = forward_prepared_batch(batch)
                 with profiler.stage("complete_cycle_loss"):
                     rom = compute_complete_cycle_rom_loss(output, prepared, config, skeleton)
                 rom_values.append(float(rom.cpu()))
