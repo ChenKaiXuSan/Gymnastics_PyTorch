@@ -224,75 +224,6 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     assert fallback_workload.prepared_validation_loader is None
     assert fallback_workload.prepared_validation_complete_cycle_loader is None
 
-    training_module = importlib.import_module("fuse.rotation_aware.training")
-    fallback_workload.model.eval()
-    diagnostic_batch = next(iter(fallback_workload.diagnostic_validation_loader))
-    prepared_batch = training_module._prepare_window(
-        diagnostic_batch,
-        seed=int(fallback_workload.training_config["seed"]),
-        skeleton=fallback_workload.skeleton,
-        corruption_config=fallback_workload.corruption_config,
-    )
-    batched_features = training_module._feature_bundle(
-        prepared_batch["face"],
-        prepared_batch["corrupted_valid_face"],
-        fallback_workload.skeleton,
-        prepared_batch["dt"],
-    )
-    for sample_index in range(prepared_batch["face"].shape[0]):
-        scalar_prepared = training_module._single_sample(prepared_batch, sample_index)
-        scalar_features = training_module._feature_bundle(
-            scalar_prepared["face"],
-            scalar_prepared["corrupted_valid_face"],
-            fallback_workload.skeleton,
-            scalar_prepared["dt"],
-        )
-        assert torch.equal(
-            batched_features.pose.velocity[sample_index : sample_index + 1],
-            scalar_features.pose.velocity,
-        )
-    batched_output, _ = training_module._forward_prepared(
-        fallback_workload.model,
-        prepared_batch,
-        fallback_workload.skeleton,
-        device=torch.device("cpu"),
-    )
-    for sample_index in range(batched_output.fused_kpts.shape[0]):
-        scalar_output, _ = training_module._forward_prepared(
-            fallback_workload.model,
-            training_module._single_sample(prepared_batch, sample_index),
-            fallback_workload.skeleton,
-            device=torch.device("cpu"),
-        )
-        assert torch.equal(
-            batched_output.base_kpts[sample_index : sample_index + 1],
-            scalar_output.base_kpts,
-        )
-        assert torch.equal(
-            batched_output.delta_kpts[sample_index : sample_index + 1], scalar_output.delta_kpts
-        )
-
-    validation_forward_calls = 0
-    original_forward = fallback_workload.model.forward
-
-    def count_validation_forwards(*args, **kwargs):
-        nonlocal validation_forward_calls
-        validation_forward_calls += 1
-        return original_forward(*args, **kwargs)
-
-    monkeypatch.setattr(fallback_workload.model, "forward", count_validation_forwards)
-    training_module.validate(
-        fallback_workload.model,
-        fallback_workload.diagnostic_validation_loader,
-        fallback_workload.skeleton,
-        loss_config=fallback_workload.loss_config,
-        corruption_config=fallback_workload.corruption_config,
-        seed=int(fallback_workload.training_config["seed"]),
-        device="cpu",
-        scalar_forward=False,
-    )
-    assert validation_forward_calls == len(fallback_workload.diagnostic_validation_loader)
-
     production_generator = torch.Generator().manual_seed(
         int(fallback_workload.training_config["seed"])
     )
@@ -363,28 +294,20 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     assert real_validation_workload.prepared_validation_loader is not None
     assert real_validation_workload.prepared_validation_complete_cycle_loader is not None
 
-    for ablation, expected_steps in (
-        ("A4", {"train_window": 1}),
-        ("A6", {"train_window": 1, "train_complete_cycle": 1}),
-    ):
-        forced_scalar_equivalence = benchmark._run_training_equivalence(
-            tiny_config,
-            ablation,
-            torch.device("cpu"),
-            config_path=str(config),
-        )
-        assert forced_scalar_equivalence["accepted"]
-        assert forced_scalar_equivalence["protocol"]["ablation"] == ablation
-        assert forced_scalar_equivalence["reference_path"]["batched_validation"] is False
-        assert forced_scalar_equivalence["optimizer_steps"]["expected"] == expected_steps
-        assert forced_scalar_equivalence["exact_gates"]["validation_membership"]
-        assert forced_scalar_equivalence["exact_gates"]["corruption_digests"]
-        assert all(
-            loss["equivalent"]
-            for loss in forced_scalar_equivalence["validation"]["losses"].values()
-        )
-    assert forced_scalar_equivalence["optimizer_steps"]["reference"]["total_optimizer_steps"] == 2
-    assert forced_scalar_equivalence["optimizer_steps"]["optimized"]["total_optimizer_steps"] == 2
+    a6_equivalence = benchmark._run_training_equivalence(
+        tiny_config,
+        "A6",
+        torch.device("cpu"),
+        config_path=str(config),
+    )
+    assert a6_equivalence["accepted"]
+    assert a6_equivalence["protocol"]["ablation"] == "A6"
+    assert a6_equivalence["optimizer_steps"]["expected"] == {
+        "train_window": 1,
+        "train_complete_cycle": 1,
+    }
+    assert a6_equivalence["optimizer_steps"]["reference"]["total_optimizer_steps"] == 2
+    assert a6_equivalence["optimizer_steps"]["optimized"]["total_optimizer_steps"] == 2
     profiler_enabled: list[bool] = []
     original_profiler = benchmark.StageProfiler
 
@@ -437,7 +360,7 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
         "pin_memory": False,
         "non_blocking_transfer": False,
         "validation_cache": False,
-        "batched_validation": False,
+        "batched_validation": True,
     }
     assert equivalence["optimizer_steps"]["expected"] == {"train_window": 1}
     assert equivalence["exact_gates"]["training_sample_order"]

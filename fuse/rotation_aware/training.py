@@ -398,34 +398,6 @@ def _single_output(output: FusionOutput, index: int) -> FusionOutput:
     )
 
 
-def _validation_loss_prepared(
-    prepared: Mapping[str, object], skeleton: SkeletonSpec
-) -> dict[str, object]:
-    """Recompute validation-only quality weights with one sample per reduction."""
-    normalized = dict(prepared)
-    reference_face = _required_tensor(normalized, "reference_face")
-    reference_side = _required_tensor(normalized, "reference_side")
-    reference_valid_face = _required_tensor(normalized, "reference_valid_face").bool()
-    reference_valid_side = _required_tensor(normalized, "reference_valid_side").bool()
-    temporal_valid = _required_tensor(normalized, "padding_mask").bool()
-    dt = _required_tensor(normalized, "dt")
-    effective_reference_face_valid = reference_valid_face & temporal_valid[..., None]
-    effective_reference_side_valid = reference_valid_side & temporal_valid[..., None]
-    safe_reference_face = torch.where(
-        effective_reference_face_valid[..., None], reference_face, torch.zeros_like(reference_face)
-    )
-    safe_reference_side = torch.where(
-        effective_reference_side_valid[..., None], reference_side, torch.zeros_like(reference_side)
-    )
-    normalized["quality_face"] = _feature_bundle(
-        safe_reference_face, effective_reference_face_valid, skeleton, dt
-    ).quality.loss_weight
-    normalized["quality_side"] = _feature_bundle(
-        safe_reference_side, effective_reference_side_valid, skeleton, dt
-    ).quality.loss_weight
-    return normalized
-
-
 def prepare_validation_batches(
     loader: Iterable[Mapping[str, object]],
     skeleton: SkeletonSpec,
@@ -744,7 +716,6 @@ def validate(
     def append_sample(
         output: FusionOutput, prepared: dict[str, object], phase: str
     ) -> None:
-        prepared = _validation_loss_prepared(prepared, skeleton)
         window_ids = prepared.get("window_id")
         if not isinstance(window_ids, list) or len(window_ids) != 1 or not isinstance(window_ids[0], str):
             raise ValueError("validation samples require one stable string window_id")

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass
 from typing import Sequence
 
 import torch
@@ -10,13 +10,7 @@ from torch import Tensor, nn
 
 from .base_fusion import quality_weighted_fusion
 from .config import SkeletonSpec
-from .features import (
-    DisagreementFeatures,
-    FeatureBundle,
-    compute_disagreement_features,
-    compute_quality_features,
-    extract_pose_features,
-)
+from .features import DisagreementFeatures, FeatureBundle
 from .trunk import extract_trunk_features
 
 
@@ -269,33 +263,6 @@ class RotationAwareFusionModel(nn.Module):
             dim=-1,
         )
 
-    @staticmethod
-    def _slice_evaluation_batch(value: object, index: int) -> object:
-        """Slice a batched model input without changing its per-sample representation."""
-        if isinstance(value, Tensor):
-            return value if value.ndim == 0 else value[index : index + 1]
-        if is_dataclass(value) and not isinstance(value, type):
-            return type(value)(
-                **{
-                    field.name: RotationAwareFusionModel._slice_evaluation_batch(
-                        getattr(value, field.name), index
-                    )
-                    for field in fields(value)
-                }
-            )
-        return value
-
-    @staticmethod
-    def _concatenate_evaluation_outputs(outputs: Sequence[FusionOutput]) -> FusionOutput:
-        if not outputs:
-            raise ValueError("evaluation output collection must not be empty")
-        return FusionOutput(
-            **{
-                field.name: torch.cat([getattr(output, field.name) for output in outputs], dim=0)
-                for field in fields(FusionOutput)
-            }
-        )
-
     def forward(
         self,
         face: Tensor,
@@ -309,107 +276,6 @@ class RotationAwareFusionModel(nn.Module):
         dt: float | Tensor = 1.0,
     ) -> FusionOutput:
         """Return a quality-weighted base plus a masked symmetric bounded residual."""
-        if not self.training and face.shape[0] > 1:
-            outputs = [
-                self._forward_single_evaluation_sample(
-                    face,
-                    side,
-                    face_features,
-                    side_features,
-                    cross,
-                    valid_face,
-                    valid_side,
-                    temporal_valid,
-                    dt,
-                    sample_index,
-                )
-                for sample_index in range(face.shape[0])
-            ]
-            return self._concatenate_evaluation_outputs(outputs)
-        return self._forward_impl(
-            face,
-            side,
-            face_features,
-            side_features,
-            cross,
-            valid_face,
-            valid_side,
-            temporal_valid,
-            dt,
-        )
-
-    def _forward_single_evaluation_sample(
-        self,
-        face: Tensor,
-        side: Tensor,
-        face_features: FeatureBundle,
-        side_features: FeatureBundle,
-        cross: DisagreementFeatures,
-        valid_face: Tensor | None,
-        valid_side: Tensor | None,
-        temporal_valid: Tensor | None,
-        dt: float | Tensor,
-        sample_index: int,
-    ) -> FusionOutput:
-        face = self._slice_evaluation_batch(face, sample_index)
-        side = self._slice_evaluation_batch(side, sample_index)
-        face_features = self._slice_evaluation_batch(face_features, sample_index)
-        side_features = self._slice_evaluation_batch(side_features, sample_index)
-        valid_face = self._slice_evaluation_batch(valid_face, sample_index)
-        valid_side = self._slice_evaluation_batch(valid_side, sample_index)
-        temporal_valid = self._slice_evaluation_batch(temporal_valid, sample_index)
-        dt = self._slice_evaluation_batch(dt, sample_index)
-        if valid_face is None or valid_side is None:
-            valid_face = face_features.pose.valid
-            valid_side = side_features.pose.valid
-        face, side, valid_face, valid_side = self._safe_inputs(
-            face, side, valid_face, valid_side
-        )
-        temporal_valid = self._temporal_valid_mask(
-            temporal_valid, valid_face, valid_side
-        )
-        dt = self._physical_dt(dt, face, temporal_valid)
-        valid_face = valid_face & temporal_valid[..., None]
-        valid_side = valid_side & temporal_valid[..., None]
-        face = torch.where(valid_face[..., None], face, torch.zeros_like(face))
-        side = torch.where(valid_side[..., None], side, torch.zeros_like(side))
-        face_trunk = extract_trunk_features(face, valid_face, self.spec, dt=dt)
-        side_trunk = extract_trunk_features(side, valid_side, self.spec, dt=dt)
-        face_features = FeatureBundle(
-            pose=extract_pose_features(face, valid_face, self.spec, dt=dt),
-            quality=compute_quality_features(face, valid_face, face_trunk, self.spec),
-        )
-        side_features = FeatureBundle(
-            pose=extract_pose_features(side, valid_side, self.spec, dt=dt),
-            quality=compute_quality_features(side, valid_side, side_trunk, self.spec),
-        )
-        cross = compute_disagreement_features(
-            face, side, face_trunk, side_trunk, valid_face, valid_side
-        )
-        return self._forward_impl(
-            face,
-            side,
-            face_features,
-            side_features,
-            cross,
-            valid_face,
-            valid_side,
-            temporal_valid,
-            dt,
-        )
-
-    def _forward_impl(
-        self,
-        face: Tensor,
-        side: Tensor,
-        face_features: FeatureBundle,
-        side_features: FeatureBundle,
-        cross: DisagreementFeatures,
-        valid_face: Tensor | None = None,
-        valid_side: Tensor | None = None,
-        temporal_valid: Tensor | None = None,
-        dt: float | Tensor = 1.0,
-    ) -> FusionOutput:
         if (valid_face is None) != (valid_side is None):
             raise ValueError("valid_face and valid_side must be provided together")
         if valid_face is None or valid_side is None:
