@@ -695,7 +695,7 @@ def validate(
     throughput_config: ThroughputConfig | None = None,
     prepared_loader: Iterable[Mapping[str, object]] | None = None,
     prepared_complete_cycle_loader: Iterable[Mapping[str, object]] | None = None,
-    scalar_forward: bool = False,
+    scalar_forward: bool = True,
     trace: TrainingTrace | None = None,
 ) -> dict[str, Any]:
     """Evaluate fixed corruptions and derive a score from five self-supervised measures."""
@@ -758,66 +758,44 @@ def validate(
         )
 
     with torch.no_grad():
-        if scalar_forward and prepared_loader is None:
-            for batch in _profiled_source(loader, profiler, "validation_window"):
+        batches = prepared_loader
+        if batches is None:
+            batches = _prepared_validation_stream(
+                loader,
+                skeleton,
+                seed=int(seed),
+                corruption_config=corruption_config,
+                throughput_config=throughput,
+                profiler=profiler,
+                phase="validation_window",
+            )
+        else:
+            batches = _profiled_source(
+                batches, profiler, "validation_window", stage="cache_acquisition"
+            )
+        for batch in batches:
+            if scalar_forward:
                 face = _required_tensor(batch, "face")
                 for sample_index in range(face.shape[0]):
-                    output, prepared = _forward_window(
-                        model,
-                        _single_sample(batch, sample_index),
-                        skeleton,
-                        seed=int(seed),
-                        corruption_config=corruption_config,
-                        device=target_device,
-                        profiler=profiler,
-                        phase="validation_window",
-                        trace=trace,
+                    output, prepared = forward_prepared_batch(
+                        _single_sample(batch, sample_index), "validation_window"
                     )
                     append_sample(output, prepared, "validation_window")
-        else:
-            batches = prepared_loader
-            if batches is None:
-                batches = _prepared_validation_stream(
-                    loader,
-                    skeleton,
-                    seed=int(seed),
-                    corruption_config=corruption_config,
-                    throughput_config=throughput,
-                    profiler=profiler,
-                    phase="validation_window",
+                continue
+            output, prepared = forward_prepared_batch(batch, "validation_window")
+            for sample_index in range(output.fused_kpts.shape[0]):
+                append_sample(
+                    _single_output(output, sample_index),
+                    _single_sample(prepared, sample_index),
+                    "validation_window",
                 )
-            else:
-                batches = _profiled_source(
-                    batches, profiler, "validation_window", stage="cache_acquisition"
-                )
-            for batch in batches:
-                if scalar_forward:
-                    face = _required_tensor(batch, "face")
-                    for sample_index in range(face.shape[0]):
-                        output, prepared = forward_prepared_batch(
-                            _single_sample(batch, sample_index), "validation_window"
-                        )
-                        append_sample(output, prepared, "validation_window")
-                    continue
-                output, prepared = forward_prepared_batch(batch, "validation_window")
-                for sample_index in range(output.fused_kpts.shape[0]):
-                    append_sample(
-                        _single_output(output, sample_index),
-                        _single_sample(prepared, sample_index),
-                        "validation_window",
-                    )
     samples.sort(key=lambda value: value[0])
     means = _mean_metrics([metrics for _, metrics, _, _ in samples])
     if complete_cycle_loader is not None:
         rom_values: list[float] = []
         with torch.no_grad():
             cycle_batches = prepared_complete_cycle_loader
-            direct_cycle_forward = scalar_forward and cycle_batches is None
-            if direct_cycle_forward:
-                cycle_batches = _profiled_source(
-                    complete_cycle_loader, profiler, "validation_complete_cycle"
-                )
-            elif cycle_batches is None:
+            if cycle_batches is None:
                 cycle_batches = _prepared_validation_stream(
                     complete_cycle_loader,
                     skeleton,
@@ -835,25 +813,23 @@ def validate(
                     stage="cache_acquisition",
                 )
             for batch in cycle_batches:
-                if direct_cycle_forward:
-                    output, prepared = _forward_window(
-                        model,
-                        batch,
-                        skeleton,
-                        seed=int(seed),
-                        corruption_config=corruption_config,
-                        device=target_device,
-                        profiler=profiler,
-                        phase="validation_complete_cycle",
-                        trace=trace,
+                sample_batches = (
+                    (
+                        _single_sample(batch, sample_index)
+                        for sample_index in range(_required_tensor(batch, "face").shape[0])
                     )
-                else:
+                    if scalar_forward
+                    else (batch,)
+                )
+                for sample_batch in sample_batches:
                     output, prepared = forward_prepared_batch(
-                        batch, "validation_complete_cycle"
+                        sample_batch, "validation_complete_cycle"
                     )
-                with profiler.stage("validation_complete_cycle.loss"):
-                    rom = compute_complete_cycle_rom_loss(output, prepared, config, skeleton)
-                rom_values.append(float(rom.cpu()))
+                    with profiler.stage("validation_complete_cycle.loss"):
+                        rom = compute_complete_cycle_rom_loss(
+                            output, prepared, config, skeleton
+                        )
+                    rom_values.append(float(rom.cpu()))
         if not rom_values:
             raise ValueError("complete-cycle ROM loader produced no batches")
         means["complete_cycle_rom"] = sum(rom_values) / len(rom_values)

@@ -303,6 +303,19 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     assert real_validation_workload.validation_loader is not real_validation_workload.train_loader
     assert real_validation_workload.prepared_validation_loader is not None
     assert real_validation_workload.prepared_validation_complete_cycle_loader is not None
+    real_validation_entry = benchmark._validation_history_entry_for_state(
+        real_validation_workload,
+        device=torch.device("cpu"),
+        epoch=0,
+        phase="test",
+        scalar_prior_best_score=None,
+        optimized_prior_best_score=None,
+    )
+    assert real_validation_entry["input_paths"] == {
+        "scalar_reference": "uncached",
+        "optimized": "cached_validation_inputs",
+        "cache_equivalence_applicable": True,
+    }
 
     for ablation, expected_steps in (
         ("A4", {"train_window": 1}),
@@ -403,6 +416,11 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     assert benchmark_report["stage_timings"]["measured_epochs"] == []
     assert benchmark_report["stage_timings"]["diagnostic"]["timed"] is False
     history = benchmark_report["validation_history"]
+    assert history["input_paths"] == {
+        "scalar_reference": "uncached",
+        "optimized": "uncached_no_validation_fallback",
+        "cache_equivalence_applicable": False,
+    }
     assert [entry["epoch"] for entry in history["epochs"]] == [0, 1, 2]
     assert [entry["phase"] for entry in history["epochs"]] == ["warmup", "measured", "measured"]
     assert all(entry["equivalent"] for entry in history["epochs"])

@@ -126,6 +126,12 @@ prior-best, decision, and next-best value, both final selected epochs, and
 their agreement. The benchmark fails on any per-epoch equivalence or decision
 disagreement, or when the final selected checkpoint epoch differs.
 
+With an independent validation split, the optimized-input path consumes the
+materialized validation cache while the reference recomputes the same inputs.
+For a train-only fallback the production command intentionally disables that
+cache to preserve shared-generator order; the report labels cache equivalence
+as not applicable instead of presenting the two uncached paths as a cache test.
+
 The one-epoch training probe runs before warmup and before the measured workload
 is created. Its models, optimizers, traces, and validation caches are released;
 CUDA is synchronized, its allocator cache is emptied, and peak statistics are

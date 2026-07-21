@@ -755,10 +755,31 @@ def _cmd_infer(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     saved_training = raw_payload.get("training_config", {})
     if not isinstance(saved_training, Mapping):
         raise ValueError("checkpoint training_config must be a mapping")
-    if _config_has_protocol(config) and not _validate_protocol_run_id(
-        args.run_id, saved_training
-    ):
-        raise ValueError("protected infer checkpoint is missing training.protocol")
+    if _config_has_protocol(config):
+        saved_ablation = str(saved_training.get("ablation", ""))
+        active_training = _training_config_for_ablation(config, saved_ablation)
+        protected_fields = (
+            "ablation",
+            "batch_size",
+            "epochs",
+            "learning_rate",
+            "hidden_channels",
+            "seed",
+            "protocol",
+        )
+        mismatched_fields = [
+            name
+            for name in protected_fields
+            if name in active_training and saved_training.get(name) != active_training[name]
+        ]
+        if mismatched_fields:
+            raise ValueError(
+                "checkpoint training protocol does not match active config: "
+                + ", ".join(mismatched_fields)
+            )
+        _validate_protocol_run_id(args.run_id, active_training)
+        if not _validate_protocol_run_id(args.run_id, saved_training):
+            raise ValueError("protected infer checkpoint is missing training.protocol")
     model = RotationAwareFusionModel(
         skeleton, hidden_channels=int(saved_training.get("hidden_channels", 128))
     )

@@ -172,6 +172,21 @@ def test_protected_infer_requires_loaded_checkpoint_protocol_token(
     with pytest.raises(RuntimeError, match="after token validation"):
         cli._cmd_infer(exact, config)
 
+    mismatched_training = dict(checkpoint_training)
+    mismatched_training["epochs"] = 10
+    monkeypatch.setattr(
+        cli.torch,
+        "load",
+        lambda *args, **kwargs: {"training_config": mismatched_training},
+    )
+    disguised = Namespace(
+        run_id="paper_a4_b64_e200_a4_b64_e10",
+        output_root=None,
+        checkpoint=str(checkpoint),
+    )
+    with pytest.raises(ValueError, match="does not match active config"):
+        cli._cmd_infer(disguised, config)
+
 
 def test_protected_evaluate_requires_one_resolved_protocol_token_before_output_paths(
     tmp_path: Path,

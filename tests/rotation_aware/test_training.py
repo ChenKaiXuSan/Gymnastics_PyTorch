@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import time
 from copy import deepcopy
@@ -17,6 +18,10 @@ from fuse.rotation_aware.model import RotationAwareFusionModel
 from fuse.rotation_aware.prefetch import ThroughputConfig, ordered_prefetch, pin_tensor_batch
 from fuse.rotation_aware.profiling import StageProfiler
 from fuse.rotation_aware.training import TrainingTrace, _corrupt_batch, _feature_bundle, _forward_window, _fused_bone_cv, _prepare_window, _tensor_batch, load_checkpoint, prepare_validation_batches, save_checkpoint, train_one_epoch, train_one_epoch_reference, validate
+
+
+def test_validation_defaults_to_scalar_forward() -> None:
+    assert inspect.signature(validate).parameters["scalar_forward"].default is True
 
 
 def _spec() -> SkeletonSpec:

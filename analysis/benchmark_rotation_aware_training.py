@@ -296,8 +296,21 @@ def _run_epoch(
     return train_metrics, validation_metrics, profiler
 
 
+def _validation_input_paths(workload: BenchmarkWorkload) -> dict[str, object]:
+    cache_available = workload.prepared_validation_loader is not None
+    return {
+        "scalar_reference": "uncached",
+        "optimized": (
+            "cached_validation_inputs"
+            if cache_available
+            else "uncached_no_validation_fallback"
+        ),
+        "cache_equivalence_applicable": cache_available,
+    }
+
+
 def _validation_result(
-    workload: BenchmarkWorkload, *, device: torch.device, scalar_forward: bool
+    workload: BenchmarkWorkload, *, device: torch.device, use_prepared_inputs: bool
 ) -> dict[str, Any]:
     # Benchmark-only validation history must not advance the production shared generator.
     return validate(
@@ -310,7 +323,15 @@ def _validation_result(
         seed=int(workload.training_config.get("seed", 0)),
         device=device,
         throughput_config=workload.throughput_config,
-        scalar_forward=scalar_forward,
+        prepared_loader=(
+            workload.prepared_validation_loader if use_prepared_inputs else None
+        ),
+        prepared_complete_cycle_loader=(
+            workload.prepared_validation_complete_cycle_loader
+            if use_prepared_inputs
+            else None
+        ),
+        scalar_forward=True,
     )
 
 
@@ -773,8 +794,12 @@ def _validation_history_entry_for_state(
     optimized_prior_best_score: float | None,
 ) -> dict[str, object]:
     """Gate one trained state against scalar validation outside epoch timing."""
-    reference = _validation_result(workload, device=device, scalar_forward=True)
-    optimized = _validation_result(workload, device=device, scalar_forward=True)
+    reference = _validation_result(
+        workload, device=device, use_prepared_inputs=False
+    )
+    optimized = _validation_result(
+        workload, device=device, use_prepared_inputs=True
+    )
     _require_finite(reference, "scalar_reference")
     _require_finite(optimized, "optimized")
     acceptance = _validation_history_entry(
@@ -787,6 +812,7 @@ def _validation_history_entry_for_state(
     )
     _require_finite(acceptance, "validation_acceptance")
     _require_validation_acceptance(acceptance)
+    acceptance["input_paths"] = _validation_input_paths(workload)
     return acceptance
 
 
@@ -1066,6 +1092,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     validation_history = {
         "rule": "score >= best_score",
         "validation_forward": "scalar",
+        "input_paths": _validation_input_paths(workload),
         "initial_best_score": None,
         "epochs": validation_entries,
         "scalar_reference": {
