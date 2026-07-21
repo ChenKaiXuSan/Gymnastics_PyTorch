@@ -336,6 +336,47 @@ def test_benchmark_rejects_single_measured_epoch(tmp_path: Path) -> None:
         )
 
 
+def test_benchmark_releases_probe_memory_once_before_propagating_probe_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    benchmark = importlib.import_module("analysis.benchmark_rotation_aware_training")
+    events: list[str] = []
+
+    def failing_probe(*args, **kwargs):
+        events.append("probe")
+        raise RuntimeError("injected probe failure")
+
+    def recording_cleanup(device):
+        events.append("cleanup")
+
+    def unexpected_measured_build(*args, **kwargs):
+        events.append("measured-build")
+        raise AssertionError("measured workload built after failed probe")
+
+    monkeypatch.setattr(benchmark, "_run_training_equivalence", failing_probe)
+    monkeypatch.setattr(benchmark, "_release_probe_memory", recording_cleanup)
+    monkeypatch.setattr(benchmark, "_build_workload", unexpected_measured_build)
+    args = benchmark.make_parser().parse_args(
+        [
+            "--config",
+            "configs/fuse/rotation_aware_batch64.yaml",
+            "--ablation",
+            "A4",
+            "--device",
+            "cpu",
+            "--measured-epochs",
+            "2",
+            "--output",
+            str(tmp_path / "unused.json"),
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="injected probe failure"):
+        benchmark.run_benchmark(args)
+
+    assert events == ["probe", "cleanup"]
+
+
 def test_benchmark_rejects_nested_non_finite_report_values() -> None:
     benchmark = importlib.import_module("analysis.benchmark_rotation_aware_training")
 

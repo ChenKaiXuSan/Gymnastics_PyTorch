@@ -977,13 +977,15 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     device = _resolve_device(
         str(args.device or resolved_training.get("device", "cpu"))
     )
-    training_equivalence = _run_training_equivalence(
-        config,
-        args.ablation,
-        device,
-        config_path=args.config,
-    )
-    _release_probe_memory(device)
+    try:
+        training_equivalence = _run_training_equivalence(
+            config,
+            args.ablation,
+            device,
+            config_path=args.config,
+        )
+    finally:
+        _release_probe_memory(device)
     workload = _build_workload(config, args.ablation)
     source_training = dict(workload.training_config)
     effective_training = {**source_training, "device": str(device)}
