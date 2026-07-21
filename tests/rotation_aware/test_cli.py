@@ -130,6 +130,8 @@ def test_safe_run_id_component_rejects_empty_and_path_like_values(run_id: str) -
 def test_protected_infer_and_evaluate_reject_unsafe_run_id_components() -> None:
     config = {
         "training": {
+            "epochs_by_ablation": {"A4": 200, "A5": 200, "A6": 100},
+            "batch_size": 64,
             "protocol": {"run_id_token_template": "{ablation_lower}_b{batch_size}_e{epochs}"}
         }
     }
@@ -138,6 +140,61 @@ def test_protected_infer_and_evaluate_reject_unsafe_run_id_components() -> None:
         cli._cmd_infer(Namespace(run_id="../../escape"), config)
     with pytest.raises(ValueError, match="safe run-ID component"):
         cli._cmd_evaluate(Namespace(run_id=["paper_a4_b64_e200", "../../escape"]), config)
+
+
+def test_protected_infer_requires_loaded_checkpoint_protocol_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = {
+        "paths": {
+            "sam3d_root": str(tmp_path / "sam3d"),
+            "split_cycle_root": str(tmp_path / "split"),
+            "output_root": str(tmp_path / "batch64"),
+        },
+        "training": {
+            "epochs_by_ablation": {"A4": 200, "A5": 200, "A6": 100},
+            "batch_size": 64,
+            "protocol": {"run_id_token_template": "{ablation_lower}_b{batch_size}_e{epochs}"},
+        },
+    }
+    checkpoint = tmp_path / "external.pt"
+    checkpoint_training = _training_config_for_ablation(config, "A4")
+    monkeypatch.setattr(cli.torch, "load", lambda *args, **kwargs: {"training_config": checkpoint_training})
+    monkeypatch.setattr(cli, "load_skeleton_spec", lambda path: object())
+    monkeypatch.setattr(cli, "_validate_checkpoint_skeleton", lambda *args: None)
+    monkeypatch.setattr(cli, "RotationAwareFusionModel", lambda *args, **kwargs: object())
+    monkeypatch.setattr(cli, "load_checkpoint", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("after token validation")))
+
+    mismatched = Namespace(run_id="paper_a4_b64_e2000", output_root=None, checkpoint=str(checkpoint))
+    with pytest.raises(ValueError, match="a4_b64_e200"):
+        cli._cmd_infer(mismatched, config)
+    exact = Namespace(run_id="paper_a4_b64_e200_seed0", output_root=None, checkpoint=str(checkpoint))
+    with pytest.raises(RuntimeError, match="after token validation"):
+        cli._cmd_infer(exact, config)
+
+
+def test_protected_evaluate_requires_one_resolved_protocol_token_before_output_paths(
+    tmp_path: Path,
+) -> None:
+    config = {
+        "paths": {
+            "sam3d_root": str(tmp_path / "sam3d"),
+            "split_cycle_root": str(tmp_path / "split"),
+            "output_root": str(tmp_path / "batch64"),
+        },
+        "training": {
+            "epochs_by_ablation": {"A4": 200, "A5": 200, "A6": 100},
+            "batch_size": 64,
+            "protocol": {"run_id_token_template": "{ablation_lower}_b{batch_size}_e{epochs}"},
+        },
+    }
+
+    for run_id in ("tiny", "paper_a4_b64_e2000"):
+        with pytest.raises(ValueError, match="exactly one"):
+            cli._cmd_evaluate(Namespace(run_id=[run_id], output_root=None), config)
+    assert not (tmp_path / "batch64" / "evaluation").exists()
+    for run_id in ("paper_a4_b64_e200", "paper_a5_b64_e200", "paper_a6_b64_e100_seed0"):
+        cli._validate_config_protocol_run_id(run_id, config)
 
 
 @pytest.mark.parametrize(

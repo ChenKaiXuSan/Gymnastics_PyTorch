@@ -203,12 +203,10 @@ def _config_has_protocol(config: Mapping[str, Any]) -> bool:
     return isinstance(training, Mapping) and training.get("protocol") is not None
 
 
-def _validate_protocol_run_id(run_id: str, training: Mapping[str, Any]) -> bool:
-    """Validate a protocol-qualified run ID and report whether its directory is protected."""
+def _protocol_run_id_token(training: Mapping[str, Any]) -> str | None:
     protocol = training.get("protocol")
     if protocol is None:
-        return False
-    _validate_safe_run_id_component(run_id)
+        return None
     if not isinstance(protocol, Mapping):
         raise ValueError("training.protocol must be a mapping")
     template = protocol.get("run_id_token_template")
@@ -223,11 +221,39 @@ def _validate_protocol_run_id(run_id: str, training: Mapping[str, Any]) -> bool:
         )
     except (KeyError, ValueError) as error:
         raise ValueError("training.protocol run_id_token_template is invalid") from error
-    if not re.search(rf"(?<![A-Za-z0-9]){re.escape(token)}(?![A-Za-z0-9])", run_id):
+    return token
+
+
+def _run_id_has_protocol_token(run_id: str, token: str) -> bool:
+    return bool(re.search(rf"(?<![A-Za-z0-9]){re.escape(token)}(?![A-Za-z0-9])", run_id))
+
+
+def _validate_protocol_run_id(run_id: str, training: Mapping[str, Any]) -> bool:
+    """Validate a protocol-qualified run ID and report whether its directory is protected."""
+    token = _protocol_run_id_token(training)
+    if token is None:
+        return False
+    _validate_safe_run_id_component(run_id)
+    if not _run_id_has_protocol_token(run_id, token):
         raise ValueError(
             f"run ID for this protocol must include token {token!r}: {run_id!r}"
         )
     return True
+
+
+def _validate_config_protocol_run_id(run_id: str, config: Mapping[str, Any]) -> None:
+    """Require one protected A4/A5/A6 schedule token before output-path access."""
+    _validate_safe_run_id_component(run_id)
+    matches = []
+    for ablation in ("A4", "A5", "A6"):
+        training = _training_config_for_ablation(config, ablation)
+        token = _protocol_run_id_token(training)
+        if token is not None and _run_id_has_protocol_token(run_id, token):
+            matches.append(token)
+    if len(matches) != 1:
+        raise ValueError(
+            f"protected run ID must match exactly one resolved protocol token: {run_id!r}"
+        )
 
 
 def _build_training_loaders(
@@ -728,6 +754,10 @@ def _cmd_infer(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     saved_training = raw_payload.get("training_config", {})
     if not isinstance(saved_training, Mapping):
         raise ValueError("checkpoint training_config must be a mapping")
+    if _config_has_protocol(config) and not _validate_protocol_run_id(
+        args.run_id, saved_training
+    ):
+        raise ValueError("protected infer checkpoint is missing training.protocol")
     model = RotationAwareFusionModel(
         skeleton, hidden_channels=int(saved_training.get("hidden_channels", 128))
     )
@@ -836,7 +866,7 @@ def _cmd_evaluate(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     run_ids = [args.run_id] if isinstance(args.run_id, str) else list(args.run_id)
     if _config_has_protocol(config):
         for run_id in run_ids:
-            _validate_safe_run_id_component(run_id)
+            _validate_config_protocol_run_id(run_id, config)
     paths = _paths(config, args.output_root)
     skeleton = load_skeleton_spec(paths["skeleton"])
     roots = [paths["output"] / "inference" / run_id for run_id in run_ids]
