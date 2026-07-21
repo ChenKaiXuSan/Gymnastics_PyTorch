@@ -500,8 +500,7 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     run = paths["output"] / "runs" / args.run_id
     run.mkdir(parents=True, exist_ok=True)
     profile_path = run / "stage_profile.jsonl"
-    if throughput.profile_stages:
-        profile_path.write_text("", encoding="utf-8")
+    profile_path.unlink(missing_ok=True)
     (run / "config_resolved.yaml").write_text(
         yaml.safe_dump(dict(config), sort_keys=True), encoding="utf-8"
     )

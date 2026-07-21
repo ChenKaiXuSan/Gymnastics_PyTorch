@@ -205,13 +205,22 @@ def test_configured_training_device_is_forwarded(
 
     def fake_train(*args, **kwargs):
         seen.append(("train", kwargs.get("device")))
-        assert kwargs["throughput_config"] == ThroughputConfig(
-            prefetch_batches=2,
-            pin_memory=True,
-            non_blocking_transfer=True,
-            cache_validation_batches=True,
-            profile_stages=True,
-        )
+        assert kwargs["throughput_config"] in {
+            ThroughputConfig(
+                prefetch_batches=2,
+                pin_memory=True,
+                non_blocking_transfer=True,
+                cache_validation_batches=True,
+                profile_stages=True,
+            ),
+            ThroughputConfig(
+                prefetch_batches=2,
+                pin_memory=True,
+                non_blocking_transfer=True,
+                cache_validation_batches=True,
+                profile_stages=False,
+            ),
+        }
         return {"loss": 1.0}
 
     def fake_validate(*args, **kwargs):
@@ -233,6 +242,11 @@ def test_configured_training_device_is_forwarded(
     assert json.loads(profile.read_text().strip())["epoch"] == 0
     assert main(["train", "--config", str(config), "--run-id", "device-test"]) == 0
     assert len(profile.read_text().splitlines()) == 1
+    config.write_text(
+        config.read_text().replace("profile_stages: true", "profile_stages: false")
+    )
+    assert main(["train", "--config", str(config), "--run-id", "device-test"]) == 0
+    assert not profile.exists()
 
 
 def test_prepare_reports_empty_alignment_cycles_without_index_error(tmp_path: Path) -> None:
