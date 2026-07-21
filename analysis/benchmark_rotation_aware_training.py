@@ -24,6 +24,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from fuse.rotation_aware.cli import (
+    _build_training_loaders,
     _cached_trials_with_provenance,
     _manifest_people,
     _paths,
@@ -70,6 +71,9 @@ class BenchmarkWorkload:
     training_config: dict[str, Any]
     prepared_validation_loader: list[dict[str, object]] | None
     prepared_validation_complete_cycle_loader: list[dict[str, object]] | None
+    diagnostic_validation_loader: DataLoader
+    diagnostic_validation_complete_cycle_loader: DataLoader
+    uses_training_validation: bool
     train_window_count: int
     train_complete_cycle_count: int
     validation_window_count: int
@@ -154,27 +158,27 @@ def _build_workload(
     )
     batch_size = int(training.get("batch_size", 4))
     generator = torch.Generator().manual_seed(int(training.get("seed", 0)))
-    train_loader = DataLoader(
+    (
+        train_loader,
+        validation_loader,
+        complete_cycle_loader,
+        validation_complete_cycle_loader,
+        uses_training_validation,
+    ) = _build_training_loaders(
         train_set,
+        val_set,
+        train_cycles,
+        validation_cycles,
         batch_size=batch_size,
-        shuffle=True,
         generator=generator,
-        collate_fn=collate_pose_pair_windows,
     )
-    validation_loader = DataLoader(
+    diagnostic_validation_loader = DataLoader(
         val_set if val_set is not None else train_set,
         batch_size=batch_size,
         shuffle=False,
         collate_fn=collate_pose_pair_windows,
     )
-    complete_cycle_loader = DataLoader(
-        train_cycles,
-        batch_size=1,
-        shuffle=True,
-        generator=generator,
-        collate_fn=collate_pose_pair_windows,
-    )
-    validation_complete_cycle_loader = DataLoader(
+    diagnostic_validation_complete_cycle_loader = DataLoader(
         validation_cycles,
         batch_size=1,
         shuffle=False,
@@ -183,7 +187,7 @@ def _build_workload(
     corruption = CorruptionConfig()
     prepared_validation_loader = None
     prepared_validation_complete_cycle_loader = None
-    if throughput.cache_validation_batches:
+    if throughput.cache_validation_batches and not uses_training_validation:
         prepared_validation_loader = prepare_validation_batches(
             validation_loader,
             skeleton,
@@ -220,6 +224,9 @@ def _build_workload(
         training_config=training,
         prepared_validation_loader=prepared_validation_loader,
         prepared_validation_complete_cycle_loader=prepared_validation_complete_cycle_loader,
+        diagnostic_validation_loader=diagnostic_validation_loader,
+        diagnostic_validation_complete_cycle_loader=diagnostic_validation_complete_cycle_loader,
+        uses_training_validation=uses_training_validation,
         train_window_count=len(train_set),
         train_complete_cycle_count=len(train_cycles),
         validation_window_count=len(validation_loader.dataset),
@@ -291,24 +298,17 @@ def _run_epoch(
 def _validation_result(
     workload: BenchmarkWorkload, *, device: torch.device, scalar_forward: bool
 ) -> dict[str, Any]:
-    prepared_loader = None if scalar_forward else workload.prepared_validation_loader
-    prepared_complete_cycle_loader = (
-        None
-        if scalar_forward
-        else workload.prepared_validation_complete_cycle_loader
-    )
+    # Benchmark-only validation history must not advance the production shared generator.
     return validate(
         workload.model,
-        workload.validation_loader,
+        workload.diagnostic_validation_loader,
         workload.skeleton,
         loss_config=workload.loss_config,
         corruption_config=workload.corruption_config,
-        complete_cycle_loader=workload.validation_complete_cycle_loader,
+        complete_cycle_loader=workload.diagnostic_validation_complete_cycle_loader,
         seed=int(workload.training_config.get("seed", 0)),
         device=device,
         throughput_config=workload.throughput_config,
-        prepared_loader=prepared_loader,
-        prepared_complete_cycle_loader=prepared_complete_cycle_loader,
         scalar_forward=scalar_forward,
     )
 
@@ -832,7 +832,7 @@ def _probe_result(
             if synchronous_reference
             else workload.prepared_validation_complete_cycle_loader
         ),
-        scalar_forward=synchronous_reference,
+        scalar_forward=synchronous_reference and not workload.uses_training_validation,
         trace=validation_trace,
     )
     return {
@@ -938,7 +938,7 @@ def _run_training_equivalence(
                 "pin_memory": False,
                 "non_blocking_transfer": False,
                 "validation_cache": False,
-                "batched_validation": False,
+                "batched_validation": reference_workload.uses_training_validation,
             },
             "initial_state": {"model": initial_model, "adam": initial_adam},
             "exact_gates": {

@@ -35,8 +35,8 @@ def _pose(frame: int, side: bool) -> np.ndarray:
     return points
 
 
-def _write_sam3d(root: Path, view: str, frames: int) -> None:
-    directory = root / "person" / "1" / view
+def _write_sam3d(root: Path, view: str, frames: int, *, person: str = "1") -> None:
+    directory = root / "person" / person / view
     directory.mkdir(parents=True)
     for frame in range(frames):
         np.savez_compressed(
@@ -218,6 +218,82 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     tiny_config["performance"]["profile_stages"] = True
     config.write_text(yaml.safe_dump(tiny_config, sort_keys=False), encoding="utf-8")
     benchmark = importlib.import_module("analysis.benchmark_rotation_aware_training")
+    fallback_workload = benchmark._build_workload(tiny_config, "A4")
+    assert fallback_workload.uses_training_validation
+    assert fallback_workload.validation_loader is fallback_workload.train_loader
+    assert fallback_workload.prepared_validation_loader is None
+    assert fallback_workload.prepared_validation_complete_cycle_loader is None
+
+    production_generator = torch.Generator().manual_seed(
+        int(fallback_workload.training_config["seed"])
+    )
+    (
+        production_train_loader,
+        production_validation_loader,
+        production_complete_cycle_loader,
+        production_validation_complete_cycle_loader,
+        production_uses_training_validation,
+    ) = cli._build_training_loaders(
+        fallback_workload.train_loader.dataset,
+        None,
+        fallback_workload.complete_cycle_loader.dataset,
+        fallback_workload.validation_complete_cycle_loader.dataset,
+        batch_size=int(fallback_workload.training_config["batch_size"]),
+        generator=production_generator,
+    )
+
+    def window_order(loader) -> list[str]:
+        return [window_id for batch in loader for window_id in batch["window_id"]]
+
+    def consume(loader) -> None:
+        for _ in loader:
+            pass
+
+    same_by_epoch: list[bool] = []
+    for _ in range(3):
+        production_order = window_order(production_train_loader)
+        consume(production_complete_cycle_loader)
+        consume(production_validation_loader)
+        consume(production_validation_complete_cycle_loader)
+
+        benchmark_order = window_order(fallback_workload.train_loader)
+        consume(fallback_workload.complete_cycle_loader)
+        consume(fallback_workload.validation_loader)
+        consume(fallback_workload.validation_complete_cycle_loader)
+        consume(fallback_workload.diagnostic_validation_loader)
+        consume(fallback_workload.diagnostic_validation_complete_cycle_loader)
+        consume(fallback_workload.diagnostic_validation_loader)
+        consume(fallback_workload.diagnostic_validation_complete_cycle_loader)
+        same_by_epoch.append(production_order == benchmark_order)
+
+    assert production_uses_training_validation
+    assert same_by_epoch == [True, True, True]
+
+    _write_sam3d(sam3d, "face", frames, person="2")
+    _write_sam3d(sam3d, "side", frames, person="2")
+    second_record = split_root / "person_2" / "alignment_record_2.json"
+    second_record.parent.mkdir(parents=True)
+    second_record.write_text(record.read_text(encoding="utf-8"), encoding="utf-8")
+    val_fold = tmp_path / "fold_with_validation.json"
+    val_fold.write_text(
+        json.dumps(
+            {
+                "train": [{"person_id": "1"}],
+                "val": [{"person_id": "2"}],
+                "test": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert main(["prepare", "--config", str(config), "--person", "2"]) == 0
+    real_validation_config = deepcopy(tiny_config)
+    real_validation_config["paths"]["fold_json"] = str(val_fold)
+    real_validation_workload = benchmark._build_workload(real_validation_config, "A4")
+    assert not real_validation_workload.uses_training_validation
+    assert real_validation_workload.validation_loader is not real_validation_workload.train_loader
+    assert real_validation_workload.prepared_validation_loader is not None
+    assert real_validation_workload.prepared_validation_complete_cycle_loader is not None
+
     a6_equivalence = benchmark._run_training_equivalence(
         tiny_config,
         "A6",
@@ -284,7 +360,7 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
         "pin_memory": False,
         "non_blocking_transfer": False,
         "validation_cache": False,
-        "batched_validation": False,
+        "batched_validation": True,
     }
     assert equivalence["optimizer_steps"]["expected"] == {"train_window": 1}
     assert equivalence["exact_gates"]["training_sample_order"]
