@@ -279,16 +279,18 @@ def train_one_epoch(
     means = _mean_metrics(history)
     if complete_cycle_loader is not None and config.complete_cycle_rom_weight > 0:
         rom_values: list[float] = []
-        for batch in complete_cycle_loader:
+        for prepared in ordered_prefetch(
+            complete_cycle_loader, prepare, depth=throughput.prefetch_batches
+        ):
             optimizer.zero_grad(set_to_none=True)
-            output, prepared = _forward_window(
+            if throughput.pin_memory:
+                prepared = pin_tensor_batch(prepared)
+            output, prepared = _forward_prepared(
                 model,
-                batch,
+                prepared,
                 skeleton,
-                seed=int(seed),
-                corruption_config=corruption_config,
                 device=target_device,
-                epoch=epoch,
+                non_blocking=throughput.non_blocking_transfer,
                 profiler=profiler,
             )
             with profiler.stage("complete_cycle_loss"):

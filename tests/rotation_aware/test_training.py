@@ -7,11 +7,12 @@ import pytest
 import torch
 from torch.utils.data import DataLoader
 
+import fuse.rotation_aware.training as training_module
 from fuse.rotation_aware.config import RoleSpec, SkeletonSpec
 from fuse.rotation_aware.dataset import collate_pose_pair_windows
 from fuse.rotation_aware.losses import LossConfig
 from fuse.rotation_aware.model import RotationAwareFusionModel
-from fuse.rotation_aware.prefetch import ordered_prefetch, pin_tensor_batch
+from fuse.rotation_aware.prefetch import ThroughputConfig, ordered_prefetch, pin_tensor_batch
 from fuse.rotation_aware.profiling import StageProfiler
 from fuse.rotation_aware.training import _corrupt_batch, _feature_bundle, _forward_window, _fused_bone_cv, _prepare_window, _tensor_batch, load_checkpoint, save_checkpoint, train_one_epoch, validate
 
@@ -279,7 +280,9 @@ def test_cpu_tiny_overfit_is_finite_and_reduces_loss() -> None:
     assert final < initial
 
 
-def test_a6_training_runs_a_separate_complete_cycle_pass() -> None:
+def test_a6_training_prefetches_complete_cycle_batches_with_configured_transfer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class RecordingModel(RotationAwareFusionModel):
         def __init__(self, spec: SkeletonSpec) -> None:
             super().__init__(spec, hidden_channels=8)
@@ -289,9 +292,18 @@ def test_a6_training_runs_a_separate_complete_cycle_pass() -> None:
             self.frame_lengths.append(face.shape[1])
             return super().forward(face, *args, **kwargs)
 
+    class RecordingAdam(torch.optim.Adam):
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            super().__init__(*args, **kwargs)
+            self.step_count = 0
+
+        def step(self, *args: object, **kwargs: object) -> None:
+            self.step_count += 1
+            super().step(*args, **kwargs)
+
     spec = _spec()
     model = RecordingModel(spec)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    optimizer = RecordingAdam(model.parameters(), lr=1e-3)
     config = LossConfig(
         corruption_recovery_weight=0.0,
         high_consensus_identity_weight=0.0,
@@ -302,6 +314,28 @@ def test_a6_training_runs_a_separate_complete_cycle_pass() -> None:
         adaptive_temporal_acceleration_weight=0.0,
         minimal_residual_weight=0.0,
     )
+    prefetch_depths: list[int] = []
+    pin_calls: list[dict[str, object]] = []
+    non_blocking_values: list[bool] = []
+    original_prefetch = training_module.ordered_prefetch
+    original_pin = training_module.pin_tensor_batch
+    original_forward = training_module._forward_prepared
+
+    def recording_prefetch(source, prepare, depth):
+        prefetch_depths.append(depth)
+        yield from original_prefetch(source, prepare, depth)
+
+    def recording_pin(batch):
+        pin_calls.append(dict(batch))
+        return original_pin(batch)
+
+    def recording_forward(*args, **kwargs):
+        non_blocking_values.append(bool(kwargs.get("non_blocking", False)))
+        return original_forward(*args, **kwargs)
+
+    monkeypatch.setattr(training_module, "ordered_prefetch", recording_prefetch)
+    monkeypatch.setattr(training_module, "pin_tensor_batch", recording_pin)
+    monkeypatch.setattr(training_module, "_forward_prepared", recording_forward)
 
     train_one_epoch(
         model,
@@ -311,9 +345,16 @@ def test_a6_training_runs_a_separate_complete_cycle_pass() -> None:
         loss_config=config,
         complete_cycle_loader=[_complete_cycle_batch()],
         seed=3,
+        throughput_config=ThroughputConfig(
+            prefetch_batches=2, pin_memory=True, non_blocking_transfer=True
+        ),
     )
 
     assert model.frame_lengths == [5, 129]
+    assert prefetch_depths == [2, 2]
+    assert [batch["face"].shape[1] for batch in pin_calls] == [5, 129]
+    assert non_blocking_values == [True, True]
+    assert optimizer.step_count == 1
 
 
 def test_a5_training_does_not_consume_complete_cycle_loader() -> None:
