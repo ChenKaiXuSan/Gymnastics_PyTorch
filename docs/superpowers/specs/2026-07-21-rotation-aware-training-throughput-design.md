@@ -2,14 +2,19 @@
 
 ## Goal
 
-Reduce end-to-end epoch time for rotation-aware A4, A5, and A6 training without
-changing the scientific training protocol. The optimized route must retain the
-same model, FP32 precision, batch size, learning rate, epoch count, losses,
-corruption seeds, sample order, optimizer-step count, validation definition,
-and checkpoint selection rule.
+Reduce end-to-end training time for rotation-aware A4, A5, and A6 while adopting
+an explicitly versioned higher-throughput training protocol. The new protocol
+uses batch size 64, 200 epochs for A4/A5, 100 epochs for A6, and learning rate
+0.001 for every method. Implementation optimizations must retain the same model,
+FP32 precision, losses, corruption seeds, sample order, validation definition,
+and checkpoint selection rule within this new protocol.
 
 The current all-137-person run remains untouched. The optimized route is for a
 subsequent run after equivalence and GPU throughput benchmarks pass.
+
+This is not a protocol-identical continuation of the batch-32 run. A4/A5 see
+twice as many epochs and batch twice as many windows per update. Results must be
+identified by their batch and epoch configuration in all run IDs and reports.
 
 ## Baseline
 
@@ -30,16 +35,35 @@ blocking host-to-device copies, validation model forwards forced to batch size
 one, and per-frame Python boolean checks in complete-cycle ROM computation that
 synchronize the CPU and GPU repeatedly.
 
+## New Training Protocol
+
+The fixed configuration is:
+
+| Method | Batch size | Epochs | Learning rate |
+| --- | ---: | ---: | ---: |
+| A4 | 64 | 200 | 0.001 |
+| A5 | 64 | 200 | 0.001 |
+| A6 | 64 | 100 | 0.001 |
+
+With 1,555 training windows, the old fixed-window schedule performed 49 updates
+per epoch. The new schedule performs 25. A4/A5 therefore move from about 4,900
+to 5,000 optimizer updates. A6 retains 100 epochs because its 654 one-cycle
+updates dominate each epoch: its approximate total moves from 70,300 updates
+to 67,900. These counts explain the asymmetric epoch choice; they do not make
+the batch-64 and batch-32 gradients scientifically identical.
+
 ## Protocol Invariants
 
 The optimization must preserve all of the following:
 
 - A4, A5, and A6 model architecture and hidden width.
 - FP32 training; AMP, FP16, and BF16 remain disabled.
-- Batch size 32 for fixed windows.
+- Batch size 64 for fixed windows.
+- 200 epochs for A4/A5 and 100 epochs for A6.
 - One optimizer step per fixed-window batch.
 - One optimizer step per complete training cycle in A6.
-- Existing Adam configuration, learning rate, and epoch count.
+- Existing Adam configuration and the declared method-specific learning rate
+  and epoch counts.
 - Fold membership and deterministic sample order for a fixed seed.
 - Stable corruption seed derivation and exact corruption tensors.
 - All nine reported loss components and their configured weights.
@@ -47,11 +71,12 @@ The optimization must preserve all of the following:
   and `score >= best` checkpoint selection.
 - No triangulated pseudo-GT in training or checkpoint selection.
 
-Protocol equivalence means exact integer, boolean, seed, ordering, and step-count
-identity, plus FP32 floating-point agreement within explicit tolerances. Batched
-CUDA kernels can change floating-point reduction order, so bitwise identity is
-not required. Any difference large enough to change checkpoint selection fails
-the equivalence gate.
+Implementation equivalence is measured against an unoptimized reference running
+the same new method-specific configuration. It requires exact integer, boolean,
+seed, ordering, and step-count identity, plus FP32 floating-point agreement
+within explicit tolerances. Batched CUDA kernels can change floating-point
+reduction order, so bitwise identity is not required. Any difference large
+enough to change checkpoint selection fails the equivalence gate.
 
 ## Design
 
@@ -149,8 +174,9 @@ Focused tests must prove:
   all mask and wrap cases.
 - Zero-weight pruning leaves total loss and model gradients unchanged within
   `1e-7` while preserving reported component values.
-- A seeded one-epoch integration run has identical optimizer-step count,
-  corruption manifests, sample ordering, and checkpoint provenance.
+- Seeded one-epoch integration runs for A4 and A6 have optimizer-step counts
+  matching the unoptimized batch-64 reference, identical corruption manifests,
+  identical sample ordering, and complete checkpoint provenance.
 - The full `tests/rotation_aware` suite passes.
 
 GPU benchmarks use the existing prepared cache and report median times over
@@ -160,8 +186,8 @@ evidence, not as the acceptance criterion.
 
 ## Expected Outcome
 
-The target, not a guarantee, is 1.6-2.0 minutes per A4/A5 epoch and 3-4 minutes
+The target, not a guarantee, is 1.4-1.8 minutes per A4/A5 epoch and 3-4 minutes
 per A6 epoch. Sustained 100 percent GPU utilization is not expected because A6
 must retain one update per variable-length cycle. The primary success measure
-is higher samples per second and lower epoch duration with unchanged scientific
-protocol.
+is higher samples per second and lower epoch duration while faithfully executing
+the newly declared batch-64 protocol.
