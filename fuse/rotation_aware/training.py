@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 from copy import deepcopy
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Iterable, Mapping
@@ -24,6 +25,85 @@ from .model import FusionOutput, RotationAwareFusionModel
 from .prefetch import ThroughputConfig, ordered_prefetch, pin_tensor_batch
 from .profiling import StageProfiler
 from .trunk import extract_trunk_features
+
+
+_CORRUPTION_TRACE_FIELDS = (
+    "face",
+    "side",
+    "corrupted_valid_face",
+    "corrupted_valid_side",
+    "reference_face",
+    "reference_side",
+    "reference_valid_face",
+    "reference_valid_side",
+    "face_corruption_mask",
+    "side_corruption_mask",
+)
+
+
+@dataclass(frozen=True)
+class TrainingTraceSample:
+    """One prepared CPU sample observed immediately before transfer."""
+
+    phase: str
+    window_id: str
+    corruption_digests: dict[str, str]
+    optimizer_steps_before: int | None
+
+
+@dataclass
+class TrainingTrace:
+    """Opt-in exact training/validation trace with no work when absent."""
+
+    samples: list[TrainingTraceSample] = field(default_factory=list)
+    optimizer_steps: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def total_optimizer_steps(self) -> int:
+        return sum(self.optimizer_steps.values())
+
+    def record_pre_transfer(
+        self,
+        batch: Mapping[str, object],
+        *,
+        phase: str,
+        optimizer_steps_before: int | None,
+    ) -> None:
+        window_ids = batch.get("window_id")
+        if not isinstance(window_ids, (list, tuple)) or not all(
+            isinstance(value, str) for value in window_ids
+        ):
+            raise ValueError("traced batches require stable string window_ids")
+        for index, window_id in enumerate(window_ids):
+            digests: dict[str, str] = {}
+            for name in _CORRUPTION_TRACE_FIELDS:
+                value = _required_tensor(batch, name)
+                if value.device.type != "cpu":
+                    raise ValueError("training traces must be recorded before tensor transfer")
+                sample = value[index].detach().contiguous()
+                digest = hashlib.sha256()
+                digest.update(str(sample.dtype).encode("ascii"))
+                digest.update(str(tuple(sample.shape)).encode("ascii"))
+                digest.update(sample.numpy().tobytes())
+                digests[name] = digest.hexdigest()
+            self.samples.append(
+                TrainingTraceSample(
+                    phase=phase,
+                    window_id=window_id,
+                    corruption_digests=digests,
+                    optimizer_steps_before=optimizer_steps_before,
+                )
+            )
+
+    def record_optimizer_step(self, phase: str) -> None:
+        self.optimizer_steps[phase] = self.optimizer_steps.get(phase, 0) + 1
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "samples": [asdict(sample) for sample in self.samples],
+            "optimizer_steps": dict(self.optimizer_steps),
+            "total_optimizer_steps": self.total_optimizer_steps,
+        }
 
 
 def _tensor_batch(
@@ -248,6 +328,8 @@ def _forward_window(
     epoch: int = 0,
     profiler: StageProfiler | None = None,
     phase: str | None = None,
+    trace: TrainingTrace | None = None,
+    optimizer_steps_before: int | None = None,
 ) -> tuple[FusionOutput, dict[str, object]]:
     if profiler is None:
         profiler = StageProfiler(enabled=False, device=device)
@@ -260,6 +342,12 @@ def _forward_window(
         profiler=profiler,
         phase=phase,
     )
+    if trace is not None:
+        trace.record_pre_transfer(
+            prepared,
+            phase=phase or "window",
+            optimizer_steps_before=optimizer_steps_before,
+        )
     return _forward_prepared(
         model, prepared, skeleton, device=device, profiler=profiler, phase=phase
     )
@@ -385,6 +473,7 @@ def train_one_epoch(
     device: str | torch.device = "cpu",
     profiler: StageProfiler | None = None,
     throughput_config: ThroughputConfig | None = None,
+    trace: TrainingTrace | None = None,
 ) -> dict[str, float]:
     """Run one seeded epoch and return finite averages of the nine objectives."""
     model.train()
@@ -411,6 +500,12 @@ def train_one_epoch(
         profiler=profiler,
         phase=train_window_phase,
     ):
+        if trace is not None:
+            trace.record_pre_transfer(
+                prepared,
+                phase=train_window_phase,
+                optimizer_steps_before=trace.total_optimizer_steps,
+            )
         optimizer.zero_grad(set_to_none=True)
         if throughput.pin_memory:
             if profiler.enabled:
@@ -436,6 +531,8 @@ def train_one_epoch(
             objective.backward()
         with profiler.stage(f"{train_window_phase}.optimizer"):
             optimizer.step()
+        if trace is not None:
+            trace.record_optimizer_step(train_window_phase)
         history.append({name: float(value.detach().cpu()) for name, value in losses.as_dict().items()})
     means = _mean_metrics(history)
     if complete_cycle_loader is not None and config.complete_cycle_rom_weight > 0:
@@ -451,6 +548,12 @@ def train_one_epoch(
             profiler=profiler,
             phase=train_cycle_phase,
         ):
+            if trace is not None:
+                trace.record_pre_transfer(
+                    prepared,
+                    phase=train_cycle_phase,
+                    optimizer_steps_before=trace.total_optimizer_steps,
+                )
             optimizer.zero_grad(set_to_none=True)
             if throughput.pin_memory:
                 if profiler.enabled:
@@ -477,6 +580,8 @@ def train_one_epoch(
                 objective.backward()
             with profiler.stage(f"{train_cycle_phase}.optimizer"):
                 optimizer.step()
+            if trace is not None:
+                trace.record_optimizer_step(train_cycle_phase)
             rom_values.append(float(rom.detach().cpu()))
         if not rom_values:
             raise ValueError("complete-cycle ROM loader produced no batches")
@@ -484,6 +589,95 @@ def train_one_epoch(
         means["total"] += (
             config.complete_cycle_rom_weight * means["complete_cycle_rom"]
         )
+    return {"loss": means["total"], **means}
+
+
+def train_one_epoch_reference(
+    model: RotationAwareFusionModel,
+    loader: Iterable[Mapping[str, object]],
+    optimizer: torch.optim.Optimizer,
+    skeleton: SkeletonSpec,
+    *,
+    loss_config: LossConfig | None = None,
+    corruption_config: CorruptionConfig | None = None,
+    complete_cycle_loader: Iterable[Mapping[str, object]] | None = None,
+    seed: int = 0,
+    epoch: int = 0,
+    device: str | torch.device = "cpu",
+    trace: TrainingTrace | None = None,
+) -> dict[str, float]:
+    """Run the same FP32 epoch synchronously without throughput optimizations."""
+    model.train()
+    target_device = torch.device(device)
+    model.to(target_device)
+    config = loss_config or LossConfig()
+    window_config = (
+        replace(config, complete_cycle_rom_weight=0.0)
+        if complete_cycle_loader is not None
+        else config
+    )
+    torch.manual_seed(int(seed) + int(epoch))
+    history: list[dict[str, float]] = []
+    train_window_phase = "train_window"
+    for batch in loader:
+        optimizer.zero_grad(set_to_none=True)
+        output, prepared = _forward_window(
+            model,
+            batch,
+            skeleton,
+            seed=int(seed),
+            corruption_config=corruption_config,
+            device=target_device,
+            epoch=epoch,
+            phase=train_window_phase,
+            trace=trace,
+            optimizer_steps_before=(trace.total_optimizer_steps if trace is not None else None),
+        )
+        losses = compute_self_supervised_losses(output, prepared, window_config, skeleton)
+        if not torch.isfinite(losses.total):
+            raise FloatingPointError("self-supervised loss is non-finite")
+        _objective_with_zero_gradient_anchor(losses.total, model).backward()
+        optimizer.step()
+        if trace is not None:
+            trace.record_optimizer_step(train_window_phase)
+        history.append(
+            {name: float(value.detach().cpu()) for name, value in losses.as_dict().items()}
+        )
+    means = _mean_metrics(history)
+    if complete_cycle_loader is not None and config.complete_cycle_rom_weight > 0:
+        rom_values: list[float] = []
+        train_cycle_phase = "train_complete_cycle"
+        for batch in complete_cycle_loader:
+            optimizer.zero_grad(set_to_none=True)
+            output, prepared = _forward_window(
+                model,
+                batch,
+                skeleton,
+                seed=int(seed),
+                corruption_config=corruption_config,
+                device=target_device,
+                epoch=epoch,
+                phase=train_cycle_phase,
+                trace=trace,
+                optimizer_steps_before=(
+                    trace.total_optimizer_steps if trace is not None else None
+                ),
+            )
+            rom = compute_complete_cycle_rom_loss(output, prepared, config, skeleton)
+            if not torch.isfinite(rom):
+                raise FloatingPointError("complete-cycle ROM loss is non-finite")
+            objective = _objective_with_zero_gradient_anchor(
+                config.complete_cycle_rom_weight * rom, model
+            )
+            objective.backward()
+            optimizer.step()
+            if trace is not None:
+                trace.record_optimizer_step(train_cycle_phase)
+            rom_values.append(float(rom.detach().cpu()))
+        if not rom_values:
+            raise ValueError("complete-cycle ROM loader produced no batches")
+        means["complete_cycle_rom"] = sum(rom_values) / len(rom_values)
+        means["total"] += config.complete_cycle_rom_weight * means["complete_cycle_rom"]
     return {"loss": means["total"], **means}
 
 
@@ -502,6 +696,7 @@ def validate(
     prepared_loader: Iterable[Mapping[str, object]] | None = None,
     prepared_complete_cycle_loader: Iterable[Mapping[str, object]] | None = None,
     scalar_forward: bool = False,
+    trace: TrainingTrace | None = None,
 ) -> dict[str, Any]:
     """Evaluate fixed corruptions and derive a score from five self-supervised measures."""
     was_training = model.training
@@ -538,6 +733,12 @@ def validate(
     def forward_prepared_batch(
         batch: Mapping[str, object], phase: str
     ) -> tuple[FusionOutput, dict[str, object]]:
+        if trace is not None:
+            trace.record_pre_transfer(
+                batch,
+                phase=phase,
+                optimizer_steps_before=None,
+            )
         if throughput.pin_memory:
             if profiler.enabled:
                 with profiler.cpu_stage(f"{phase}.pin_memory"):
@@ -570,6 +771,7 @@ def validate(
                         device=target_device,
                         profiler=profiler,
                         phase="validation_window",
+                        trace=trace,
                     )
                     append_sample(output, prepared, "validation_window")
         else:
@@ -610,7 +812,12 @@ def validate(
         rom_values: list[float] = []
         with torch.no_grad():
             cycle_batches = prepared_complete_cycle_loader
-            if cycle_batches is None:
+            direct_cycle_forward = scalar_forward and cycle_batches is None
+            if direct_cycle_forward:
+                cycle_batches = _profiled_source(
+                    complete_cycle_loader, profiler, "validation_complete_cycle"
+                )
+            elif cycle_batches is None:
                 cycle_batches = _prepared_validation_stream(
                     complete_cycle_loader,
                     skeleton,
@@ -628,9 +835,22 @@ def validate(
                     stage="cache_acquisition",
                 )
             for batch in cycle_batches:
-                output, prepared = forward_prepared_batch(
-                    batch, "validation_complete_cycle"
-                )
+                if direct_cycle_forward:
+                    output, prepared = _forward_window(
+                        model,
+                        batch,
+                        skeleton,
+                        seed=int(seed),
+                        corruption_config=corruption_config,
+                        device=target_device,
+                        profiler=profiler,
+                        phase="validation_complete_cycle",
+                        trace=trace,
+                    )
+                else:
+                    output, prepared = forward_prepared_batch(
+                        batch, "validation_complete_cycle"
+                    )
                 with profiler.stage("validation_complete_cycle.loss"):
                     rom = compute_complete_cycle_rom_loss(output, prepared, config, skeleton)
                 rom_values.append(float(rom.cpu()))

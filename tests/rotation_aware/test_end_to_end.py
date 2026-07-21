@@ -218,6 +218,20 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     tiny_config["performance"]["profile_stages"] = True
     config.write_text(yaml.safe_dump(tiny_config, sort_keys=False), encoding="utf-8")
     benchmark = importlib.import_module("analysis.benchmark_rotation_aware_training")
+    a6_equivalence = benchmark._run_training_equivalence(
+        tiny_config,
+        "A6",
+        torch.device("cpu"),
+        config_path=str(config),
+    )
+    assert a6_equivalence["accepted"]
+    assert a6_equivalence["protocol"]["ablation"] == "A6"
+    assert a6_equivalence["optimizer_steps"]["expected"] == {
+        "train_window": 1,
+        "train_complete_cycle": 1,
+    }
+    assert a6_equivalence["optimizer_steps"]["reference"]["total_optimizer_steps"] == 2
+    assert a6_equivalence["optimizer_steps"]["optimized"]["total_optimizer_steps"] == 2
     profiler_enabled: list[bool] = []
     original_profiler = benchmark.StageProfiler
 
@@ -227,6 +241,22 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
             super().__init__(enabled=enabled, device=device)
 
     monkeypatch.setattr(benchmark, "StageProfiler", RecordingProfiler)
+    lifecycle: list[str] = []
+    original_build_workload = benchmark._build_workload
+    original_release_probe_memory = benchmark._release_probe_memory
+
+    def recording_build_workload(*args, **kwargs):
+        lifecycle.append("build")
+        return original_build_workload(*args, **kwargs)
+
+    def recording_release_probe_memory(device):
+        lifecycle.append("release")
+        return original_release_probe_memory(device)
+
+    monkeypatch.setattr(benchmark, "_build_workload", recording_build_workload)
+    monkeypatch.setattr(
+        benchmark, "_release_probe_memory", recording_release_probe_memory
+    )
     benchmark_output = tmp_path / "benchmark.json"
     assert benchmark.main(
         [
@@ -242,6 +272,26 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     assert benchmark_report["effective_train_window_rate"]["median_windows_per_second"] > 0
     assert benchmark_report["peak_cuda_memory_bytes"] == 0
     assert benchmark_report["measured_peak_cuda_memory_bytes"] == [0, 0]
+    equivalence = benchmark_report["training_equivalence"]
+    assert equivalence["accepted"]
+    assert equivalence["protocol"]["ablation"] == "A4"
+    assert equivalence["protocol"]["batch_size"] == 64
+    assert equivalence["protocol"]["epochs"] == 1
+    assert equivalence["protocol"]["seed"] == production_config["training"]["seed"]
+    assert equivalence["protocol"]["precision"] == "FP32"
+    assert equivalence["reference_path"] == {
+        "ordered_prefetch": False,
+        "pin_memory": False,
+        "non_blocking_transfer": False,
+        "validation_cache": False,
+        "batched_validation": False,
+    }
+    assert equivalence["optimizer_steps"]["expected"] == {"train_window": 1}
+    assert equivalence["exact_gates"]["training_sample_order"]
+    assert equivalence["exact_gates"]["corruption_digests"]
+    assert equivalence["exact_gates"]["validation_membership"]
+    assert equivalence["state"]["model"]["equivalent"]
+    assert equivalence["state"]["adam"]["equivalent"]
     assert benchmark_report["workload_counts"] == {
         "train_windows": 2,
         "train_complete_cycles": 1,
@@ -250,6 +300,7 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     }
     assert benchmark_report["config"]["source_training"]["device"] == "cuda:0"
     assert benchmark_report["config"]["effective_training"]["device"] == "cpu"
+    assert lifecycle == ["build", "build", "release", "build"]
     assert profiler_enabled == [False, False, False, True]
     assert benchmark_report["stage_timings"]["mode"] == "untimed_diagnostic_epoch"
     assert benchmark_report["stage_timings"]["configured_profile_stages"] is True
@@ -323,3 +374,94 @@ def test_benchmark_validation_history_rejects_scores_straddling_prior_best() -> 
     assert not entry["accepted"]
     with pytest.raises(AssertionError, match="validation acceptance failed"):
         benchmark._require_validation_acceptance(entry)
+
+
+def _training_probe_payload() -> dict[str, object]:
+    samples = [
+        {
+            "phase": "train_window",
+            "window_id": "window-0",
+            "corruption_digests": {"face": "a" * 64},
+            "optimizer_steps_before": 0,
+        },
+        {
+            "phase": "train_complete_cycle",
+            "window_id": "cycle-0",
+            "corruption_digests": {"face": "b" * 64},
+            "optimizer_steps_before": 1,
+        },
+    ]
+    return {
+        "train_metrics": {"loss": 1.0, "total": 1.0},
+        "validation_metrics": {
+            "loss": 1.0,
+            "score": 0.75,
+            "losses": {"total": 1.0},
+            "components": {"bone_cv": 0.5},
+        },
+        "training_trace": {
+            "samples": samples,
+            "optimizer_steps": {"train_window": 1, "train_complete_cycle": 1},
+            "total_optimizer_steps": 2,
+        },
+        "validation_trace": {
+            "samples": [
+                {
+                    "phase": "validation_window",
+                    "window_id": "validation-0",
+                    "corruption_digests": {"face": "c" * 64},
+                    "optimizer_steps_before": None,
+                }
+            ],
+            "optimizer_steps": {},
+            "total_optimizer_steps": 0,
+        },
+        "model_state": {"weight": torch.tensor([1.0], dtype=torch.float32)},
+        "optimizer_state": {
+            "state": {
+                0: {
+                    "step": torch.tensor(2.0),
+                    "exp_avg": torch.tensor([0.1], dtype=torch.float32),
+                    "exp_avg_sq": torch.tensor([0.01], dtype=torch.float32),
+                }
+            },
+            "param_groups": [{"lr": 0.001, "params": [0]}],
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("divergence", "failed_gate"),
+    (
+        ("order", "training_sample_order"),
+        ("corruption", "corruption_digests"),
+        ("steps", "optimizer_steps"),
+        ("parameter", "model_state"),
+    ),
+)
+def test_training_equivalence_comparator_rejects_divergence(
+    divergence: str, failed_gate: str
+) -> None:
+    benchmark = importlib.import_module("analysis.benchmark_rotation_aware_training")
+    reference = _training_probe_payload()
+    optimized = deepcopy(reference)
+    if divergence == "order":
+        optimized["training_trace"]["samples"].reverse()
+    elif divergence == "corruption":
+        optimized["training_trace"]["samples"][0]["corruption_digests"]["face"] = "z" * 64
+    elif divergence == "steps":
+        optimized["training_trace"]["optimizer_steps"]["train_complete_cycle"] = 0
+        optimized["training_trace"]["total_optimizer_steps"] = 1
+    else:
+        optimized["model_state"]["weight"].add_(0.01)
+
+    comparison = benchmark._compare_training_probe_results(
+        reference,
+        optimized,
+        expected_optimizer_steps={"train_window": 1, "train_complete_cycle": 1},
+    )
+
+    assert not comparison["accepted"]
+    assert not comparison["gates"][failed_gate]
+    with pytest.raises(AssertionError, match="training equivalence failed"):
+        benchmark._require_training_equivalence(comparison)

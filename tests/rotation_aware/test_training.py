@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,7 @@ from fuse.rotation_aware.losses import LossConfig
 from fuse.rotation_aware.model import RotationAwareFusionModel
 from fuse.rotation_aware.prefetch import ThroughputConfig, ordered_prefetch, pin_tensor_batch
 from fuse.rotation_aware.profiling import StageProfiler
-from fuse.rotation_aware.training import _corrupt_batch, _feature_bundle, _forward_window, _fused_bone_cv, _prepare_window, _tensor_batch, load_checkpoint, prepare_validation_batches, save_checkpoint, train_one_epoch, validate
+from fuse.rotation_aware.training import TrainingTrace, _corrupt_batch, _feature_bundle, _forward_window, _fused_bone_cv, _prepare_window, _tensor_batch, load_checkpoint, prepare_validation_batches, save_checkpoint, train_one_epoch, train_one_epoch_reference, validate
 
 
 def _spec() -> SkeletonSpec:
@@ -405,6 +406,102 @@ def test_a6_training_prefetches_complete_cycle_batches_with_configured_transfer(
     assert [batch["face"].shape[1] for batch in pin_calls] == [5, 129]
     assert non_blocking_values == [True, True]
     assert optimizer.step_count == 2
+
+
+def test_synchronous_reference_bypasses_every_throughput_optimization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = _spec()
+    model = RotationAwareFusionModel(spec, hidden_channels=8)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    non_blocking_values: list[bool] = []
+    original_tensor_batch = training_module._tensor_batch
+
+    def unexpected_optimization(*args: object, **kwargs: object) -> object:
+        raise AssertionError("synchronous reference used a throughput optimization")
+
+    def recording_tensor_batch(batch, device, *, non_blocking=False):
+        non_blocking_values.append(non_blocking)
+        return original_tensor_batch(batch, device, non_blocking=non_blocking)
+
+    monkeypatch.setattr(training_module, "ordered_prefetch", unexpected_optimization)
+    monkeypatch.setattr(training_module, "pin_tensor_batch", unexpected_optimization)
+    monkeypatch.setattr(training_module, "_tensor_batch", recording_tensor_batch)
+
+    metrics = train_one_epoch_reference(
+        model,
+        _loader(count=2, batch_size=2),
+        optimizer,
+        spec,
+        complete_cycle_loader=[_complete_cycle_batch(frames=9)],
+        seed=3,
+    )
+
+    assert torch.isfinite(torch.tensor(metrics["loss"]))
+    assert non_blocking_values == [False, False]
+
+
+def test_training_trace_matches_reference_order_corruptions_and_every_a6_step() -> None:
+    spec = _spec()
+    torch.manual_seed(29)
+    reference_model = RotationAwareFusionModel(spec, hidden_channels=8)
+    optimized_model = RotationAwareFusionModel(spec, hidden_channels=8)
+    optimized_model.load_state_dict(reference_model.state_dict())
+    reference_optimizer = torch.optim.Adam(reference_model.parameters(), lr=1e-3)
+    optimized_optimizer = torch.optim.Adam(optimized_model.parameters(), lr=1e-3)
+    reference_trace = TrainingTrace()
+    optimized_trace = TrainingTrace()
+    cycles = [_complete_cycle_batch(frames=9), _complete_cycle_batch(frames=11)]
+    cycles[1]["window_id"] = ["person_person-1/trial-2/complete_cycle"]
+
+    reference_metrics = train_one_epoch_reference(
+        reference_model,
+        _loader(count=3, batch_size=2),
+        reference_optimizer,
+        spec,
+        complete_cycle_loader=deepcopy(cycles),
+        seed=31,
+        trace=reference_trace,
+    )
+    optimized_metrics = train_one_epoch(
+        optimized_model,
+        _loader(count=3, batch_size=2),
+        optimized_optimizer,
+        spec,
+        complete_cycle_loader=deepcopy(cycles),
+        seed=31,
+        trace=optimized_trace,
+        throughput_config=ThroughputConfig(
+            prefetch_batches=2,
+            pin_memory=True,
+            non_blocking_transfer=True,
+        ),
+    )
+
+    assert reference_trace.as_dict() == optimized_trace.as_dict()
+    assert reference_trace.optimizer_steps == {
+        "train_window": 2,
+        "train_complete_cycle": 2,
+    }
+    assert [sample.window_id for sample in reference_trace.samples] == [
+        "window-0",
+        "window-1",
+        "window-2",
+        "person_person-1/trial-1/complete_cycle",
+        "person_person-1/trial-2/complete_cycle",
+    ]
+    assert all(
+        len(digest) == 64
+        for sample in reference_trace.samples
+        for digest in sample.corruption_digests.values()
+    )
+    assert reference_metrics == pytest.approx(optimized_metrics, rel=1e-6, abs=1e-6)
+    for reference_parameter, optimized_parameter in zip(
+        reference_model.parameters(), optimized_model.parameters(), strict=True
+    ):
+        torch.testing.assert_close(
+            reference_parameter, optimized_parameter, rtol=1e-6, atol=1e-6
+        )
 
 
 def test_profiled_training_and_uncached_validation_use_distinct_phase_stages() -> None:

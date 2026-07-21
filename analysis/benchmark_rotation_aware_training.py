@@ -7,6 +7,7 @@ performance configuration paths without writing a run directory or checkpoint.
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import math
 import statistics
@@ -44,8 +45,10 @@ from fuse.rotation_aware.model import RotationAwareFusionModel
 from fuse.rotation_aware.prefetch import ThroughputConfig
 from fuse.rotation_aware.profiling import StageProfiler
 from fuse.rotation_aware.training import (
+    TrainingTrace,
     prepare_validation_batches,
     train_one_epoch,
+    train_one_epoch_reference,
     validate,
 )
 
@@ -104,13 +107,16 @@ def _resolve_device(value: str) -> torch.device:
 
 
 def _build_workload(
-    config: Mapping[str, Any], ablation: str
+    config: Mapping[str, Any],
+    ablation: str,
+    *,
+    throughput_override: ThroughputConfig | None = None,
 ) -> BenchmarkWorkload:
     training = _training_config_for_ablation(config, ablation)
     performance = config.get("performance", {})
     if not isinstance(performance, Mapping):
         raise ValueError("rotation-aware performance config must be a mapping")
-    throughput = ThroughputConfig(**dict(performance))
+    throughput = throughput_override or ThroughputConfig(**dict(performance))
     paths = _paths(config, None)
     skeleton = load_skeleton_spec(paths["skeleton"])
     manifest = build_split_manifest(resolve_fold(config, None))
@@ -192,9 +198,11 @@ def _build_workload(
             corruption_config=corruption,
             throughput_config=throughput,
         )
-    model = RotationAwareFusionModel(
-        skeleton, hidden_channels=int(training.get("hidden_channels", 128))
-    )
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(int(training.get("seed", 0)))
+        model = RotationAwareFusionModel(
+            skeleton, hidden_channels=int(training.get("hidden_channels", 128))
+        )
     optimizer = torch.optim.Adam(
         model.parameters(), lr=float(training.get("learning_rate", 1e-3))
     )
@@ -436,6 +444,324 @@ def _require_validation_acceptance(acceptance: Mapping[str, object]) -> None:
         raise AssertionError("validation acceptance failed")
 
 
+def _clone_state(value: object) -> object:
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().clone()
+    if isinstance(value, Mapping):
+        return {key: _clone_state(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_clone_state(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_clone_state(item) for item in value)
+    return value
+
+
+def _flatten_state(value: object, prefix: str, output: dict[str, object]) -> None:
+    if isinstance(value, Mapping):
+        for key in sorted(value, key=lambda item: str(item)):
+            _flatten_state(value[key], f"{prefix}.{key}" if prefix else str(key), output)
+        return
+    if isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _flatten_state(item, f"{prefix}.{index}" if prefix else str(index), output)
+        return
+    output[prefix] = value
+
+
+def _state_comparison(
+    reference: Mapping[str, object],
+    optimized: Mapping[str, object],
+    *,
+    relative_tolerance: float,
+    absolute_tolerance: float,
+) -> dict[str, object]:
+    reference_leaves: dict[str, object] = {}
+    optimized_leaves: dict[str, object] = {}
+    _flatten_state(reference, "", reference_leaves)
+    _flatten_state(optimized, "", optimized_leaves)
+    keys_match = reference_leaves.keys() == optimized_leaves.keys()
+    entries: dict[str, object] = {}
+    equivalent = keys_match
+    for name in sorted(reference_leaves.keys() & optimized_leaves.keys()):
+        reference_value = reference_leaves[name]
+        optimized_value = optimized_leaves[name]
+        if isinstance(reference_value, torch.Tensor) and isinstance(
+            optimized_value, torch.Tensor
+        ):
+            shape_match = reference_value.shape == optimized_value.shape
+            dtype_match = reference_value.dtype == optimized_value.dtype
+            floating = reference_value.is_floating_point() or reference_value.is_complex()
+            finite = (
+                bool(torch.isfinite(reference_value).all())
+                and bool(torch.isfinite(optimized_value).all())
+                if floating and dtype_match
+                else True
+            )
+            if shape_match and dtype_match and floating and reference_value.numel():
+                delta = (optimized_value - reference_value).abs()
+                max_absolute_delta = float(delta.max())
+                max_relative_delta = float(
+                    (delta / reference_value.abs().clamp_min(1e-12)).max()
+                )
+            else:
+                max_absolute_delta = None
+                max_relative_delta = None
+            tensor_equivalent = (
+                shape_match
+                and dtype_match
+                and finite
+                and (
+                    torch.allclose(
+                        reference_value,
+                        optimized_value,
+                        rtol=relative_tolerance,
+                        atol=absolute_tolerance,
+                    )
+                    if floating
+                    else torch.equal(reference_value, optimized_value)
+                )
+            )
+            entries[name] = {
+                "shape": list(reference_value.shape),
+                "dtype": str(reference_value.dtype),
+                "max_absolute_delta": max_absolute_delta,
+                "max_relative_delta": max_relative_delta,
+                "finite": finite,
+                "equivalent": tensor_equivalent,
+            }
+            equivalent = equivalent and tensor_equivalent
+        else:
+            leaf_equivalent = (
+                type(reference_value) is type(optimized_value)
+                and reference_value == optimized_value
+            )
+            entries[name] = {
+                "reference": reference_value,
+                "optimized": optimized_value,
+                "equivalent": leaf_equivalent,
+            }
+            equivalent = equivalent and leaf_equivalent
+    return {
+        "relative_tolerance": relative_tolerance,
+        "absolute_tolerance": absolute_tolerance,
+        "keys_match": keys_match,
+        "entries": entries,
+        "equivalent": bool(equivalent),
+    }
+
+
+def _trace_projection(trace: Mapping[str, object], field: str) -> list[object]:
+    samples = trace.get("samples")
+    if not isinstance(samples, list):
+        raise ValueError("training equivalence trace requires a sample list")
+    projection: list[object] = []
+    for sample in samples:
+        if not isinstance(sample, Mapping):
+            raise ValueError("training equivalence trace samples must be mappings")
+        if field == "order":
+            projection.append((sample.get("phase"), sample.get("window_id")))
+        else:
+            projection.append(sample.get(field))
+    return projection
+
+
+def _compare_training_probe_results(
+    reference: Mapping[str, object],
+    optimized: Mapping[str, object],
+    *,
+    expected_optimizer_steps: Mapping[str, int],
+    expected_phase_samples: Mapping[str, int] | None = None,
+) -> dict[str, object]:
+    """Compare one synchronous and optimized epoch without hiding divergence."""
+    reference_training_trace = reference.get("training_trace")
+    optimized_training_trace = optimized.get("training_trace")
+    reference_validation_trace = reference.get("validation_trace")
+    optimized_validation_trace = optimized.get("validation_trace")
+    if not all(
+        isinstance(value, Mapping)
+        for value in (
+            reference_training_trace,
+            optimized_training_trace,
+            reference_validation_trace,
+            optimized_validation_trace,
+        )
+    ):
+        raise ValueError("training equivalence requires training and validation traces")
+
+    training_order = _trace_projection(reference_training_trace, "order") == _trace_projection(
+        optimized_training_trace, "order"
+    )
+    validation_membership = _trace_projection(
+        reference_validation_trace, "order"
+    ) == _trace_projection(optimized_validation_trace, "order")
+    corruption_digests = (
+        _trace_projection(reference_training_trace, "corruption_digests")
+        == _trace_projection(optimized_training_trace, "corruption_digests")
+        and _trace_projection(reference_validation_trace, "corruption_digests")
+        == _trace_projection(optimized_validation_trace, "corruption_digests")
+    )
+    expected_steps = dict(expected_optimizer_steps)
+    reference_steps = reference_training_trace.get("optimizer_steps")
+    optimized_steps = optimized_training_trace.get("optimizer_steps")
+    reference_steps_before = _trace_projection(
+        reference_training_trace, "optimizer_steps_before"
+    )
+    optimized_steps_before = _trace_projection(
+        optimized_training_trace, "optimizer_steps_before"
+    )
+    total_expected_steps = sum(expected_steps.values())
+    step_trace_valid = all(
+        isinstance(value, int) for value in reference_steps_before
+    ) and (
+        reference_steps_before == sorted(reference_steps_before)
+        and sorted(set(reference_steps_before)) == list(range(total_expected_steps))
+    )
+    optimizer_steps = (
+        reference_steps == expected_steps
+        and optimized_steps == expected_steps
+        and reference_training_trace.get("total_optimizer_steps")
+        == total_expected_steps
+        and optimized_training_trace.get("total_optimizer_steps")
+        == total_expected_steps
+        and reference_steps_before == optimized_steps_before
+        and step_trace_valid
+    )
+    phase_sample_counts = {
+        phase: sum(
+            sample_phase == phase
+            for sample_phase, _ in _trace_projection(reference_training_trace, "order")
+        )
+        for phase in (expected_phase_samples or {})
+    }
+    expected_samples = dict(expected_phase_samples or phase_sample_counts)
+    optimized_phase_sample_counts = {
+        phase: sum(
+            sample_phase == phase
+            for sample_phase, _ in _trace_projection(optimized_training_trace, "order")
+        )
+        for phase in expected_samples
+    }
+    phase_samples_match = (
+        phase_sample_counts == expected_samples
+        and optimized_phase_sample_counts == expected_samples
+    )
+
+    reference_train_metrics = reference.get("train_metrics")
+    optimized_train_metrics = optimized.get("train_metrics")
+    reference_validation = reference.get("validation_metrics")
+    optimized_validation = optimized.get("validation_metrics")
+    if not all(
+        isinstance(value, Mapping)
+        for value in (
+            reference_train_metrics,
+            optimized_train_metrics,
+            reference_validation,
+            optimized_validation,
+        )
+    ):
+        raise ValueError("training equivalence requires metric mappings")
+    train_metrics = _mapping_comparison(
+        reference_train_metrics,
+        optimized_train_metrics,
+        relative_tolerance=1e-6,
+        absolute_tolerance=1e-6,
+        description="training metric",
+    )
+    validation = _validation_history_entry(
+        reference_validation,
+        optimized_validation,
+        epoch=0,
+        phase="training_equivalence_probe",
+        scalar_prior_best_score=None,
+        optimized_prior_best_score=None,
+    )
+    model_state = _state_comparison(
+        reference["model_state"],
+        optimized["model_state"],
+        relative_tolerance=1e-6,
+        absolute_tolerance=1e-7,
+    )
+    adam_state = _state_comparison(
+        reference["optimizer_state"],
+        optimized["optimizer_state"],
+        relative_tolerance=1e-6,
+        absolute_tolerance=1e-7,
+    )
+    finite_metrics = True
+    try:
+        _require_finite(reference_train_metrics, "reference_train")
+        _require_finite(optimized_train_metrics, "optimized_train")
+        _require_finite(reference_validation, "reference_validation")
+        _require_finite(optimized_validation, "optimized_validation")
+    except FloatingPointError:
+        finite_metrics = False
+    gates = {
+        "training_sample_order": training_order,
+        "corruption_digests": corruption_digests,
+        "optimizer_steps": optimizer_steps,
+        "phase_sample_counts": phase_samples_match,
+        "finite_metrics": finite_metrics,
+        "train_metrics": all(bool(value["equivalent"]) for value in train_metrics.values()),
+        "model_state": bool(model_state["equivalent"]),
+        "adam_state": bool(adam_state["equivalent"]),
+        "validation_membership": validation_membership,
+        "validation_metrics": bool(validation["equivalent"]),
+        "checkpoint_decision": bool(validation["checkpoint_selection"]["agreement"]),
+    }
+    return {
+        "gates": gates,
+        "train_metrics": train_metrics,
+        "validation": validation,
+        "state": {"model": model_state, "adam": adam_state},
+        "optimizer_steps": {
+            "expected": expected_steps,
+            "reference": {
+                "by_phase": reference_training_trace.get("optimizer_steps"),
+                "total_optimizer_steps": reference_training_trace.get(
+                    "total_optimizer_steps"
+                ),
+            },
+            "optimized": {
+                "by_phase": optimized_training_trace.get("optimizer_steps"),
+                "total_optimizer_steps": optimized_training_trace.get(
+                    "total_optimizer_steps"
+                ),
+            },
+        },
+        "phase_sample_counts": {
+            "expected": expected_samples,
+            "reference": phase_sample_counts,
+            "optimized": optimized_phase_sample_counts,
+        },
+        "traces": {
+            "reference": {
+                "training": dict(reference_training_trace),
+                "validation": dict(reference_validation_trace),
+            },
+            "optimized": {
+                "training": dict(optimized_training_trace),
+                "validation": dict(optimized_validation_trace),
+            },
+        },
+        "training_order": {
+            "reference": _trace_projection(reference_training_trace, "order"),
+            "optimized": _trace_projection(optimized_training_trace, "order"),
+        },
+        "validation_membership": {
+            "reference": _trace_projection(reference_validation_trace, "order"),
+            "optimized": _trace_projection(optimized_validation_trace, "order"),
+        },
+        "accepted": all(gates.values()),
+    }
+
+
+def _require_training_equivalence(comparison: Mapping[str, object]) -> None:
+    if not comparison.get("accepted"):
+        gates = comparison.get("gates", {})
+        failed = [name for name, accepted in gates.items() if not accepted]
+        raise AssertionError(f"training equivalence failed: {', '.join(failed)}")
+
+
 def _validation_history_entry_for_state(
     workload: BenchmarkWorkload,
     *,
@@ -463,12 +789,202 @@ def _validation_history_entry_for_state(
     return acceptance
 
 
+def _probe_result(
+    workload: BenchmarkWorkload,
+    *,
+    device: torch.device,
+    synchronous_reference: bool,
+) -> dict[str, object]:
+    training_trace = TrainingTrace()
+    validation_trace = TrainingTrace()
+    train_function = train_one_epoch_reference if synchronous_reference else train_one_epoch
+    train_kwargs: dict[str, object] = {
+        "loss_config": workload.loss_config,
+        "corruption_config": workload.corruption_config,
+        "complete_cycle_loader": workload.complete_cycle_loader,
+        "seed": int(workload.training_config.get("seed", 0)),
+        "epoch": 0,
+        "device": device,
+        "trace": training_trace,
+    }
+    if not synchronous_reference:
+        train_kwargs["throughput_config"] = workload.throughput_config
+    train_metrics = train_function(
+        workload.model,
+        workload.train_loader,
+        workload.optimizer,
+        workload.skeleton,
+        **train_kwargs,
+    )
+    validation_metrics = validate(
+        workload.model,
+        workload.validation_loader,
+        workload.skeleton,
+        loss_config=workload.loss_config,
+        corruption_config=workload.corruption_config,
+        complete_cycle_loader=workload.validation_complete_cycle_loader,
+        seed=int(workload.training_config.get("seed", 0)),
+        device=device,
+        throughput_config=(ThroughputConfig() if synchronous_reference else workload.throughput_config),
+        prepared_loader=(None if synchronous_reference else workload.prepared_validation_loader),
+        prepared_complete_cycle_loader=(
+            None
+            if synchronous_reference
+            else workload.prepared_validation_complete_cycle_loader
+        ),
+        scalar_forward=synchronous_reference,
+        trace=validation_trace,
+    )
+    return {
+        "train_metrics": train_metrics,
+        "validation_metrics": validation_metrics,
+        "training_trace": training_trace.as_dict(),
+        "validation_trace": validation_trace.as_dict(),
+        "model_state": _clone_state(workload.model.state_dict()),
+        "optimizer_state": _clone_state(workload.optimizer.state_dict()),
+    }
+
+
+def _run_training_equivalence(
+    config: Mapping[str, Any],
+    ablation: str,
+    device: torch.device,
+    *,
+    config_path: str,
+) -> dict[str, object]:
+    """Run an untimed seeded reference/optimized epoch on independent state."""
+    reference_workload = _build_workload(
+        config,
+        ablation,
+        throughput_override=ThroughputConfig(),
+    )
+    optimized_workload = _build_workload(config, ablation)
+    initial_model = _state_comparison(
+        reference_workload.model.state_dict(),
+        optimized_workload.model.state_dict(),
+        relative_tolerance=0.0,
+        absolute_tolerance=0.0,
+    )
+    initial_adam = _state_comparison(
+        reference_workload.optimizer.state_dict(),
+        optimized_workload.optimizer.state_dict(),
+        relative_tolerance=0.0,
+        absolute_tolerance=0.0,
+    )
+    expected_optimizer_steps = {"train_window": len(reference_workload.train_loader)}
+    if reference_workload.loss_config.complete_cycle_rom_weight > 0:
+        expected_optimizer_steps["train_complete_cycle"] = len(
+            reference_workload.complete_cycle_loader
+        )
+    reference = _probe_result(
+        reference_workload,
+        device=device,
+        synchronous_reference=True,
+    )
+    optimized = _probe_result(
+        optimized_workload,
+        device=device,
+        synchronous_reference=False,
+    )
+    comparison = _compare_training_probe_results(
+        reference,
+        optimized,
+        expected_optimizer_steps=expected_optimizer_steps,
+        expected_phase_samples={
+            "train_window": reference_workload.train_window_count,
+            **(
+                {
+                    "train_complete_cycle": reference_workload.train_complete_cycle_count
+                }
+                if reference_workload.loss_config.complete_cycle_rom_weight > 0
+                else {}
+            ),
+        },
+    )
+    comparison["gates"]["initial_model_state"] = bool(initial_model["equivalent"])
+    comparison["gates"]["initial_adam_state"] = bool(initial_adam["equivalent"])
+    comparison["accepted"] = all(comparison["gates"].values())
+    training = reference_workload.training_config
+    comparison.update(
+        {
+            "protocol": {
+                "ablation": ablation,
+                "batch_size": int(training.get("batch_size", 4)),
+                "epochs": int(training.get("epochs", 1)),
+                "probe_epochs": 1,
+                "seed": int(training.get("seed", 0)),
+                "learning_rate": float(training.get("learning_rate", 1e-3)),
+                "hidden_channels": int(training.get("hidden_channels", 128)),
+                "precision": "FP32",
+                "optimizer": "Adam",
+                "device": str(device),
+            },
+            "provenance": {
+                "config_path": str(Path(config_path).resolve()),
+                "resolved_training": dict(training),
+                "resolved_performance": asdict(optimized_workload.throughput_config),
+                "loss_config": asdict(reference_workload.loss_config),
+                "corruption_config": asdict(reference_workload.corruption_config),
+                "independently_seeded_workloads": True,
+                "workload_counts": {
+                    "train_windows": reference_workload.train_window_count,
+                    "train_complete_cycles": reference_workload.train_complete_cycle_count,
+                    "validation_windows": reference_workload.validation_window_count,
+                    "validation_complete_cycles": reference_workload.validation_complete_cycle_count,
+                },
+            },
+            "reference_path": {
+                "ordered_prefetch": False,
+                "pin_memory": False,
+                "non_blocking_transfer": False,
+                "validation_cache": False,
+                "batched_validation": False,
+            },
+            "initial_state": {"model": initial_model, "adam": initial_adam},
+            "exact_gates": {
+                name: comparison["gates"][name]
+                for name in (
+                    "training_sample_order",
+                    "corruption_digests",
+                    "optimizer_steps",
+                    "phase_sample_counts",
+                    "validation_membership",
+                    "checkpoint_decision",
+                    "initial_model_state",
+                    "initial_adam_state",
+                )
+            },
+        }
+    )
+    _require_finite(comparison, "training_equivalence")
+    _require_training_equivalence(comparison)
+    return comparison
+
+
+def _release_probe_memory(device: torch.device) -> None:
+    gc.collect()
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats(device)
+
+
 def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     """Run warmups and measured epochs, returning a JSON-serializable report."""
     _validate_arguments(args)
     config = load_config(args.config)
+    resolved_training = _training_config_for_ablation(config, args.ablation)
+    device = _resolve_device(
+        str(args.device or resolved_training.get("device", "cpu"))
+    )
+    training_equivalence = _run_training_equivalence(
+        config,
+        args.ablation,
+        device,
+        config_path=args.config,
+    )
+    _release_probe_memory(device)
     workload = _build_workload(config, args.ablation)
-    device = _resolve_device(str(args.device or workload.training_config.get("device", "cpu")))
     source_training = dict(workload.training_config)
     effective_training = {**source_training, "device": str(device)}
     validation_entries: list[dict[str, object]] = []
@@ -617,6 +1133,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             "median_windows_per_second": workload.train_window_count
             / median_epoch_seconds,
         },
+        "training_equivalence": training_equivalence,
         "validation_history": validation_history,
         "stage_timings": stage_timings,
         "train_metrics": train_metrics_by_epoch,

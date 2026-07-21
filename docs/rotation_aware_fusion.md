@@ -86,13 +86,35 @@ complete epoch wall time, which includes the configured complete-cycle and
 validation work; it is not raw per-loader throughput. It requires at least two
 measured epochs and synchronizes CUDA at each timing boundary.
 
+Before constructing the timed workload, the benchmark builds two independent
+workloads from the same resolved ablation config and seed. Their initial model
+parameters and Adam states must be identical. One executes a true synchronous
+one-epoch reference with no ordered prefetch, pinning, nonblocking transfer,
+validation cache, or batched validation; the other executes the optimized
+path. Both remain FP32 and use the same preparation, forward, losses, loader
+seeds, batch shape, and update protocol.
+
+The `training_equivalence` gate records exact phase/window order, per-sample
+SHA-256 digests for every corruption tensor before pinning or transfer, and
+optimizer-step counts before each batch. A4 must perform one step per fixed
+window batch. A6 additionally records every complete cycle in loader order and
+must perform one step per cycle. Train metrics and all validation losses use
+`1e-6` relative/absolute tolerance. Model parameters and Adam tensor state use
+`1e-6` relative and `1e-7` absolute tolerance; non-floating state is exact.
+Validation membership is exact, validation score uses `1e-7`, and both paths
+must make the same `score >= best_score` checkpoint decision. Resolved
+ablation, batch size, epoch count, seed, learning rate, hidden width, loss and
+corruption settings, device, precision, and workload counts are included as
+protocol/provenance evidence. Any failed exact, finite, metric, state, or
+checkpoint gate aborts the benchmark before a report can be accepted.
+
 Warmup and measured epochs always disable stage profiling so timing and peak
 memory acceptance exclude profiling instrumentation. The report separately
 records the configured `performance.profile_stages` value and captures stage
 timings in one labeled, untimed diagnostic profiled epoch after the timing and
 peak-memory windows.
 
-After every warmup and measured trained epoch, the benchmark validates the
+After every warmup and measured trained epoch, the benchmark also validates the
 same model state on the resolved device and cache through both the retained
 scalar-reference and optimized paths. It records absolute and relative deltas
 for every loss at `1e-6` relative/absolute tolerance and every score component
@@ -103,10 +125,14 @@ prior-best, decision, and next-best value, both final selected epochs, and
 their agreement. The benchmark fails on any per-epoch equivalence or decision
 disagreement, or when the final selected checkpoint epoch differs.
 
-These scalar/history diagnostics run after each epoch's timing boundary. CUDA
-peak allocation is reset and captured per measured epoch before the diagnostic
-work, so reported measured peak memory excludes scalar/history checks and the
-optional untimed profiler epoch.
+The one-epoch training probe runs before warmup and before the measured workload
+is created. Its models, optimizers, traces, and validation caches are released;
+CUDA is synchronized, its allocator cache is emptied, and peak statistics are
+reset before benchmark setup continues. Scalar/history diagnostics run after
+each epoch's timing boundary. CUDA peak allocation is reset and captured per
+measured epoch before the diagnostic work, so reported measured peak memory
+excludes the equivalence probe, scalar/history checks, and the optional untimed
+profiler epoch.
 
 Treat median epoch time and samples per second as the throughput acceptance
 metrics, not GPU utilization alone. Before accepting an optimized batch-64
