@@ -231,6 +231,8 @@ def test_configured_training_device_is_forwarded(
     profile = output / "runs" / "device-test" / "stage_profile.jsonl"
     assert profile.exists()
     assert json.loads(profile.read_text().strip())["epoch"] == 0
+    assert main(["train", "--config", str(config), "--run-id", "device-test"]) == 0
+    assert len(profile.read_text().splitlines()) == 1
 
 
 def test_prepare_reports_empty_alignment_cycles_without_index_error(tmp_path: Path) -> None:

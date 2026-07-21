@@ -527,11 +527,81 @@ def test_validation_prepared_cache_is_exact_reusable_and_leaves_source_unchanged
         assert torch.equal(batch["face"], face)
         assert batch["window_id"] == metadata
 
+    cached_padding_mask = cached_once[0]["padding_mask"].clone()
+    cached_dt = cached_once[0]["dt"].clone()
+    cached_window_ids = list(cached_once[0]["window_id"])
+    source[0]["padding_mask"].fill_(False)
+    source[0]["dt"].fill_(99.0)
+    source[0]["window_id"][0] = "mutated-window"
+    assert torch.equal(cached_once[0]["padding_mask"], cached_padding_mask)
+    assert torch.equal(cached_once[0]["dt"], cached_dt)
+    assert cached_once[0]["window_id"] == cached_window_ids
+
     torch.manual_seed(13)
     model = RotationAwareFusionModel(spec, hidden_channels=8)
     first = validate(model, source, spec, seed=17, prepared_loader=cached_once)
     second = validate(model, source, spec, seed=17, prepared_loader=cached_once)
     assert first == second
+
+
+def test_uncached_validation_starts_window_forward_before_source_exhaustion() -> None:
+    class RecordingModel(RotationAwareFusionModel):
+        def __init__(self, spec: SkeletonSpec, events: list[str]) -> None:
+            super().__init__(spec, hidden_channels=8)
+            self.events = events
+
+        def forward(self, face, *args, **kwargs):
+            self.events.append("forward")
+            return super().forward(face, *args, **kwargs)
+
+    events: list[str] = []
+    batches = list(_loader(count=6, batch_size=2))
+
+    def source():
+        for index, batch in enumerate(batches):
+            events.append(f"yield:{index}")
+            yield batch
+
+    validate(
+        RecordingModel(_spec(), events),
+        source(),
+        _spec(),
+        seed=17,
+        throughput_config=ThroughputConfig(prefetch_batches=1),
+    )
+
+    assert events.index("forward") < events.index("yield:2")
+
+
+def test_uncached_validation_starts_complete_cycle_forward_before_source_exhaustion() -> None:
+    class RecordingModel(RotationAwareFusionModel):
+        def __init__(self, spec: SkeletonSpec, events: list[str]) -> None:
+            super().__init__(spec, hidden_channels=8)
+            self.events = events
+
+        def forward(self, face, *args, **kwargs):
+            if face.shape[1] == 9:
+                self.events.append("cycle-forward")
+            return super().forward(face, *args, **kwargs)
+
+    events: list[str] = []
+    cycles = [_complete_cycle_batch(frames=9) for _ in range(3)]
+
+    def cycle_source():
+        for index, batch in enumerate(cycles):
+            events.append(f"cycle-yield:{index}")
+            yield batch
+
+    validate(
+        RecordingModel(_spec(), events),
+        _loader(count=1, batch_size=1),
+        _spec(),
+        complete_cycle_loader=cycle_source(),
+        seed=17,
+        throughput_config=ThroughputConfig(prefetch_batches=1),
+    )
+
+    assert events.index("cycle-forward") < events.index("cycle-yield:2")
 
 
 def test_checkpoint_rejects_missing_reproducibility_provenance(tmp_path: Path) -> None:

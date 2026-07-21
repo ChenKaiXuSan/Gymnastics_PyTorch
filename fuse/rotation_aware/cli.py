@@ -499,6 +499,9 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     )
     run = paths["output"] / "runs" / args.run_id
     run.mkdir(parents=True, exist_ok=True)
+    profile_path = run / "stage_profile.jsonl"
+    if throughput.profile_stages:
+        profile_path.write_text("", encoding="utf-8")
     (run / "config_resolved.yaml").write_text(
         yaml.safe_dump(dict(config), sort_keys=True), encoding="utf-8"
     )
@@ -605,7 +608,7 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
                 score=score,
             )
         if throughput.profile_stages:
-            with (run / "stage_profile.jsonl").open("a", encoding="utf-8") as handle:
+            with profile_path.open("a", encoding="utf-8") as handle:
                 handle.write(
                     json.dumps({"epoch": epoch, "stages": profiler.summary()}, sort_keys=True)
                     + "\n"

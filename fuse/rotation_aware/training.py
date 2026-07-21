@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -237,6 +238,41 @@ def prepare_validation_batches(
     throughput_config: ThroughputConfig | None = None,
 ) -> list[dict[str, object]]:
     """Materialize fixed CPU validation corruptions without model-derived values."""
+    return [
+        _snapshot_prepared_batch(batch)
+        for batch in _prepared_validation_stream(
+            loader,
+            skeleton,
+            seed=seed,
+            corruption_config=corruption_config,
+            throughput_config=throughput_config,
+        )
+    ]
+
+
+def _snapshot_prepared_batch(batch: Mapping[str, object]) -> dict[str, object]:
+    """Copy cached CPU inputs so source-batch mutations cannot leak into validation."""
+    return {
+        name: (
+            value.clone()
+            if isinstance(value, Tensor)
+            else deepcopy(value)
+            if isinstance(value, (list, tuple))
+            else value
+        )
+        for name, value in batch.items()
+    }
+
+
+def _prepared_validation_stream(
+    loader: Iterable[Mapping[str, object]],
+    skeleton: SkeletonSpec,
+    *,
+    seed: int,
+    corruption_config: CorruptionConfig | None,
+    throughput_config: ThroughputConfig | None = None,
+) -> Iterable[dict[str, object]]:
+    """Prepare validation inputs with bounded lookahead and no retained batch list."""
     throughput = throughput_config or ThroughputConfig()
 
     def prepare(batch: Mapping[str, object]) -> dict[str, object]:
@@ -247,9 +283,7 @@ def prepare_validation_batches(
             corruption_config=corruption_config,
         )
 
-    return list(
-        ordered_prefetch(loader, prepare, depth=throughput.prefetch_batches)
-    )
+    return ordered_prefetch(loader, prepare, depth=throughput.prefetch_batches)
 
 
 def train_one_epoch(
@@ -426,7 +460,7 @@ def validate(
         else:
             batches = prepared_loader
             if batches is None:
-                batches = prepare_validation_batches(
+                batches = _prepared_validation_stream(
                     loader,
                     skeleton,
                     seed=int(seed),
@@ -455,7 +489,7 @@ def validate(
         with torch.no_grad():
             cycle_batches = prepared_complete_cycle_loader
             if cycle_batches is None:
-                cycle_batches = prepare_validation_batches(
+                cycle_batches = _prepared_validation_stream(
                     complete_cycle_loader,
                     skeleton,
                     seed=int(seed),
