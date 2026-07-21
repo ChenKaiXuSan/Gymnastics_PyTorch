@@ -230,7 +230,7 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
             "--device",
             "cpu",
             "--warmup-epochs",
-            "0",
+            "1",
             "--measured-epochs",
             "2",
             "--output",
@@ -243,6 +243,7 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     assert benchmark_report["median_epoch_seconds"] > 0
     assert benchmark_report["effective_train_window_rate"]["median_windows_per_second"] > 0
     assert benchmark_report["peak_cuda_memory_bytes"] == 0
+    assert benchmark_report["measured_peak_cuda_memory_bytes"] == [0, 0]
     assert benchmark_report["workload_counts"] == {
         "train_windows": 2,
         "train_complete_cycles": 1,
@@ -251,14 +252,24 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     }
     assert benchmark_report["config"]["source_training"]["device"] == "cuda:0"
     assert benchmark_report["config"]["effective_training"]["device"] == "cpu"
-    assert profiler_enabled == [False, False, True]
+    assert profiler_enabled == [False, False, False, True]
     assert benchmark_report["stage_timings"]["mode"] == "untimed_diagnostic_epoch"
     assert benchmark_report["stage_timings"]["diagnostic"]["timed"] is False
-    acceptance = benchmark_report["validation_acceptance"]
-    assert acceptance["equivalent"]
-    assert acceptance["checkpoint_selection"]["agreement"]
-    assert acceptance["accepted"]
-    assert acceptance["losses"]["total"]["absolute_delta"] >= 0
+    history = benchmark_report["validation_history"]
+    assert [entry["epoch"] for entry in history["epochs"]] == [0, 1, 2]
+    assert [entry["phase"] for entry in history["epochs"]] == [
+        "warmup",
+        "measured",
+        "measured",
+    ]
+    assert all(entry["equivalent"] for entry in history["epochs"])
+    assert all(
+        entry["checkpoint_selection"]["agreement"]
+        for entry in history["epochs"]
+    )
+    assert history["final_selected_epoch_agreement"]
+    assert history["accepted"]
+    assert history["epochs"][-1]["losses"]["total"]["absolute_delta"] >= 0
 
 
 def test_benchmark_rejects_single_measured_epoch(tmp_path: Path) -> None:
@@ -290,24 +301,32 @@ def test_benchmark_rejects_nested_non_finite_report_values() -> None:
         )
 
 
-def test_benchmark_validation_acceptance_rejects_divergent_paths() -> None:
+def test_benchmark_validation_history_rejects_scores_straddling_prior_best() -> None:
     benchmark = importlib.import_module("analysis.benchmark_rotation_aware_training")
     reference = {
         "losses": {"total": 1.0},
         "components": {"bone_cv": 0.5},
-        "score": 0.75,
+        "score": 0.75000000,
     }
     optimized = {
-        "losses": {"total": 1.1},
+        "losses": {"total": 1.0},
         "components": {"bone_cv": 0.5},
-        "score": 0.75,
+        "score": 0.75000005,
     }
 
-    acceptance = benchmark._validation_acceptance(
-        reference, optimized, checkpoint_baseline_score=0.5
+    entry = benchmark._validation_history_entry(
+        reference,
+        optimized,
+        epoch=2,
+        phase="measured",
+        scalar_prior_best_score=0.75000002,
+        optimized_prior_best_score=0.75000002,
     )
 
-    assert not acceptance["equivalent"]
-    assert not acceptance["accepted"]
+    assert entry["equivalent"]
+    assert not entry["checkpoint_selection"]["scalar_reference"]["selected"]
+    assert entry["checkpoint_selection"]["optimized"]["selected"]
+    assert not entry["checkpoint_selection"]["agreement"]
+    assert not entry["accepted"]
     with pytest.raises(AssertionError, match="validation acceptance failed"):
-        benchmark._require_validation_acceptance(acceptance)
+        benchmark._require_validation_acceptance(entry)

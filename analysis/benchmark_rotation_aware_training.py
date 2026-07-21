@@ -349,13 +349,27 @@ def _mapping_comparison(
     }
 
 
-def _validation_acceptance(
+def _checkpoint_decision(score: float, prior_best_score: float | None) -> dict[str, float | bool | None]:
+    """Apply the CLI's ``score >= best`` selection rule for one path."""
+    selected = prior_best_score is None or score >= prior_best_score
+    return {
+        "prior_best_score": prior_best_score,
+        "score": score,
+        "selected": selected,
+        "next_best_score": score if selected else prior_best_score,
+    }
+
+
+def _validation_history_entry(
     reference: Mapping[str, object],
     optimized: Mapping[str, object],
     *,
-    checkpoint_baseline_score: float,
+    epoch: int,
+    phase: str,
+    scalar_prior_best_score: float | None,
+    optimized_prior_best_score: float | None,
 ) -> dict[str, object]:
-    """Compare paths using the training command's common ``score >= best`` rule."""
+    """Compare one trained state and replay both checkpoint decisions."""
     reference_losses = reference.get("losses")
     optimized_losses = optimized.get("losses")
     reference_components = reference.get("components")
@@ -390,21 +404,26 @@ def _validation_acceptance(
         relative_tolerance=1e-7,
         absolute_tolerance=1e-7,
     )
-    scalar_selected = float(reference["score"]) >= checkpoint_baseline_score
-    optimized_selected = float(optimized["score"]) >= checkpoint_baseline_score
+    scalar_decision = _checkpoint_decision(
+        float(reference["score"]), scalar_prior_best_score
+    )
+    optimized_decision = _checkpoint_decision(
+        float(optimized["score"]), optimized_prior_best_score
+    )
     equivalent = all(
         bool(comparison["equivalent"])
         for comparisons in (losses, components)
         for comparison in comparisons.values()
     ) and bool(score["equivalent"])
     checkpoint_selection = {
-        "baseline_score": checkpoint_baseline_score,
         "rule": "score >= best_score",
-        "scalar_reference_selected": scalar_selected,
-        "optimized_selected": optimized_selected,
-        "agreement": scalar_selected == optimized_selected,
+        "scalar_reference": scalar_decision,
+        "optimized": optimized_decision,
+        "agreement": scalar_decision["selected"] == optimized_decision["selected"],
     }
     return {
+        "epoch": epoch,
+        "phase": phase,
         "scalar_reference": dict(reference),
         "optimized": dict(optimized),
         "losses": losses,
@@ -421,19 +440,27 @@ def _require_validation_acceptance(acceptance: Mapping[str, object]) -> None:
         raise AssertionError("validation acceptance failed")
 
 
-def _validation_path_report(
+def _validation_history_entry_for_state(
     workload: BenchmarkWorkload,
     *,
     device: torch.device,
-    checkpoint_baseline_score: float,
+    epoch: int,
+    phase: str,
+    scalar_prior_best_score: float | None,
+    optimized_prior_best_score: float | None,
 ) -> dict[str, object]:
-    """Gate optimized validation against scalar validation on the trained state."""
+    """Gate one trained state against scalar validation outside epoch timing."""
     reference = _validation_result(workload, device=device, scalar_forward=True)
     optimized = _validation_result(workload, device=device, scalar_forward=False)
     _require_finite(reference, "scalar_reference")
     _require_finite(optimized, "optimized")
-    acceptance = _validation_acceptance(
-        reference, optimized, checkpoint_baseline_score=checkpoint_baseline_score
+    acceptance = _validation_history_entry(
+        reference,
+        optimized,
+        epoch=epoch,
+        phase=phase,
+        scalar_prior_best_score=scalar_prior_best_score,
+        optimized_prior_best_score=optimized_prior_best_score,
     )
     _require_finite(acceptance, "validation_acceptance")
     _require_validation_acceptance(acceptance)
@@ -448,25 +475,53 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     device = _resolve_device(str(args.device or workload.training_config.get("device", "cpu")))
     source_training = dict(workload.training_config)
     effective_training = {**source_training, "device": str(device)}
-    checkpoint_baseline = _validation_result(
-        workload, device=device, scalar_forward=True
-    )
-    _require_finite(checkpoint_baseline, "checkpoint_baseline")
-    checkpoint_baseline_score = float(checkpoint_baseline["score"])
+    validation_entries: list[dict[str, object]] = []
+    scalar_best_score: float | None = None
+    optimized_best_score: float | None = None
+    scalar_selected_epoch: int | None = None
+    optimized_selected_epoch: int | None = None
+
+    def record_validation_history(epoch: int, phase: str) -> None:
+        nonlocal scalar_best_score, optimized_best_score
+        nonlocal scalar_selected_epoch, optimized_selected_epoch
+        entry = _validation_history_entry_for_state(
+            workload,
+            device=device,
+            epoch=epoch,
+            phase=phase,
+            scalar_prior_best_score=scalar_best_score,
+            optimized_prior_best_score=optimized_best_score,
+        )
+        selection = entry["checkpoint_selection"]
+        if not isinstance(selection, Mapping):
+            raise ValueError("validation history requires checkpoint selection data")
+        scalar_decision = selection.get("scalar_reference")
+        optimized_decision = selection.get("optimized")
+        if not isinstance(scalar_decision, Mapping) or not isinstance(optimized_decision, Mapping):
+            raise ValueError("validation history requires both checkpoint decisions")
+        scalar_best_score = float(scalar_decision["next_best_score"])
+        optimized_best_score = float(optimized_decision["next_best_score"])
+        if scalar_decision["selected"]:
+            scalar_selected_epoch = epoch
+        if optimized_decision["selected"]:
+            optimized_selected_epoch = epoch
+        validation_entries.append(entry)
 
     for epoch in range(args.warmup_epochs):
         _synchronize(device)
         _run_epoch(workload, epoch=epoch, device=device)
         _synchronize(device)
+        record_validation_history(epoch, "warmup")
 
-    if device.type == "cuda":
-        torch.cuda.reset_peak_memory_stats(device)
     epoch_timings: list[float] = []
+    measured_peak_cuda_memory_bytes: list[int] = []
     measured_stage_timings: list[dict[str, dict[str, float | int]]] = []
     train_metrics_by_epoch: list[dict[str, float]] = []
     validation_metrics_by_epoch: list[dict[str, Any]] = []
     for measurement_index in range(args.measured_epochs):
         epoch = args.warmup_epochs + measurement_index
+        if device.type == "cuda":
+            torch.cuda.reset_peak_memory_stats(device)
         _synchronize(device)
         started = time.perf_counter()
         train_metrics, validation_metrics, profiler = _run_epoch(
@@ -478,23 +533,42 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             raise FloatingPointError("benchmark epoch time must be finite and positive")
         stages = profiler.summary() if workload.throughput_config.profile_stages else {}
         _require_finite(stages, "measured_stages")
+        measured_peak_cuda_memory_bytes.append(
+            int(torch.cuda.max_memory_allocated(device))
+            if device.type == "cuda"
+            else 0
+        )
         epoch_timings.append(elapsed)
         measured_stage_timings.append(stages)
         train_metrics_by_epoch.append(train_metrics)
         validation_metrics_by_epoch.append(validation_metrics)
+        record_validation_history(epoch, "measured")
 
     median_epoch_seconds = statistics.median(epoch_timings)
     effective_train_window_rate = [
         workload.train_window_count / value for value in epoch_timings
     ]
-    peak_cuda_memory_bytes = (
-        int(torch.cuda.max_memory_allocated(device)) if device.type == "cuda" else 0
-    )
-    validation_acceptance = _validation_path_report(
-        workload,
-        device=device,
-        checkpoint_baseline_score=checkpoint_baseline_score,
-    )
+    peak_cuda_memory_bytes = max(measured_peak_cuda_memory_bytes, default=0)
+    validation_history = {
+        "rule": "score >= best_score",
+        "initial_best_score": None,
+        "epochs": validation_entries,
+        "scalar_reference": {
+            "best_score": scalar_best_score,
+            "selected_epoch": scalar_selected_epoch,
+        },
+        "optimized": {
+            "best_score": optimized_best_score,
+            "selected_epoch": optimized_selected_epoch,
+        },
+        "final_selected_epoch_agreement": (
+            scalar_selected_epoch == optimized_selected_epoch
+        ),
+        "accepted": all(bool(entry["accepted"]) for entry in validation_entries)
+        and scalar_selected_epoch == optimized_selected_epoch,
+    }
+    _require_finite(validation_history, "validation_history")
+    _require_validation_acceptance(validation_history)
     if workload.throughput_config.profile_stages:
         stage_timings: dict[str, object] = {
             "mode": "configured_measured_epochs",
@@ -557,12 +631,13 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             "median_windows_per_second": workload.train_window_count
             / median_epoch_seconds,
         },
-        "validation_acceptance": validation_acceptance,
+        "validation_history": validation_history,
         "stage_timings": stage_timings,
         "train_metrics": train_metrics_by_epoch,
         "validation_metrics": validation_metrics_by_epoch,
         "peak_cuda_memory_bytes": peak_cuda_memory_bytes,
         "peak_cuda_memory_gib": peak_cuda_memory_bytes / (1024**3),
+        "measured_peak_cuda_memory_bytes": measured_peak_cuda_memory_bytes,
     }
     _require_finite(report, "report")
     return report

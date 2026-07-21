@@ -74,13 +74,21 @@ timings in one separately labeled, untimed diagnostic profiled epoch after the
 timing and peak-memory windows. When it is true, stage timings come from the
 configured measured workload.
 
-After the measured epochs, the benchmark validates the trained model on the
-same resolved device and cache through both the retained scalar-reference and
-optimized paths. It records absolute and relative deltas for every loss at
-`1e-6` relative/absolute tolerance and every score component and score at
-`1e-7`. It also applies the training command's shared checkpoint rule,
-`score >= best_score`, against one pre-training scalar-reference baseline. The
-benchmark fails when equivalence or checkpoint-selection agreement fails.
+After every warmup and measured trained epoch, the benchmark validates the
+same model state on the resolved device and cache through both the retained
+scalar-reference and optimized paths. It records absolute and relative deltas
+for every loss at `1e-6` relative/absolute tolerance and every score component
+and score at `1e-7`. Each path independently replays the training command's
+evolving checkpoint rule, `score >= best_score`, starting from no checkpoint
+(`best = -inf`) and selecting the latest epoch on ties. The JSON includes every
+prior-best, decision, and next-best value, both final selected epochs, and
+their agreement. The benchmark fails on any per-epoch equivalence or decision
+disagreement, or when the final selected checkpoint epoch differs.
+
+These scalar/history diagnostics run after each epoch's timing boundary. CUDA
+peak allocation is reset and captured per measured epoch before the diagnostic
+work, so reported measured peak memory excludes scalar/history checks and the
+optional untimed profiler epoch.
 
 Treat median epoch time and samples per second as the throughput acceptance
 metrics, not GPU utilization alone. Before accepting an optimized batch-64
