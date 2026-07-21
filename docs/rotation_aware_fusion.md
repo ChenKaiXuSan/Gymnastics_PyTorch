@@ -42,6 +42,35 @@ from split-cycle trials. `train` and `infer` require an explicit
 `--output-root` for a scoped reproducible run. `infer` accepts
 `--checkpoint` to use a checkpoint outside the default run location.
 
+## Batch-64 Throughput Protocol
+
+`configs/fuse/rotation_aware_batch64.yaml` defines a new FP32 batch-64
+protocol. It is not directly comparable to historical batch-32 runs: A4 and
+A5 train for 200 epochs, while A6 trains for 100 epochs. All three use a
+learning rate of `0.001` and retain the existing sample ordering, loss
+definitions, optimizer semantics, and validation/checkpoint-selection rules.
+
+Benchmark an already prepared cache without writing a training run:
+
+```bash
+conda run --no-capture-output -n gymnastic python analysis/benchmark_rotation_aware_training.py \
+  --config configs/fuse/rotation_aware_batch64.yaml \
+  --ablation A6 --device cuda:0 --warmup-epochs 1 --measured-epochs 3 \
+  --output /tmp/rotation_aware_a6_batch64_benchmark.json
+```
+
+The JSON report records the resolved configuration and device, warmup count,
+the scalar-reference and optimized validation diagnostics, per-epoch timings,
+median epoch time, training samples per second, stage timings, measured losses,
+and peak CUDA allocation. It requires at least two measured epochs and
+synchronizes CUDA at each timing boundary.
+
+Treat median epoch time and samples per second as the throughput acceptance
+metrics, not GPU utilization alone. Before accepting an optimized batch-64
+path, retain the scalar-versus-batched validation equivalence and checkpoint
+selection checks, require finite losses and timings, confirm an improved
+median epoch time, and keep peak CUDA memory below 22 GiB.
+
 ## Ablations And Unified Evaluation
 
 The evaluation registry uses these labels:
