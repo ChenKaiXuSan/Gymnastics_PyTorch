@@ -94,6 +94,60 @@ def test_prepare_smoke_uses_real_tiny_files_and_writes_manifest(tmp_path: Path) 
     assert (tmp_path / "out" / "split_manifest.json").exists()
 
 
+def test_configured_training_device_is_forwarded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sam3d = tmp_path / "sam3d" / "sam3d_body_results"
+    _write_sam3d(sam3d, "face")
+    _write_sam3d(sam3d, "side")
+    split = tmp_path / "split"
+    record = split / "person_1" / "alignment_record_1.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(
+        json.dumps(
+            {
+                "metadata": {"offset_side_to_face": 0, "fps": 60.0},
+                "cycles": [
+                    {
+                        "cycle_index": 0,
+                        "face_video_frames": {"start": 0, "end": 4},
+                        "side_video_frames": {"start": 0, "end": 4},
+                    }
+                ],
+            }
+        )
+    )
+    fold = tmp_path / "fold.json"
+    fold.write_text(
+        json.dumps({"train": [{"person_id": "1"}], "val": [], "test": []})
+    )
+    output = tmp_path / "out"
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n"
+        f"  output_root: {output}\n  skeleton: configs/fuse/skeleton_mhr70.yaml\n"
+        f"  fold_json: {fold}\ntraining:\n  epochs: 1\n  batch_size: 1\n"
+        "  hidden_channels: 8\n  seed: 3\n  device: cuda:1"
+    )
+    seen: list[tuple[str, object]] = []
+
+    def fake_train(*args, **kwargs):
+        seen.append(("train", kwargs.get("device")))
+        return {"loss": 1.0}
+
+    def fake_validate(*args, **kwargs):
+        seen.append(("validate", kwargs.get("device")))
+        return {"score": 0.5}
+
+    monkeypatch.setattr(cli, "train_one_epoch", fake_train)
+    monkeypatch.setattr(cli, "validate", fake_validate)
+
+    assert main(["prepare", "--config", str(config), "--person", "1"]) == 0
+    assert main(["train", "--config", str(config), "--run-id", "device-test"]) == 0
+    assert seen == [("train", "cuda:1"), ("validate", "cuda:1")]
+    assert "[epoch] run_id=device-test epoch=1/1 loss=1 val_score=0.5" in capsys.readouterr().out
+
+
 def test_prepare_reports_empty_alignment_cycles_without_index_error(tmp_path: Path) -> None:
     sam3d = tmp_path / "sam3d" / "sam3d_body_results"
     _write_sam3d(sam3d, "face")

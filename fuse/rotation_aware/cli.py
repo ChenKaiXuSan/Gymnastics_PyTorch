@@ -394,6 +394,7 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     training["ablation"] = args.ablation or "A6"
     loss_config = loss_config_for_ablation(str(training["ablation"]))
     training["loss_config"] = asdict(loss_config)
+    device = str(training.get("device", "cpu"))
     window = WindowConfig(**dict(config.get("window", {})))
     train_trials = [trial for trial in trials if trial.person_id in manifest.train]
     val_trials = [trial for trial in trials if trial.person_id in manifest.val]
@@ -492,7 +493,8 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     }
     history = []
     best = float("-inf")
-    for epoch in range(int(training.get("epochs", 1))):
+    epochs = int(training.get("epochs", 1))
+    for epoch in range(epochs):
         row = {
             "epoch": epoch,
             **train_one_epoch(
@@ -505,6 +507,7 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
                 complete_cycle_loader=complete_cycle_loader,
                 seed=int(training.get("seed", 0)),
                 epoch=epoch,
+                device=device,
             ),
         }
         score = validate(
@@ -515,9 +518,15 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
             corruption_config=corruption,
             complete_cycle_loader=val_complete_cycle_loader,
             seed=int(training.get("seed", 0)),
+            device=device,
         )["score"]
         row["val_score"] = score
         history.append(row)
+        print(
+            f"[epoch] run_id={args.run_id} epoch={epoch + 1}/{epochs} "
+            f"loss={float(row['loss']):.6g} val_score={float(score):.6g}",
+            flush=True,
+        )
         if score >= best:
             best = score
             save_checkpoint(
