@@ -184,6 +184,23 @@ multiple warm epochs. A change is accepted only if it reduces end-to-end epoch
 time without violating equivalence. GPU utilization is reported as supporting
 evidence, not as the acceptance criterion.
 
+## Implementation Outcome
+
+The batched-validation proposal did not pass the locked GPU equivalence gate
+and is not part of the production protocol. On an RTX 3090 at the production
+`B=64`, `J=70`, `C=128` shape, the fixed-order batched experiment still
+produced residual-coordinate deltas of `1.42e-6` to `2.62e-6` and
+acceleration-loss deltas of `0.015625` to `0.0390625`. It also left
+shape-dependent reductions in learned projections and did not establish a
+throughput improvement.
+
+Production training consequently retains the original scalar validation
+forward and checkpoint selection. Ordered prefetch, pinned/nonblocking
+transfer, validation-input caching, ROM synchronization removal, zero-weight
+gradient pruning, stage profiling, and the isolated batch-64 schedule remain
+in scope. Batched validation may be reconsidered only with a production-shape
+CUDA test that satisfies all numerical and end-to-end timing acceptance gates.
+
 ## Expected Outcome
 
 The target, not a guarantee, is 1.4-1.8 minutes per A4/A5 epoch and 3-4 minutes

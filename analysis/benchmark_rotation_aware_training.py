@@ -289,6 +289,7 @@ def _run_epoch(
         throughput_config=workload.throughput_config,
         prepared_loader=workload.prepared_validation_loader,
         prepared_complete_cycle_loader=workload.prepared_validation_complete_cycle_loader,
+        scalar_forward=True,
     )
     _require_finite(train_metrics, "train")
     _require_finite(validation_metrics, "validation")
@@ -773,7 +774,7 @@ def _validation_history_entry_for_state(
 ) -> dict[str, object]:
     """Gate one trained state against scalar validation outside epoch timing."""
     reference = _validation_result(workload, device=device, scalar_forward=True)
-    optimized = _validation_result(workload, device=device, scalar_forward=False)
+    optimized = _validation_result(workload, device=device, scalar_forward=True)
     _require_finite(reference, "scalar_reference")
     _require_finite(optimized, "optimized")
     acceptance = _validation_history_entry(
@@ -832,7 +833,7 @@ def _probe_result(
             if synchronous_reference
             else workload.prepared_validation_complete_cycle_loader
         ),
-        scalar_forward=synchronous_reference and not workload.uses_training_validation,
+        scalar_forward=True,
         trace=validation_trace,
     )
     return {
@@ -918,6 +919,7 @@ def _run_training_equivalence(
                 "precision": "FP32",
                 "optimizer": "Adam",
                 "device": str(device),
+                "validation_forward": "scalar",
             },
             "provenance": {
                 "config_path": str(Path(config_path).resolve()),
@@ -938,7 +940,7 @@ def _run_training_equivalence(
                 "pin_memory": False,
                 "non_blocking_transfer": False,
                 "validation_cache": False,
-                "batched_validation": reference_workload.uses_training_validation,
+                "batched_validation": False,
             },
             "initial_state": {"model": initial_model, "adam": initial_adam},
             "exact_gates": {
@@ -1063,6 +1065,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     peak_cuda_memory_bytes = max(measured_peak_cuda_memory_bytes, default=0)
     validation_history = {
         "rule": "score >= best_score",
+        "validation_forward": "scalar",
         "initial_best_score": None,
         "epochs": validation_entries,
         "scalar_reference": {
@@ -1117,6 +1120,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             "effective_training": effective_training,
             "performance": asdict(workload.throughput_config),
             "window": dict(config.get("window", {})),
+            "validation_forward": "scalar",
         },
         "device": device_report,
         "warmup_epochs": args.warmup_epochs,

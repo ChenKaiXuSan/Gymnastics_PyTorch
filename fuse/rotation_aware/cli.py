@@ -697,6 +697,7 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
             throughput_config=throughput,
             prepared_loader=prepared_val_loader,
             prepared_complete_cycle_loader=prepared_val_complete_cycle_loader,
+            scalar_forward=True,
         )["score"]
         row["val_score"] = score
         history.append(row)

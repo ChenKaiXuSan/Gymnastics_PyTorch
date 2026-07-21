@@ -199,10 +199,20 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
 
     monkeypatch.setattr(cli.torch.optim.Adam, "step", count_steps)
 
+    validation_modes: list[bool | None] = []
+    original_validate = cli.validate
+
+    def record_scalar_validation(*args, **kwargs):
+        validation_modes.append(kwargs.get("scalar_forward"))
+        return original_validate(*args, **kwargs)
+
+    monkeypatch.setattr(cli, "validate", record_scalar_validation)
+
     assert main(["prepare", "--config", str(config), "--person", "1"]) == 0
     assert main(["train", "--config", str(config), "--run-id", "batch64_a6_b64_e1", "--ablation", "A6"]) == 0
 
     assert step_count == 2
+    assert validation_modes == [True]
     checkpoint = torch.load(
         output / "runs" / "batch64_a6_b64_e1" / "checkpoints" / "best.pt",
         map_location="cpu",
@@ -294,20 +304,29 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     assert real_validation_workload.prepared_validation_loader is not None
     assert real_validation_workload.prepared_validation_complete_cycle_loader is not None
 
-    a6_equivalence = benchmark._run_training_equivalence(
-        tiny_config,
-        "A6",
-        torch.device("cpu"),
-        config_path=str(config),
-    )
-    assert a6_equivalence["accepted"]
-    assert a6_equivalence["protocol"]["ablation"] == "A6"
-    assert a6_equivalence["optimizer_steps"]["expected"] == {
-        "train_window": 1,
-        "train_complete_cycle": 1,
-    }
-    assert a6_equivalence["optimizer_steps"]["reference"]["total_optimizer_steps"] == 2
-    assert a6_equivalence["optimizer_steps"]["optimized"]["total_optimizer_steps"] == 2
+    for ablation, expected_steps in (
+        ("A4", {"train_window": 1}),
+        ("A6", {"train_window": 1, "train_complete_cycle": 1}),
+    ):
+        scalar_equivalence = benchmark._run_training_equivalence(
+            tiny_config,
+            ablation,
+            torch.device("cpu"),
+            config_path=str(config),
+        )
+        assert scalar_equivalence["accepted"]
+        assert scalar_equivalence["protocol"]["ablation"] == ablation
+        assert scalar_equivalence["protocol"]["validation_forward"] == "scalar"
+        assert scalar_equivalence["reference_path"]["batched_validation"] is False
+        assert scalar_equivalence["exact_gates"]["validation_membership"]
+        assert scalar_equivalence["exact_gates"]["corruption_digests"]
+        assert scalar_equivalence["optimizer_steps"]["expected"] == expected_steps
+        assert all(
+            loss["equivalent"]
+            for loss in scalar_equivalence["validation"]["losses"].values()
+        )
+    assert scalar_equivalence["optimizer_steps"]["reference"]["total_optimizer_steps"] == 2
+    assert scalar_equivalence["optimizer_steps"]["optimized"]["total_optimizer_steps"] == 2
     profiler_enabled: list[bool] = []
     original_profiler = benchmark.StageProfiler
 
@@ -360,7 +379,7 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
         "pin_memory": False,
         "non_blocking_transfer": False,
         "validation_cache": False,
-        "batched_validation": True,
+        "batched_validation": False,
     }
     assert equivalence["optimizer_steps"]["expected"] == {"train_window": 1}
     assert equivalence["exact_gates"]["training_sample_order"]
@@ -376,6 +395,7 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     }
     assert benchmark_report["config"]["source_training"]["device"] == "cuda:0"
     assert benchmark_report["config"]["effective_training"]["device"] == "cpu"
+    assert benchmark_report["config"]["validation_forward"] == "scalar"
     assert lifecycle == ["build", "build", "release", "build"]
     assert profiler_enabled == [False, False, False, True]
     assert benchmark_report["stage_timings"]["mode"] == "untimed_diagnostic_epoch"

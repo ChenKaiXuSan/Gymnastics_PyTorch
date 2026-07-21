@@ -90,9 +90,10 @@ Before constructing the timed workload, the benchmark builds two independent
 workloads from the same resolved ablation config and seed. Their initial model
 parameters and Adam states must be identical. One executes a true synchronous
 one-epoch reference with no ordered prefetch, pinning, nonblocking transfer,
-validation cache, or batched validation; the other executes the optimized
-path. Both remain FP32 and use the same preparation, forward, losses, loader
-seeds, batch shape, and update protocol.
+or validation cache; the other executes the optimized training and input-cache
+path. Both use the original scalar validation model forward. They remain FP32
+and use the same preparation, forward, losses, loader seeds, batch shape, and
+update protocol.
 
 The `training_equivalence` gate records exact phase/window order, per-sample
 SHA-256 digests for every corruption tensor before pinning or transfer, and
@@ -115,8 +116,8 @@ timings in one labeled, untimed diagnostic profiled epoch after the timing and
 peak-memory windows.
 
 After every warmup and measured trained epoch, the benchmark also validates the
-same model state on the resolved device and cache through both the retained
-scalar-reference and optimized paths. It records absolute and relative deltas
+same model state through uncached-reference and optimized-input paths. Both use
+the retained scalar model forward. It records absolute and relative deltas
 for every loss at `1e-6` relative/absolute tolerance and every score component
 and score at `1e-7`. Each path independently replays the training command's
 evolving checkpoint rule, `score >= best_score`, starting from no checkpoint
@@ -138,6 +139,24 @@ Treat median epoch time and samples per second as the throughput acceptance
 metrics, not GPU utilization alone. Before accepting an optimized batch-64
 path, require finite losses and timings, confirm an improved median epoch time,
 and keep peak CUDA memory below 22 GiB.
+
+### Batched Validation Status
+
+Batched validation is intentionally disabled. A production-shape RTX 3090
+probe at `B=64`, `J=70`, and `C=128` found scalar-versus-batched residual
+coordinate differences of `1.42e-6` to `2.62e-6` and acceleration-loss
+differences of `0.015625` to `0.0390625`. This fails the locked `1e-6`
+validation-equivalence requirement. Fixed-order matrix multiplications also
+did not isolate all shape-dependent FP32 reductions and were slower than stock
+`Conv1d` in the CPU probe.
+
+The production training command therefore keeps scalar validation and the
+original checkpoint semantics. The accepted throughput changes are the
+batch-64 schedule, ordered CPU prefetch, pinned/nonblocking transfer, cached
+validation inputs, complete-cycle ROM synchronization removal, zero-weight
+gradient pruning, and opt-in stage profiling. A future batched validation path
+must pass the production-shape CUDA equivalence and end-to-end epoch-time gates
+before it can be enabled.
 
 ## Ablations And Unified Evaluation
 

@@ -386,6 +386,7 @@ def test_configured_training_device_is_forwarded(
         assert kwargs["throughput_config"].cache_validation_batches
         assert kwargs["prepared_loader"] is None
         assert kwargs["prepared_complete_cycle_loader"] is None
+        assert kwargs["scalar_forward"] is True
         return {"score": 0.5}
 
     monkeypatch.setattr(cli, "train_one_epoch", fake_train)

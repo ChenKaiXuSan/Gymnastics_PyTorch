@@ -507,3 +507,11 @@ Report test count, A4/A6 equivalence deltas, median old/new epoch time, samples/
 - [ ] **Step 4: Commit review corrections only when needed**
 
 Stage only implementation files. Do not stage `.superpowers/` or `paper/`.
+
+### Implementation Note
+
+The batched-validation task was rejected after a production-shape RTX 3090
+probe violated the `1e-6` equivalence gate. Production CLI and benchmark runs
+use scalar validation. The remaining throughput tasks stay valid and batched
+validation requires a future fixed-reduction CUDA implementation plus a
+measured end-to-end speedup before activation.
