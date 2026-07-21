@@ -832,7 +832,7 @@ def _probe_result(
             if synchronous_reference
             else workload.prepared_validation_complete_cycle_loader
         ),
-        scalar_forward=synchronous_reference and not workload.uses_training_validation,
+        scalar_forward=synchronous_reference,
         trace=validation_trace,
     )
     return {
@@ -938,7 +938,7 @@ def _run_training_equivalence(
                 "pin_memory": False,
                 "non_blocking_transfer": False,
                 "validation_cache": False,
-                "batched_validation": reference_workload.uses_training_validation,
+                "batched_validation": False,
             },
             "initial_state": {"model": initial_model, "adam": initial_adam},
             "exact_gates": {
