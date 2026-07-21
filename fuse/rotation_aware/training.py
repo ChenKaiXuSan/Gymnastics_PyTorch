@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import asdict, replace
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Iterable, Mapping
 
 import torch
@@ -126,11 +127,12 @@ def _profiled_source(
         return
     iterator = iter(source)
     while True:
+        started = perf_counter()
         try:
-            with profiler.cpu_stage(f"{phase}.{stage}"):
-                batch = next(iterator)
+            batch = next(iterator)
         except StopIteration:
             return
+        profiler.record_cpu_duration(f"{phase}.{stage}", perf_counter() - started)
         yield batch
 
 
@@ -411,7 +413,11 @@ def train_one_epoch(
     ):
         optimizer.zero_grad(set_to_none=True)
         if throughput.pin_memory:
-            prepared = pin_tensor_batch(prepared)
+            if profiler.enabled:
+                with profiler.cpu_stage(f"{train_window_phase}.pin_memory"):
+                    prepared = pin_tensor_batch(prepared)
+            else:
+                prepared = pin_tensor_batch(prepared)
         output, prepared = _forward_prepared(
             model,
             prepared,
@@ -447,7 +453,11 @@ def train_one_epoch(
         ):
             optimizer.zero_grad(set_to_none=True)
             if throughput.pin_memory:
-                prepared = pin_tensor_batch(prepared)
+                if profiler.enabled:
+                    with profiler.cpu_stage(f"{train_cycle_phase}.pin_memory"):
+                        prepared = pin_tensor_batch(prepared)
+                else:
+                    prepared = pin_tensor_batch(prepared)
             output, prepared = _forward_prepared(
                 model,
                 prepared,
@@ -528,7 +538,14 @@ def validate(
     def forward_prepared_batch(
         batch: Mapping[str, object], phase: str
     ) -> tuple[FusionOutput, dict[str, object]]:
-        prepared = pin_tensor_batch(batch) if throughput.pin_memory else dict(batch)
+        if throughput.pin_memory:
+            if profiler.enabled:
+                with profiler.cpu_stage(f"{phase}.pin_memory"):
+                    prepared = pin_tensor_batch(batch)
+            else:
+                prepared = pin_tensor_batch(batch)
+        else:
+            prepared = dict(batch)
         return _forward_prepared(
             model,
             prepared,

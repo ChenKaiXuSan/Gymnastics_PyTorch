@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -239,6 +240,30 @@ def test_stage_profiler_cpu_stage_is_worker_safe_and_json_serializable(
     json.dumps(summary)
 
 
+def test_profiled_source_records_only_successful_direct_acquisitions() -> None:
+    source = [{"window_id": [f"window-{index}"]} for index in range(2)]
+    profiler = StageProfiler(enabled=True, device=torch.device("cpu"))
+
+    assert list(training_module._profiled_source(source, profiler, "probe")) == source
+
+    assert profiler.summary()["probe.acquisition"]["calls"] == len(source)
+
+
+def test_profiled_source_records_only_successful_prefetched_acquisitions() -> None:
+    source = [{"window_id": [f"window-{index}"]} for index in range(4)]
+    profiler = StageProfiler(enabled=True, device=torch.device("cpu"))
+
+    assert list(
+        ordered_prefetch(
+            training_module._profiled_source(source, profiler, "probe"),
+            lambda batch: batch,
+            depth=2,
+        )
+    ) == source
+
+    assert profiler.summary()["probe.acquisition"]["calls"] == len(source)
+
+
 def test_stage_profiler_uses_profiler_device_stream(monkeypatch: pytest.MonkeyPatch) -> None:
     device = torch.device("cuda:1")
     stream = object()
@@ -444,10 +469,56 @@ def test_profiled_training_and_uncached_validation_use_distinct_phase_stages() -
     assert not {"transfer", "features", "forward", "loss", "complete_cycle_loss"} & stages.keys()
 
 
+def test_profiled_pin_memory_is_visible_for_every_training_and_validation_phase(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = _spec()
+    profiler = StageProfiler(enabled=True, device=torch.device("cpu"))
+    original_pin = training_module.pin_tensor_batch
+
+    def delayed_pin(batch: dict[str, object]) -> dict[str, object]:
+        time.sleep(0.01)
+        return original_pin(batch)
+
+    monkeypatch.setattr(training_module, "pin_tensor_batch", delayed_pin)
+    throughput = ThroughputConfig(prefetch_batches=1, pin_memory=True)
+    model = RotationAwareFusionModel(spec, hidden_channels=8)
+    train_one_epoch(
+        model,
+        _loader(count=1, batch_size=1),
+        torch.optim.Adam(model.parameters(), lr=1e-3),
+        spec,
+        complete_cycle_loader=[_complete_cycle_batch()],
+        seed=3,
+        profiler=profiler,
+        throughput_config=throughput,
+    )
+    validate(
+        model,
+        _loader(count=1, batch_size=1),
+        spec,
+        complete_cycle_loader=[_complete_cycle_batch()],
+        seed=3,
+        profiler=profiler,
+        throughput_config=throughput,
+    )
+    stages = profiler.summary()
+
+    for phase in (
+        "train_window",
+        "train_complete_cycle",
+        "validation_window",
+        "validation_complete_cycle",
+    ):
+        pinning = stages[f"{phase}.pin_memory"]
+        assert pinning["calls"] == 1
+        assert pinning["wall_seconds"] >= 0.009
+
+
 def test_profiled_cached_validation_records_cache_acquisition_and_phase_compute() -> None:
     spec = _spec()
-    window_loader = list(_loader(count=1, batch_size=1))
-    cycle_loader = [_complete_cycle_batch()]
+    window_loader = list(_loader(count=2, batch_size=1))
+    cycle_loader = [_complete_cycle_batch(), _complete_cycle_batch()]
     cached_windows = prepare_validation_batches(window_loader, spec, seed=3, corruption_config=None)
     cached_cycles = prepare_validation_batches(cycle_loader, spec, seed=3, corruption_config=None)
     profiler = StageProfiler(enabled=True, device=torch.device("cpu"))
@@ -477,6 +548,8 @@ def test_profiled_cached_validation_records_cache_acquisition_and_phase_compute(
         "validation_complete_cycle.loss",
     }
     assert expected <= stages.keys()
+    assert stages["validation_window.cache_acquisition"]["calls"] == len(cached_windows)
+    assert stages["validation_complete_cycle.cache_acquisition"]["calls"] == len(cached_cycles)
     assert not {"validation_window.acquisition", "validation_window.corruption"} & stages.keys()
 
 

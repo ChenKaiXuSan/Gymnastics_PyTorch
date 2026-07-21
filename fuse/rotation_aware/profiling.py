@@ -55,8 +55,14 @@ class StageProfiler:
         try:
             yield
         finally:
-            with self._lock:
-                self._wall.setdefault(name, []).append(time.perf_counter() - started)
+            self.record_cpu_duration(name, time.perf_counter() - started)
+
+    def record_cpu_duration(self, name: str, seconds: float) -> None:
+        """Record a completed CPU duration without creating CUDA events."""
+        if not self.enabled:
+            return
+        with self._lock:
+            self._wall.setdefault(name, []).append(float(seconds))
 
     def summary(self) -> dict[str, dict[str, float | int]]:
         if not self.enabled:
