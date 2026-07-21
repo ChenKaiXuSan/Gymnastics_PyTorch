@@ -56,6 +56,40 @@ def test_training_schedule_rejects_invalid_ablation_or_epochs(
         )
 
 
+def test_train_rejects_invalid_schedule_before_loading_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fold = tmp_path / "fold.json"
+    fold.write_text(json.dumps({"train": [], "val": [], "test": []}))
+    config = {
+        "paths": {
+            "sam3d_root": str(tmp_path / "sam3d"),
+            "split_cycle_root": str(tmp_path / "split"),
+            "output_root": str(tmp_path / "out"),
+            "skeleton": "configs/fuse/skeleton_mhr70.yaml",
+            "fold_json": str(fold),
+        },
+        "training": {"epochs_by_ablation": {"A4": 200, "A5": 200}},
+    }
+
+    def fail_if_cache_is_loaded(*args, **kwargs):
+        raise AssertionError("cache loading must follow schedule resolution")
+
+    monkeypatch.setattr(cli, "_cached_trials_with_provenance", fail_if_cache_is_loaded)
+
+    with pytest.raises(ValueError, match="exactly A4, A5, and A6"):
+        cli._cmd_train(
+            Namespace(
+                run_id="ordering-test",
+                output_root=None,
+                fold=None,
+                person=None,
+                ablation="A6",
+            ),
+            config,
+        )
+
+
 def _write_sam3d(root: Path, view: str, person: str = "1") -> None:
     directory = root / "person" / person / view
     directory.mkdir(parents=True)

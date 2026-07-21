@@ -399,6 +399,7 @@ def _cmd_prepare(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
 def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     if not args.run_id:
         raise ValueError("train requires explicit --run-id")
+    training = _training_config_for_ablation(config, args.ablation or "A6")
     paths = _paths(config, args.output_root)
     skeleton = load_skeleton_spec(paths["skeleton"])
     fold = resolve_fold(config, args.fold)
@@ -412,7 +413,6 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
         raise ValueError(
             "cached trial people do not exactly match the selected fold people"
         )
-    training = _training_config_for_ablation(config, args.ablation or "A6")
     loss_config = loss_config_for_ablation(str(training["ablation"]))
     training["loss_config"] = asdict(loss_config)
     device = str(training.get("device", "cpu"))
