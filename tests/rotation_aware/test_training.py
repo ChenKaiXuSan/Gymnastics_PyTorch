@@ -11,8 +11,9 @@ from fuse.rotation_aware.config import RoleSpec, SkeletonSpec
 from fuse.rotation_aware.dataset import collate_pose_pair_windows
 from fuse.rotation_aware.losses import LossConfig
 from fuse.rotation_aware.model import RotationAwareFusionModel
+from fuse.rotation_aware.prefetch import ordered_prefetch, pin_tensor_batch
 from fuse.rotation_aware.profiling import StageProfiler
-from fuse.rotation_aware.training import _corrupt_batch, _feature_bundle, _forward_window, _fused_bone_cv, load_checkpoint, save_checkpoint, train_one_epoch, validate
+from fuse.rotation_aware.training import _corrupt_batch, _feature_bundle, _forward_window, _fused_bone_cv, _prepare_window, _tensor_batch, load_checkpoint, save_checkpoint, train_one_epoch, validate
 
 
 def _spec() -> SkeletonSpec:
@@ -114,6 +115,90 @@ def _complete_cycle_batch(frames: int = 129) -> dict[str, object]:
         }
     )
     return collate_pose_pair_windows([sample])
+
+
+def test_ordered_prefetch_preserves_source_order() -> None:
+    values = list(ordered_prefetch(range(8), lambda value: value * 2, depth=3))
+
+    assert values == [value * 2 for value in range(8)]
+
+
+def test_ordered_prefetch_propagates_worker_exceptions() -> None:
+    def prepare(value: int) -> int:
+        if value == 3:
+            raise RuntimeError("corruption failed")
+        return value
+
+    iterator = ordered_prefetch(range(8), prepare, depth=3)
+    assert [next(iterator) for _ in range(3)] == [0, 1, 2]
+    with pytest.raises(RuntimeError, match="corruption failed"):
+        next(iterator)
+
+
+def test_prefetched_preparation_matches_direct_corruption_for_stable_epochs() -> None:
+    from fuse.rotation_aware.corruptions import CorruptionConfig
+
+    spec = _spec()
+    batches = list(_loader(count=8, batch_size=2))
+    corruption = CorruptionConfig(
+        enabled_families=("spike_noise",), spike_probability=1.0, spike_scale=0.02
+    )
+    tensor_keys = (
+        "face", "side", "corrupted_valid_face", "corrupted_valid_side",
+        "reference_face", "reference_side", "reference_valid_face", "reference_valid_side",
+        "face_corruption_mask", "side_corruption_mask",
+    )
+
+    for epoch in (0, 1):
+        direct = [
+            _prepare_window(batch, seed=41, skeleton=spec, corruption_config=corruption, epoch=epoch)
+            for batch in batches
+        ]
+        prefetched = list(
+            ordered_prefetch(
+                batches,
+                lambda batch: _prepare_window(
+                    batch, seed=41, skeleton=spec, corruption_config=corruption, epoch=epoch
+                ),
+                depth=2,
+            )
+        )
+        for direct_batch, prefetched_batch in zip(direct, prefetched, strict=True):
+            for key in tensor_keys:
+                assert torch.equal(direct_batch[key], prefetched_batch[key])
+
+
+def test_pin_tensor_batch_preserves_input_and_metadata() -> None:
+    tensor = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+    metadata = ["window-1", "window-2"]
+    batch = {"face": tensor, "window_id": metadata, "count": 2}
+
+    pinned = pin_tensor_batch(batch)
+
+    assert pinned is not batch
+    assert pinned["window_id"] is metadata
+    assert pinned["count"] == 2
+    assert batch["face"] is tensor
+    assert torch.equal(pinned["face"], tensor)
+    if torch.cuda.is_available():
+        assert pinned["face"].is_pinned()
+    else:
+        assert pinned["face"] is tensor
+
+
+def test_tensor_batch_forwards_non_blocking_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[bool] = []
+    original_to = torch.Tensor.to
+
+    def recording_to(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+        calls.append(bool(kwargs.get("non_blocking", False)))
+        return original_to(self, *args, **kwargs)
+
+    monkeypatch.setattr(torch.Tensor, "to", recording_to)
+    result = _tensor_batch({"face": torch.ones(1), "window_id": ["window-1"]}, torch.device("cpu"), non_blocking=True)
+
+    assert calls == [True]
+    assert torch.equal(result["face"], torch.ones(1))
 
 
 def test_stage_profiler_collects_cpu_wall_time() -> None:

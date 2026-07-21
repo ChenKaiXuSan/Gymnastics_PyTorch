@@ -19,12 +19,18 @@ from .losses import (
     compute_self_supervised_losses,
 )
 from .model import FusionOutput, RotationAwareFusionModel
+from .prefetch import ThroughputConfig, ordered_prefetch, pin_tensor_batch
 from .profiling import StageProfiler
 from .trunk import extract_trunk_features
 
 
-def _tensor_batch(batch: Mapping[str, object], device: torch.device) -> dict[str, object]:
-    return {name: value.to(device) if isinstance(value, Tensor) else value for name, value in batch.items()}
+def _tensor_batch(
+    batch: Mapping[str, object], device: torch.device, *, non_blocking: bool = False
+) -> dict[str, object]:
+    return {
+        name: value.to(device, non_blocking=non_blocking) if isinstance(value, Tensor) else value
+        for name, value in batch.items()
+    }
 
 
 def _required_tensor(batch: Mapping[str, object], name: str) -> Tensor:
@@ -85,22 +91,35 @@ def _corrupt_batch(
     return prepared
 
 
-def _forward_window(
-    model: RotationAwareFusionModel,
+def _prepare_window(
     batch: Mapping[str, object],
-    skeleton: SkeletonSpec,
     *,
     seed: int,
+    skeleton: SkeletonSpec,
     corruption_config: CorruptionConfig | None,
-    device: torch.device,
     epoch: int = 0,
+) -> dict[str, object]:
+    """Prepare deterministic synthetic corruptions on the CPU."""
+    return _corrupt_batch(
+        batch, seed=seed, skeleton=skeleton, corruption_config=corruption_config, epoch=epoch
+    )
+
+
+def _forward_prepared(
+    model: RotationAwareFusionModel,
+    prepared: Mapping[str, object],
+    skeleton: SkeletonSpec,
+    *,
+    device: torch.device,
+    non_blocking: bool = False,
     profiler: StageProfiler | None = None,
 ) -> tuple[FusionOutput, dict[str, object]]:
+    """Transfer one prepared CPU batch and run the model and feature pipeline."""
     if profiler is None:
         profiler = StageProfiler(enabled=False, device=device)
-    with profiler.stage("corruption"):
-        prepared = _corrupt_batch(batch, seed=seed, skeleton=skeleton, corruption_config=corruption_config, epoch=epoch)
-    prepared = _tensor_batch(prepared, device)
+    with profiler.stage("transfer"):
+        prepared = _tensor_batch(prepared, device, non_blocking=non_blocking)
+    prepared = dict(prepared)
     face = _required_tensor(prepared, "face")
     side = _required_tensor(prepared, "side")
     valid_face = _required_tensor(prepared, "corrupted_valid_face")
@@ -133,8 +152,12 @@ def _forward_window(
     reference_side = _required_tensor(prepared, "reference_side")
     effective_reference_face_valid = reference_valid_face.bool() & temporal_valid.bool()[..., None]
     effective_reference_side_valid = reference_valid_side.bool() & temporal_valid.bool()[..., None]
-    safe_reference_face = torch.where(effective_reference_face_valid[..., None], reference_face, torch.zeros_like(reference_face))
-    safe_reference_side = torch.where(effective_reference_side_valid[..., None], reference_side, torch.zeros_like(reference_side))
+    safe_reference_face = torch.where(
+        effective_reference_face_valid[..., None], reference_face, torch.zeros_like(reference_face)
+    )
+    safe_reference_side = torch.where(
+        effective_reference_side_valid[..., None], reference_side, torch.zeros_like(reference_side)
+    )
     with profiler.stage("reference_features"):
         reference_face_features = _feature_bundle(safe_reference_face, effective_reference_face_valid, skeleton, dt)
         reference_side_features = _feature_bundle(safe_reference_side, effective_reference_side_valid, skeleton, dt)
@@ -149,6 +172,26 @@ def _forward_window(
     elif not isinstance(complete_cycle, Tensor):
         prepared["complete_cycle"] = torch.as_tensor(complete_cycle, dtype=torch.bool, device=device)
     return output, prepared
+
+
+def _forward_window(
+    model: RotationAwareFusionModel,
+    batch: Mapping[str, object],
+    skeleton: SkeletonSpec,
+    *,
+    seed: int,
+    corruption_config: CorruptionConfig | None,
+    device: torch.device,
+    epoch: int = 0,
+    profiler: StageProfiler | None = None,
+) -> tuple[FusionOutput, dict[str, object]]:
+    if profiler is None:
+        profiler = StageProfiler(enabled=False, device=device)
+    with profiler.stage("corruption"):
+        prepared = _prepare_window(
+            batch, seed=seed, skeleton=skeleton, corruption_config=corruption_config, epoch=epoch
+        )
+    return _forward_prepared(model, prepared, skeleton, device=device, profiler=profiler)
 
 
 def _mean_metrics(losses: list[dict[str, float]]) -> dict[str, float]:
@@ -184,6 +227,7 @@ def train_one_epoch(
     epoch: int = 0,
     device: str | torch.device = "cpu",
     profiler: StageProfiler | None = None,
+    throughput_config: ThroughputConfig | None = None,
 ) -> dict[str, float]:
     """Run one seeded epoch and return finite averages of the nine objectives."""
     model.train()
@@ -191,6 +235,7 @@ def train_one_epoch(
     profiler = profiler if profiler is not None else StageProfiler(enabled=False, device=target_device)
     model.to(target_device)
     config = loss_config or LossConfig()
+    throughput = throughput_config or ThroughputConfig()
     window_config = (
         replace(config, complete_cycle_rom_weight=0.0)
         if complete_cycle_loader is not None
@@ -198,20 +243,38 @@ def train_one_epoch(
     )
     torch.manual_seed(int(seed) + int(epoch))
     history: list[dict[str, float]] = []
-    for batch_index, batch in enumerate(loader):
+    def prepare(batch: Mapping[str, object]) -> dict[str, object]:
+        return _prepare_window(
+            batch,
+            seed=int(seed),
+            skeleton=skeleton,
+            corruption_config=corruption_config,
+            epoch=epoch,
+        )
+
+    for batch_index, prepared in enumerate(
+        ordered_prefetch(loader, prepare, depth=throughput.prefetch_batches)
+    ):
         optimizer.zero_grad(set_to_none=True)
-        output, prepared = _forward_window(
-            model, batch, skeleton, seed=int(seed), corruption_config=corruption_config,
-            device=target_device, epoch=epoch, profiler=profiler,
+        if throughput.pin_memory:
+            prepared = pin_tensor_batch(prepared)
+        output, prepared = _forward_prepared(
+            model,
+            prepared,
+            skeleton,
+            device=target_device,
+            non_blocking=throughput.non_blocking_transfer,
+            profiler=profiler,
         )
         with profiler.stage("loss"):
             losses = compute_self_supervised_losses(output, prepared, window_config, skeleton)
         if not torch.isfinite(losses.total):
             raise FloatingPointError("self-supervised loss is non-finite")
-        with profiler.stage("backward"):
-            losses.total.backward()
-        with profiler.stage("optimizer"):
-            optimizer.step()
+        if losses.total.requires_grad:
+            with profiler.stage("backward"):
+                losses.total.backward()
+            with profiler.stage("optimizer"):
+                optimizer.step()
         history.append({name: float(value.detach().cpu()) for name, value in losses.as_dict().items()})
     means = _mean_metrics(history)
     if complete_cycle_loader is not None and config.complete_cycle_rom_weight > 0:
