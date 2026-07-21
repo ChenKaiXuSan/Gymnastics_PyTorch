@@ -29,13 +29,14 @@ class StageProfiler:
         if self.device.type == "cuda":
             begin = torch.cuda.Event(enable_timing=True)
             end = torch.cuda.Event(enable_timing=True)
-            begin.record()
+            stream = torch.cuda.current_stream(self.device)
+            begin.record(stream)
             events = (begin, end)
         try:
             yield
         finally:
             if events is not None:
-                events[1].record()
+                events[1].record(stream)
                 self._events.setdefault(name, []).append(events)
             self._wall.setdefault(name, []).append(time.perf_counter() - started)
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 import torch
 from torch.utils.data import DataLoader
 
@@ -125,6 +126,43 @@ def test_stage_profiler_collects_cpu_wall_time() -> None:
     json.dumps(summary)
 
     assert StageProfiler(enabled=False, device=torch.device("cpu")).summary() == {}
+
+
+def test_stage_profiler_uses_profiler_device_stream(monkeypatch: pytest.MonkeyPatch) -> None:
+    device = torch.device("cuda:1")
+    stream = object()
+    event_records: list[object] = []
+    stream_devices: list[torch.device] = []
+    synchronized: list[torch.device] = []
+
+    class FakeEvent:
+        def __init__(self, *, enable_timing: bool) -> None:
+            assert enable_timing
+
+        def record(self, selected_stream: object) -> None:
+            event_records.append(selected_stream)
+
+        def elapsed_time(self, other: object) -> float:
+            assert isinstance(other, FakeEvent)
+            return 2.0
+
+    def fake_current_stream(selected_device: torch.device) -> object:
+        stream_devices.append(selected_device)
+        return stream
+
+    monkeypatch.setattr(torch.cuda, "Event", FakeEvent)
+    monkeypatch.setattr(torch.cuda, "current_stream", fake_current_stream)
+    monkeypatch.setattr(torch.cuda, "synchronize", synchronized.append)
+
+    profiler = StageProfiler(enabled=True, device=device)
+    with profiler.stage("forward"):
+        pass
+    summary = profiler.summary()
+
+    assert stream_devices == [device]
+    assert event_records == [stream, stream]
+    assert synchronized == [device]
+    assert summary["forward"]["cuda_seconds"] == pytest.approx(0.002)
 
 
 def test_cpu_tiny_overfit_is_finite_and_reduces_loss() -> None:
