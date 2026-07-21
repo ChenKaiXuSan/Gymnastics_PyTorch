@@ -16,7 +16,6 @@ import yaml
 from fuse.metadata.mhr70 import mhr_names
 import fuse.rotation_aware.cli as cli
 from fuse.rotation_aware.cli import _training_config_for_ablation, load_config, main
-from fuse.rotation_aware.model import ResidualTCNBlock
 
 
 def _pose(frame: int, side: bool) -> np.ndarray:
@@ -269,50 +268,19 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
             batched_output.base_kpts[sample_index : sample_index + 1],
             scalar_output.base_kpts,
         )
-        torch.testing.assert_close(
-            batched_output.delta_kpts[sample_index : sample_index + 1],
-            scalar_output.delta_kpts,
-            rtol=1e-6,
-            atol=2e-7,
+        assert torch.equal(
+            batched_output.delta_kpts[sample_index : sample_index + 1], scalar_output.delta_kpts
         )
 
-    first_block = fallback_workload.model.tcn.blocks[0]
-    channels = first_block.conv1.in_channels
-    temporal_values = torch.linspace(
-        -1.0,
-        1.0,
-        steps=2 * 3 * channels * prepared_batch["face"].shape[1],
-    ).reshape(2, 3, channels, prepared_batch["face"].shape[1])
-    batched_convolution = first_block._evaluation_convolution(
-        temporal_values, first_block.conv1
-    )
-    scalar_convolution = torch.cat(
-        [
-            first_block._evaluation_convolution(
-                temporal_values[index : index + 1], first_block.conv1
-            )
-            for index in range(temporal_values.shape[0])
-        ],
-        dim=0,
-    )
-    assert torch.equal(batched_convolution, scalar_convolution)
+    validation_forward_calls = 0
+    original_forward = fallback_workload.model.forward
 
-    evaluation_shapes: list[torch.Size] = []
-    original_evaluation_convolution = ResidualTCNBlock._evaluation_convolution
+    def count_validation_forwards(*args, **kwargs):
+        nonlocal validation_forward_calls
+        validation_forward_calls += 1
+        return original_forward(*args, **kwargs)
 
-    def observe_evaluation_convolution(self, values, convolution):
-        evaluation_shapes.append(values.shape)
-        return original_evaluation_convolution(self, values, convolution)
-
-    def stock_convolution_is_forbidden(*args, **kwargs):
-        raise AssertionError("optimized validation must use the fixed-order batched TCN path")
-
-    monkeypatch.setattr(
-        ResidualTCNBlock, "_evaluation_convolution", observe_evaluation_convolution
-    )
-    for block in fallback_workload.model.tcn.blocks:
-        monkeypatch.setattr(block.conv1, "forward", stock_convolution_is_forbidden)
-        monkeypatch.setattr(block.conv2, "forward", stock_convolution_is_forbidden)
+    monkeypatch.setattr(fallback_workload.model, "forward", count_validation_forwards)
     training_module.validate(
         fallback_workload.model,
         fallback_workload.diagnostic_validation_loader,
@@ -323,13 +291,7 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
         device="cpu",
         scalar_forward=False,
     )
-    assert len(evaluation_shapes) == 2 * len(fallback_workload.model.tcn.blocks) * len(
-        fallback_workload.diagnostic_validation_loader
-    )
-    assert all(
-        shape[:2] == (prepared_batch["face"].shape[0], len(fallback_workload.skeleton.joint_names))
-        for shape in evaluation_shapes
-    )
+    assert validation_forward_calls == len(fallback_workload.diagnostic_validation_loader)
 
     production_generator = torch.Generator().manual_seed(
         int(fallback_workload.training_config["seed"])

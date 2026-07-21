@@ -230,10 +230,9 @@ def _prepared_stream(
     throughput: ThroughputConfig,
     profiler: StageProfiler,
     phase: str,
-    validation_quality: bool = False,
 ) -> Iterable[dict[str, object]]:
     def prepare(batch: Mapping[str, object]) -> dict[str, object]:
-        prepared = _prepare_window(
+        return _prepare_window(
             batch,
             seed=seed,
             skeleton=skeleton,
@@ -242,7 +241,6 @@ def _prepared_stream(
             profiler=profiler,
             phase=phase,
         )
-        return _prepare_validation_quality(prepared, skeleton) if validation_quality else prepared
 
     return ordered_prefetch(
         _profiled_source(loader, profiler, phase), prepare, depth=throughput.prefetch_batches
@@ -309,8 +307,8 @@ def _forward_prepared(
     prepared["valid_face"] = reference_valid_face.bool()
     prepared["valid_side"] = reference_valid_side.bool()
     prepared["loss_mask"] = loss_mask.bool() & temporal_valid.bool()[..., None]
-    prepared.setdefault("quality_face", reference_face_features.quality.loss_weight)
-    prepared.setdefault("quality_side", reference_side_features.quality.loss_weight)
+    prepared["quality_face"] = reference_face_features.quality.loss_weight
+    prepared["quality_side"] = reference_side_features.quality.loss_weight
     complete_cycle = prepared.get("complete_cycle")
     if complete_cycle is None:
         prepared["complete_cycle"] = torch.zeros(temporal_valid.shape[0], dtype=torch.bool, device=device)
@@ -400,10 +398,10 @@ def _single_output(output: FusionOutput, index: int) -> FusionOutput:
     )
 
 
-def _prepare_validation_quality(
+def _validation_loss_prepared(
     prepared: Mapping[str, object], skeleton: SkeletonSpec
 ) -> dict[str, object]:
-    """Materialize scalar-equivalent reference quality weights on the CPU."""
+    """Recompute validation-only quality weights with one sample per reduction."""
     normalized = dict(prepared)
     reference_face = _required_tensor(normalized, "reference_face")
     reference_side = _required_tensor(normalized, "reference_side")
@@ -413,24 +411,18 @@ def _prepare_validation_quality(
     dt = _required_tensor(normalized, "dt")
     effective_reference_face_valid = reference_valid_face & temporal_valid[..., None]
     effective_reference_side_valid = reference_valid_side & temporal_valid[..., None]
-    quality_face: list[Tensor] = []
-    quality_side: list[Tensor] = []
-    for sample_index in range(reference_face.shape[0]):
-        face = reference_face[sample_index : sample_index + 1]
-        side = reference_side[sample_index : sample_index + 1]
-        face_valid = effective_reference_face_valid[sample_index : sample_index + 1]
-        side_valid = effective_reference_side_valid[sample_index : sample_index + 1]
-        sample_dt = dt[sample_index : sample_index + 1]
-        safe_reference_face = torch.where(face_valid[..., None], face, torch.zeros_like(face))
-        safe_reference_side = torch.where(side_valid[..., None], side, torch.zeros_like(side))
-        quality_face.append(
-            _feature_bundle(safe_reference_face, face_valid, skeleton, sample_dt).quality.loss_weight
-        )
-        quality_side.append(
-            _feature_bundle(safe_reference_side, side_valid, skeleton, sample_dt).quality.loss_weight
-        )
-    normalized["quality_face"] = torch.cat(quality_face, dim=0)
-    normalized["quality_side"] = torch.cat(quality_side, dim=0)
+    safe_reference_face = torch.where(
+        effective_reference_face_valid[..., None], reference_face, torch.zeros_like(reference_face)
+    )
+    safe_reference_side = torch.where(
+        effective_reference_side_valid[..., None], reference_side, torch.zeros_like(reference_side)
+    )
+    normalized["quality_face"] = _feature_bundle(
+        safe_reference_face, effective_reference_face_valid, skeleton, dt
+    ).quality.loss_weight
+    normalized["quality_side"] = _feature_bundle(
+        safe_reference_side, effective_reference_side_valid, skeleton, dt
+    ).quality.loss_weight
     return normalized
 
 
@@ -492,7 +484,6 @@ def _prepared_validation_stream(
         throughput=throughput,
         profiler=profiler,
         phase=phase,
-        validation_quality=True,
     )
 
 
@@ -753,6 +744,7 @@ def validate(
     def append_sample(
         output: FusionOutput, prepared: dict[str, object], phase: str
     ) -> None:
+        prepared = _validation_loss_prepared(prepared, skeleton)
         window_ids = prepared.get("window_id")
         if not isinstance(window_ids, list) or len(window_ids) != 1 or not isinstance(window_ids[0], str):
             raise ValueError("validation samples require one stable string window_id")
