@@ -159,6 +159,11 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     old_fuse_root = tmp_path / "legacy_fuse_outputs"
     old_fuse_root.mkdir()
     production_config = load_config("configs/fuse/rotation_aware_batch64.yaml")
+    assert production_config["paths"]["output_root"] == "logs/fuse_rotation_aware/batch64"
+    assert production_config["data"]["cache_dir"] == "logs/fuse_rotation_aware/cache"
+    assert production_config["training"]["protocol"] == {
+        "run_id_token_template": "{ablation_lower}_b{batch_size}_e{epochs}"
+    }
     assert _training_config_for_ablation(production_config, "A4")["epochs"] == 200
     assert _training_config_for_ablation(production_config, "A5")["epochs"] == 200
     assert _training_config_for_ablation(production_config, "A6")["epochs"] == 100
@@ -174,6 +179,7 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
             "old_fuse_root": str(old_fuse_root),
         }
     )
+    tiny_config["data"]["cache_dir"] = str(output / "cache")
     tiny_config["window"].update(
         {"length": 32, "train_stride": 16, "eval_stride": 16}
     )
@@ -194,11 +200,11 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     monkeypatch.setattr(cli.torch.optim.Adam, "step", count_steps)
 
     assert main(["prepare", "--config", str(config), "--person", "1"]) == 0
-    assert main(["train", "--config", str(config), "--run-id", "batch64", "--ablation", "A6"]) == 0
+    assert main(["train", "--config", str(config), "--run-id", "batch64_a6_b64_e1", "--ablation", "A6"]) == 0
 
     assert step_count == 2
     checkpoint = torch.load(
-        output / "runs" / "batch64" / "checkpoints" / "best.pt",
+        output / "runs" / "batch64_a6_b64_e1" / "checkpoints" / "best.pt",
         map_location="cpu",
         weights_only=False,
     )
@@ -223,18 +229,9 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     benchmark_output = tmp_path / "benchmark.json"
     assert benchmark.main(
         [
-            "--config",
-            str(config),
-            "--ablation",
-            "A6",
-            "--device",
-            "cpu",
-            "--warmup-epochs",
-            "1",
-            "--measured-epochs",
-            "2",
-            "--output",
-            str(benchmark_output),
+            "--config", str(config), "--ablation", "A4", "--device", "cpu",
+            "--warmup-epochs", "1", "--measured-epochs", "2",
+            "--output", str(benchmark_output),
         ]
     ) == 0
     benchmark_report = json.loads(benchmark_output.read_text(encoding="utf-8"))
@@ -257,16 +254,9 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     assert benchmark_report["stage_timings"]["diagnostic"]["timed"] is False
     history = benchmark_report["validation_history"]
     assert [entry["epoch"] for entry in history["epochs"]] == [0, 1, 2]
-    assert [entry["phase"] for entry in history["epochs"]] == [
-        "warmup",
-        "measured",
-        "measured",
-    ]
+    assert [entry["phase"] for entry in history["epochs"]] == ["warmup", "measured", "measured"]
     assert all(entry["equivalent"] for entry in history["epochs"])
-    assert all(
-        entry["checkpoint_selection"]["agreement"]
-        for entry in history["epochs"]
-    )
+    assert all(entry["checkpoint_selection"]["agreement"] for entry in history["epochs"])
     assert history["final_selected_epoch_agreement"]
     assert history["accepted"]
     assert history["epochs"][-1]["losses"]["total"]["absolute_delta"] >= 0

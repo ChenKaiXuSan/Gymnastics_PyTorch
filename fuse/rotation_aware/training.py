@@ -202,6 +202,17 @@ def _mean_metrics(losses: list[dict[str, float]]) -> dict[str, float]:
     return {key: sum(values[key] for values in losses) / len(losses) for key in keys}
 
 
+def _objective_with_zero_gradient_anchor(loss: Tensor, model: nn.Module) -> Tensor:
+    """Make detached zero objectives advance Adam as zero-gradient updates."""
+    if loss.requires_grad:
+        return loss
+    anchor = torch.zeros_like(loss)
+    for parameter in model.parameters():
+        if parameter.requires_grad:
+            anchor = anchor + parameter.sum() * 0.0
+    return loss + anchor
+
+
 def _single_sample(batch: Mapping[str, object], index: int) -> dict[str, object]:
     """Preserve a collated sample's batch dimension and stable metadata."""
     sample: dict[str, object] = {}
@@ -342,11 +353,11 @@ def train_one_epoch(
             losses = compute_self_supervised_losses(output, prepared, window_config, skeleton)
         if not torch.isfinite(losses.total):
             raise FloatingPointError("self-supervised loss is non-finite")
-        if losses.total.requires_grad:
-            with profiler.stage("backward"):
-                losses.total.backward()
-            with profiler.stage("optimizer"):
-                optimizer.step()
+        objective = _objective_with_zero_gradient_anchor(losses.total, model)
+        with profiler.stage("backward"):
+            objective.backward()
+        with profiler.stage("optimizer"):
+            optimizer.step()
         history.append({name: float(value.detach().cpu()) for name, value in losses.as_dict().items()})
     means = _mean_metrics(history)
     if complete_cycle_loader is not None and config.complete_cycle_rom_weight > 0:
@@ -370,11 +381,11 @@ def train_one_epoch(
             if not torch.isfinite(rom):
                 raise FloatingPointError("complete-cycle ROM loss is non-finite")
             weighted_rom = config.complete_cycle_rom_weight * rom
-            if weighted_rom.requires_grad:
-                with profiler.stage("complete_cycle_backward"):
-                    weighted_rom.backward()
-                with profiler.stage("complete_cycle_optimizer"):
-                    optimizer.step()
+            objective = _objective_with_zero_gradient_anchor(weighted_rom, model)
+            with profiler.stage("complete_cycle_backward"):
+                objective.backward()
+            with profiler.stage("complete_cycle_optimizer"):
+                optimizer.step()
             rom_values.append(float(rom.detach().cpu()))
         if not rom_values:
             raise ValueError("complete-cycle ROM loader produced no batches")

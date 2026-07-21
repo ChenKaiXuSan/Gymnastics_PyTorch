@@ -100,11 +100,19 @@ def load_config(path: str | Path) -> dict[str, Any]:
 def _paths(config: Mapping[str, Any], output_override: str | None) -> dict[str, Path]:
     paths = dict(config.get("paths", {}))
     root = Path(output_override or paths.get("output_root", "logs/fuse_rotation_aware"))
+    data = config.get("data", {})
+    cache_root = (
+        root / "cache"
+        if output_override is not None
+        else Path(data.get("cache_dir", root / "cache"))
+        if isinstance(data, Mapping)
+        else root / "cache"
+    )
     return {
         "sam3d": Path(paths["sam3d_root"]),
         "split": Path(paths["split_cycle_root"]),
         "output": root,
-        "cache": root / "cache",
+        "cache": cache_root,
         "skeleton": Path(paths.get("skeleton", "configs/fuse/skeleton_mhr70.yaml")),
     }
 
@@ -174,6 +182,82 @@ def _training_config_for_ablation(
     training["epochs"] = epochs
     training["ablation"] = ablation
     return training
+
+
+def _validate_protocol_run_id(run_id: str, training: Mapping[str, Any]) -> bool:
+    """Validate a protocol-qualified run ID and report whether its directory is protected."""
+    protocol = training.get("protocol")
+    if protocol is None:
+        return False
+    if not isinstance(protocol, Mapping):
+        raise ValueError("training.protocol must be a mapping")
+    template = protocol.get("run_id_token_template")
+    if not isinstance(template, str) or not template:
+        raise ValueError("training.protocol requires run_id_token_template")
+    try:
+        token = template.format(
+            ablation=str(training["ablation"]),
+            ablation_lower=str(training["ablation"]).lower(),
+            batch_size=int(training["batch_size"]),
+            epochs=int(training["epochs"]),
+        )
+    except (KeyError, ValueError) as error:
+        raise ValueError("training.protocol run_id_token_template is invalid") from error
+    if token not in run_id:
+        raise ValueError(
+            f"run ID for this protocol must include token {token!r}: {run_id!r}"
+        )
+    return True
+
+
+def _build_training_loaders(
+    train_set: object,
+    val_set: object | None,
+    train_cycles: object,
+    val_cycles: object,
+    *,
+    batch_size: int,
+    generator: torch.Generator,
+) -> tuple[DataLoader, DataLoader, DataLoader, DataLoader, bool]:
+    """Build the historical shared-generator loader topology for train-only folds."""
+    loader = DataLoader(
+        train_set,
+        batch_size=batch_size,
+        shuffle=True,
+        generator=generator,
+        collate_fn=collate_pose_pair_windows,
+    )
+    uses_training_validation = val_set is None
+    val_loader = (
+        loader
+        if uses_training_validation
+        else DataLoader(
+            val_set,
+            batch_size=batch_size,
+            shuffle=False,
+            collate_fn=collate_pose_pair_windows,
+        )
+    )
+    complete_cycle_loader = DataLoader(
+        train_cycles,
+        batch_size=1,
+        shuffle=True,
+        generator=generator,
+        collate_fn=collate_pose_pair_windows,
+    )
+    val_complete_cycle_loader = DataLoader(
+        val_cycles,
+        batch_size=1,
+        shuffle=False,
+        collate_fn=collate_pose_pair_windows,
+    )
+    return (
+        loader,
+        val_loader,
+        complete_cycle_loader,
+        val_complete_cycle_loader,
+        uses_training_validation,
+    )
 
 
 def _people(paths: Mapping[str, Path], wanted: Iterable[str] | None) -> list[str]:
@@ -408,11 +492,15 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     if not args.run_id:
         raise ValueError("train requires explicit --run-id")
     training = _training_config_for_ablation(config, args.ablation or "A6")
+    protected_run = _validate_protocol_run_id(args.run_id, training)
     performance = config.get("performance", {})
     if not isinstance(performance, Mapping):
         raise ValueError("rotation-aware performance config must be a mapping")
     throughput = ThroughputConfig(**dict(performance))
     paths = _paths(config, args.output_root)
+    run = paths["output"] / "runs" / args.run_id
+    if protected_run and run.exists() and any(run.iterdir()):
+        raise FileExistsError(f"protected batch-64 run directory is not empty: {run}")
     skeleton = load_skeleton_spec(paths["skeleton"])
     fold = resolve_fold(config, args.fold)
     manifest = build_split_manifest(fold)
@@ -456,40 +544,19 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     )
     batch_size = int(training.get("batch_size", 4))
     generator = torch.Generator().manual_seed(int(training.get("seed", 0)))
-    loader = DataLoader(
+    (
+        loader,
+        val_loader,
+        complete_cycle_loader,
+        val_complete_cycle_loader,
+        uses_training_validation,
+    ) = _build_training_loaders(
         train_set,
-        batch_size=batch_size,
-        shuffle=True,
-        generator=generator,
-        collate_fn=collate_pose_pair_windows,
-    )
-    val_loader = (
-        DataLoader(
-            val_set,
-            batch_size=batch_size,
-            shuffle=False,
-            collate_fn=collate_pose_pair_windows,
-        )
-        if val_set
-        else DataLoader(
-            train_set,
-            batch_size=batch_size,
-            shuffle=False,
-            collate_fn=collate_pose_pair_windows,
-        )
-    )
-    complete_cycle_loader = DataLoader(
+        val_set,
         train_cycles,
-        batch_size=1,
-        shuffle=True,
-        generator=generator,
-        collate_fn=collate_pose_pair_windows,
-    )
-    val_complete_cycle_loader = DataLoader(
         val_cycles,
-        batch_size=1,
-        shuffle=False,
-        collate_fn=collate_pose_pair_windows,
+        batch_size=batch_size,
+        generator=generator,
     )
     model = RotationAwareFusionModel(
         skeleton, hidden_channels=int(training.get("hidden_channels", 128))
@@ -497,7 +564,6 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     optimizer = torch.optim.Adam(
         model.parameters(), lr=float(training.get("learning_rate", 1e-3))
     )
-    run = paths["output"] / "runs" / args.run_id
     run.mkdir(parents=True, exist_ok=True)
     profile_path = run / "stage_profile.jsonl"
     profile_path.unlink(missing_ok=True)
@@ -536,7 +602,7 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     epochs = int(training.get("epochs", 1))
     prepared_val_loader = None
     prepared_val_complete_cycle_loader = None
-    if throughput.cache_validation_batches:
+    if throughput.cache_validation_batches and not uses_training_validation:
         prepared_val_loader = prepare_validation_batches(
             val_loader,
             skeleton,

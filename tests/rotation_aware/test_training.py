@@ -354,7 +354,46 @@ def test_a6_training_prefetches_complete_cycle_batches_with_configured_transfer(
     assert prefetch_depths == [2, 2]
     assert [batch["face"].shape[1] for batch in pin_calls] == [5, 129]
     assert non_blocking_values == [True, True]
-    assert optimizer.step_count == 1
+    assert optimizer.step_count == 2
+
+
+def test_fully_masked_window_and_cycle_advance_adam_with_zero_gradients() -> None:
+    class RecordingAdam(torch.optim.Adam):
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            super().__init__(*args, **kwargs)
+            self.step_count = 0
+
+        def step(self, *args: object, **kwargs: object) -> None:
+            self.step_count += 1
+            super().step(*args, **kwargs)
+
+    spec = _spec()
+    model = RotationAwareFusionModel(spec, hidden_channels=8)
+    optimizer = RecordingAdam(model.parameters(), lr=1e-3)
+    window_batch = next(iter(_loader(count=1, batch_size=1)))
+    window_batch["loss_mask"] = torch.zeros_like(window_batch["loss_mask"])
+    cycle_batch = _complete_cycle_batch()
+    cycle_batch["loss_mask"] = torch.zeros_like(cycle_batch["loss_mask"])
+    before = [parameter.detach().clone() for parameter in model.parameters()]
+
+    metrics = train_one_epoch(
+        model,
+        [window_batch],
+        optimizer,
+        spec,
+        loss_config=LossConfig(),
+        complete_cycle_loader=[cycle_batch],
+        seed=3,
+    )
+
+    assert optimizer.step_count == 2
+    assert all(torch.isfinite(torch.tensor(value)) for value in metrics.values())
+    assert all(torch.equal(parameter, initial) for parameter, initial in zip(model.parameters(), before, strict=True))
+    assert len(optimizer.state) == len(list(model.parameters()))
+    for state in optimizer.state.values():
+        assert state["step"].item() == 2
+        assert torch.count_nonzero(state["exp_avg"]) == 0
+        assert torch.count_nonzero(state["exp_avg_sq"]) == 0
 
 
 def test_a5_training_does_not_consume_complete_cycle_loader() -> None:

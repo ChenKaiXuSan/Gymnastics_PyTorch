@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
+from torch.utils.data import DataLoader
 
 from fuse.metadata.mhr70 import mhr_names
 from fuse.rotation_aware import cli
@@ -37,6 +38,74 @@ def test_training_schedule_resolves_batch64_method_epochs() -> None:
     assert _training_config_for_ablation(config, "A5")["epochs"] == 200
     assert _training_config_for_ablation(config, "A6")["epochs"] == 100
     assert _training_config_for_ablation(config, "A6")["batch_size"] == 64
+
+
+def test_no_validation_fallback_matches_reference_shared_generator_order() -> None:
+    windows = [{"window_id": f"window-{index}"} for index in range(8)]
+    cycles = [{"window_id": f"cycle-{index}"} for index in range(3)]
+    reference_generator = torch.Generator().manual_seed(17)
+    reference_windows = DataLoader(
+        windows, batch_size=2, shuffle=True, generator=reference_generator,
+        collate_fn=cli.collate_pose_pair_windows,
+    )
+    reference_cycles = DataLoader(
+        cycles, batch_size=1, shuffle=True, generator=reference_generator,
+        collate_fn=cli.collate_pose_pair_windows,
+    )
+    reference_orders = []
+    for _ in range(3):
+        reference_orders.append([item for batch in reference_windows for item in batch["window_id"]])
+        list(reference_cycles)
+        list(reference_windows)
+
+    loader, val_loader, complete_cycle_loader, val_complete_cycle_loader, uses_training_validation = cli._build_training_loaders(
+        windows,
+        None,
+        cycles,
+        cycles,
+        batch_size=2,
+        generator=torch.Generator().manual_seed(17),
+    )
+    observed_orders = []
+    for _ in range(3):
+        observed_orders.append([item for batch in loader for item in batch["window_id"]])
+        list(complete_cycle_loader)
+        list(val_loader)
+        list(val_complete_cycle_loader)
+
+    assert uses_training_validation
+    assert val_loader is loader
+    assert observed_orders == reference_orders
+
+
+def test_batch64_protocol_validates_token_and_protects_existing_run_before_cache_loading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = {
+        "paths": {
+            "sam3d_root": str(tmp_path / "sam3d"),
+            "split_cycle_root": str(tmp_path / "split"),
+            "output_root": str(tmp_path / "batch64"),
+        },
+        "training": {
+            "epochs_by_ablation": {"A4": 200, "A5": 200, "A6": 100},
+            "batch_size": 64,
+            "protocol": {"run_id_token_template": "{ablation_lower}_b{batch_size}_e{epochs}"},
+        },
+    }
+    args = Namespace(run_id="paper_a4", ablation="A4", output_root=None, fold=None, person=None)
+    monkeypatch.setattr(cli, "_cached_trials_with_provenance", lambda *args, **kwargs: pytest.fail("cache must not load"))
+
+    with pytest.raises(ValueError, match="a4_b64_e200"):
+        cli._cmd_train(args, config)
+
+    protected = tmp_path / "batch64" / "runs" / "paper_a4_b64_e200"
+    protected.mkdir(parents=True)
+    (protected / "checkpoint.pt").write_text("do not overwrite", encoding="utf-8")
+    args.run_id = "paper_a4_b64_e200"
+    with pytest.raises(FileExistsError, match="protected batch-64 run directory"):
+        cli._cmd_train(args, config)
 
 
 @pytest.mark.parametrize(
@@ -226,8 +295,8 @@ def test_configured_training_device_is_forwarded(
     def fake_validate(*args, **kwargs):
         seen.append(("validate", kwargs.get("device")))
         assert kwargs["throughput_config"].cache_validation_batches
-        assert kwargs["prepared_loader"] is not None
-        assert kwargs["prepared_complete_cycle_loader"] is not None
+        assert kwargs["prepared_loader"] is None
+        assert kwargs["prepared_complete_cycle_loader"] is None
         return {"score": 0.5}
 
     monkeypatch.setattr(cli, "train_one_epoch", fake_train)

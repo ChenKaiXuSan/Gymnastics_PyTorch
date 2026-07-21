@@ -49,6 +49,24 @@ protocol. It is not directly comparable to historical batch-32 runs: A4 and
 A5 train for 200 epochs, while A6 trains for 100 epochs. All three use a
 learning rate of `0.001` and retain the existing sample ordering, loss
 definitions, optimizer semantics, and validation/checkpoint-selection rules.
+Its training, inference, and evaluation artifacts are isolated below
+`logs/fuse_rotation_aware/batch64`, while it reads the prepared cache at
+`logs/fuse_rotation_aware/cache`.
+
+Batch-64 run IDs must include their ablation, batch size, and resolved epoch
+count. Use a fresh ID for every training attempt; the command rejects a
+non-empty batch-64 run directory rather than overwriting it.
+
+```bash
+conda run -n gymnastic python -m fuse.rotation_aware prepare --config configs/fuse/rotation_aware_batch64.yaml
+conda run -n gymnastic python -m fuse.rotation_aware train --config configs/fuse/rotation_aware_batch64.yaml --run-id paper_a4_b64_e200 --ablation A4
+conda run -n gymnastic python -m fuse.rotation_aware train --config configs/fuse/rotation_aware_batch64.yaml --run-id paper_a5_b64_e200 --ablation A5
+conda run -n gymnastic python -m fuse.rotation_aware train --config configs/fuse/rotation_aware_batch64.yaml --run-id paper_a6_b64_e100 --ablation A6
+conda run -n gymnastic python -m fuse.rotation_aware infer --config configs/fuse/rotation_aware_batch64.yaml --run-id paper_a4_b64_e200
+conda run -n gymnastic python -m fuse.rotation_aware infer --config configs/fuse/rotation_aware_batch64.yaml --run-id paper_a5_b64_e200
+conda run -n gymnastic python -m fuse.rotation_aware infer --config configs/fuse/rotation_aware_batch64.yaml --run-id paper_a6_b64_e100
+conda run -n gymnastic python -m fuse.rotation_aware evaluate --config configs/fuse/rotation_aware_batch64.yaml --run-id paper_a4_b64_e200 --run-id paper_a5_b64_e200 --run-id paper_a6_b64_e100
+```
 
 Benchmark an already prepared cache without writing a training run:
 
@@ -128,7 +146,11 @@ them.
 ```text
 logs/fuse_rotation_aware/
   cache/                         compact split-cycle trial inputs
-  runs/<run_id>/                 training-only artifacts and checkpoints
+  batch64/
+    runs/<run_id>/               training-only artifacts and checkpoints
+    inference/<run_id>/person_<id>/cycle_<n>/
+    evaluation/<run_id-or-ids>/  person/joint/diagnostic CSV reports
+  runs/<run_id>/                 legacy/default training artifacts
   inference/<run_id>/person_<id>/cycle_<n>/
                                  per-cycle model outputs
   evaluation/<run_id-or-ids>/    person/joint/diagnostic CSV reports
