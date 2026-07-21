@@ -184,11 +184,31 @@ def _training_config_for_ablation(
     return training
 
 
+def _validate_safe_run_id_component(run_id: str) -> None:
+    """Reject path-like IDs before they can escape a protocol output root."""
+    if (
+        not isinstance(run_id, str)
+        or not run_id
+        or run_id in {".", ".."}
+        or ".." in run_id
+        or Path(run_id).is_absolute()
+        or "/" in run_id
+        or "\\" in run_id
+    ):
+        raise ValueError(f"run ID must be a safe run-ID component: {run_id!r}")
+
+
+def _config_has_protocol(config: Mapping[str, Any]) -> bool:
+    training = config.get("training", {})
+    return isinstance(training, Mapping) and training.get("protocol") is not None
+
+
 def _validate_protocol_run_id(run_id: str, training: Mapping[str, Any]) -> bool:
     """Validate a protocol-qualified run ID and report whether its directory is protected."""
     protocol = training.get("protocol")
     if protocol is None:
         return False
+    _validate_safe_run_id_component(run_id)
     if not isinstance(protocol, Mapping):
         raise ValueError("training.protocol must be a mapping")
     template = protocol.get("run_id_token_template")
@@ -203,7 +223,7 @@ def _validate_protocol_run_id(run_id: str, training: Mapping[str, Any]) -> bool:
         )
     except (KeyError, ValueError) as error:
         raise ValueError("training.protocol run_id_token_template is invalid") from error
-    if token not in run_id:
+    if not re.search(rf"(?<![A-Za-z0-9]){re.escape(token)}(?![A-Za-z0-9])", run_id):
         raise ValueError(
             f"run ID for this protocol must include token {token!r}: {run_id!r}"
         )
@@ -692,6 +712,8 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
 def _cmd_infer(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     if not args.run_id:
         raise ValueError("infer requires explicit --run-id")
+    if _config_has_protocol(config):
+        _validate_safe_run_id_component(args.run_id)
     paths = _paths(config, args.output_root)
     skeleton = load_skeleton_spec(paths["skeleton"])
     checkpoint = (
@@ -811,9 +833,12 @@ def _cmd_infer(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
 def _cmd_evaluate(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     if not args.run_id:
         raise ValueError("evaluate requires explicit --run-id")
+    run_ids = [args.run_id] if isinstance(args.run_id, str) else list(args.run_id)
+    if _config_has_protocol(config):
+        for run_id in run_ids:
+            _validate_safe_run_id_component(run_id)
     paths = _paths(config, args.output_root)
     skeleton = load_skeleton_spec(paths["skeleton"])
-    run_ids = [args.run_id] if isinstance(args.run_id, str) else list(args.run_id)
     roots = [paths["output"] / "inference" / run_id for run_id in run_ids]
     target = paths["output"] / "evaluation" / "+".join(run_ids)
     target.mkdir(parents=True, exist_ok=True)

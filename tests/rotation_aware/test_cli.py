@@ -97,8 +97,21 @@ def test_batch64_protocol_validates_token_and_protects_existing_run_before_cache
     args = Namespace(run_id="paper_a4", ablation="A4", output_root=None, fold=None, person=None)
     monkeypatch.setattr(cli, "_cached_trials_with_provenance", lambda *args, **kwargs: pytest.fail("cache must not load"))
 
+    resolved = _training_config_for_ablation(config, "A4")
+    assert cli._validate_protocol_run_id("paper_a4_b64_e200_seed0", resolved)
+
     with pytest.raises(ValueError, match="a4_b64_e200"):
         cli._cmd_train(args, config)
+
+    for misleading in ("paper_a4_b64_e2000", "xa4_b64_e200"):
+        args.run_id = misleading
+        with pytest.raises(ValueError, match="a4_b64_e200"):
+            cli._cmd_train(args, config)
+
+    args.run_id = "../../runs/paper_a4_b64_e200"
+    with pytest.raises(ValueError, match="safe run-ID component"):
+        cli._cmd_train(args, config)
+    assert not (tmp_path / "runs" / "paper_a4_b64_e200").exists()
 
     protected = tmp_path / "batch64" / "runs" / "paper_a4_b64_e200"
     protected.mkdir(parents=True)
@@ -106,6 +119,25 @@ def test_batch64_protocol_validates_token_and_protects_existing_run_before_cache
     args.run_id = "paper_a4_b64_e200"
     with pytest.raises(FileExistsError, match="protected batch-64 run directory"):
         cli._cmd_train(args, config)
+
+
+@pytest.mark.parametrize("run_id", ["", ".", "..", "/tmp/run", "paper/run", r"paper\\run", "a..b"])
+def test_safe_run_id_component_rejects_empty_and_path_like_values(run_id: str) -> None:
+    with pytest.raises(ValueError, match="safe run-ID component"):
+        cli._validate_safe_run_id_component(run_id)
+
+
+def test_protected_infer_and_evaluate_reject_unsafe_run_id_components() -> None:
+    config = {
+        "training": {
+            "protocol": {"run_id_token_template": "{ablation_lower}_b{batch_size}_e{epochs}"}
+        }
+    }
+
+    with pytest.raises(ValueError, match="safe run-ID component"):
+        cli._cmd_infer(Namespace(run_id="../../escape"), config)
+    with pytest.raises(ValueError, match="safe run-ID component"):
+        cli._cmd_evaluate(Namespace(run_id=["paper_a4_b64_e200", "../../escape"]), config)
 
 
 @pytest.mark.parametrize(
