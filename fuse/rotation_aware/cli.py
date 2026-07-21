@@ -146,6 +146,28 @@ def loss_config_for_ablation(ablation: str) -> LossConfig:
     raise ValueError(f"learned ablation must be A4, A5, or A6: {ablation}")
 
 
+def _training_config_for_ablation(
+    config: Mapping[str, Any], ablation: str
+) -> dict[str, Any]:
+    """Resolve the training schedule and objective label for one ablation."""
+    training = dict(config.get("training", {}))
+    schedule = training.pop("epochs_by_ablation", None)
+    if schedule is not None:
+        if not isinstance(schedule, Mapping) or set(schedule) != {"A4", "A5", "A6"}:
+            raise ValueError(
+                "training.epochs_by_ablation must define exactly A4, A5, and A6"
+            )
+        if ablation not in schedule:
+            raise ValueError(f"learned ablation must be A4, A5, or A6: {ablation}")
+        training["epochs"] = int(schedule[ablation])
+    epochs = int(training.get("epochs", 1))
+    if epochs < 1:
+        raise ValueError("training epochs must be positive")
+    training["epochs"] = epochs
+    training["ablation"] = ablation
+    return training
+
+
 def _people(paths: Mapping[str, Path], wanted: Iterable[str] | None) -> list[str]:
     if wanted:
         return sorted({str(person) for person in wanted})
@@ -390,8 +412,7 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
         raise ValueError(
             "cached trial people do not exactly match the selected fold people"
         )
-    training = dict(config.get("training", {}))
-    training["ablation"] = args.ablation or "A6"
+    training = _training_config_for_ablation(config, args.ablation or "A6")
     loss_config = loss_config_for_ablation(str(training["ablation"]))
     training["loss_config"] = asdict(loss_config)
     device = str(training.get("device", "cpu"))

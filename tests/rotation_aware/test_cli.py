@@ -15,11 +15,45 @@ from fuse.rotation_aware.config import load_skeleton_spec
 from fuse.rotation_aware.cli import (
     _cache_trial_paths,
     _cached_trials,
+    _training_config_for_ablation,
     loss_config_for_ablation,
     main,
     make_parser,
     resolve_fold,
 )
+
+
+def test_training_schedule_resolves_batch64_method_epochs() -> None:
+    config = {
+        "training": {
+            "batch_size": 64,
+            "learning_rate": 0.001,
+            "epochs_by_ablation": {"A4": 200, "A5": 200, "A6": 100},
+        }
+    }
+
+    assert _training_config_for_ablation(config, "A4")["epochs"] == 200
+    assert _training_config_for_ablation(config, "A5")["epochs"] == 200
+    assert _training_config_for_ablation(config, "A6")["epochs"] == 100
+    assert _training_config_for_ablation(config, "A6")["batch_size"] == 64
+
+
+@pytest.mark.parametrize(
+    ("schedule", "ablation", "message"),
+    [
+        ({"A4": 200, "A5": 200}, "A6", "exactly A4, A5, and A6"),
+        ({"A4": 200, "A5": 200, "A6": 0}, "A6", "positive"),
+        ({"A4": 200, "A5": 200, "A6": 100}, "A7", "A4, A5, or A6"),
+        ({"A4": 200, "A5": 200, "A6": 100, "A7": 100}, "A6", "exactly A4, A5, and A6"),
+    ],
+)
+def test_training_schedule_rejects_invalid_ablation_or_epochs(
+    schedule: dict[str, int], ablation: str, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _training_config_for_ablation(
+            {"training": {"epochs_by_ablation": schedule}}, ablation
+        )
 
 
 def _write_sam3d(root: Path, view: str, person: str = "1") -> None:
