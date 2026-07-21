@@ -213,6 +213,105 @@ def test_rom_never_spans_independently_reset_runs_and_has_finite_backward() -> N
     assert prediction.grad is not None and torch.isfinite(prediction.grad).all()
 
 
+@pytest.mark.parametrize(
+    ("prediction_values", "target_values", "valid", "complete"),
+    [
+        ([[0.2, -0.3, 0.4]], [[0.1, -0.2, 0.3]], [[False, False, False]], [[True, True, True]]),
+        ([[0.2, 0.7, 1.1]], [[0.1, 0.4, 0.9]], [[True, True, True]], [[True, True, True]]),
+        ([[3.0, -3.0, 0.0, 3.1, -3.1]], [[3.1, -3.1, 0.0, 3.0, -3.0]], [[True, True, False, True, True]], [[True, True, True, True, True]]),
+        ([[0.2, 0.5, 0.7, 1.0]], [[0.1, 0.4, 0.8, 0.9]], [[True, True, False, False]], [[True, True, True, True]]),
+        ([[3.0, -3.0, -2.8]], [[3.1, -3.1, -2.9]], [[True, True, True]], [[True, True, True]]),
+        (
+            [[0.1, 0.4, 0.8, 1.0], [3.0, -3.0, 0.2, 0.6]],
+            [[0.0, 0.3, 0.7, 0.9], [3.1, -3.1, 0.1, 0.5]],
+            [[True, True, True, True], [True, True, False, True]],
+            [[True, True, True, True], [True, True, True, True]],
+        ),
+    ],
+    ids=("no_run", "one_run", "separated_runs", "padding", "wrapped_angles", "two_batch_members"),
+)
+def test_rom_matches_reference_values_and_gradients(
+    prediction_values: list[list[float]],
+    target_values: list[list[float]],
+    valid: list[list[bool]],
+    complete: list[list[bool]],
+) -> None:
+    prediction = torch.tensor(prediction_values, requires_grad=True)
+    prediction_reference = prediction.detach().clone().requires_grad_()
+    target = torch.tensor(target_values)
+    valid_tensor = torch.tensor(valid)
+    complete_tensor = torch.tensor(complete)
+
+    actual = _rom_loss(prediction, target, valid_tensor, complete_tensor)
+    expected = losses_module._rom_loss_reference(
+        prediction_reference, target, valid_tensor, complete_tensor
+    )
+
+    torch.testing.assert_close(actual, expected, rtol=1e-6, atol=1e-6)
+    if not actual.requires_grad:
+        assert not expected.requires_grad
+        assert prediction.grad is None
+        assert prediction_reference.grad is None
+        return
+    actual.backward()
+    expected.backward()
+    torch.testing.assert_close(
+        prediction.grad, prediction_reference.grad, rtol=1e-6, atol=1e-6
+    )
+
+
+def test_rom_multiframe_execution_never_converts_a_tensor_to_bool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prediction = torch.tensor([[3.0, -3.0, -2.8]], requires_grad=True)
+    target = torch.tensor([[3.1, -3.1, -2.9]])
+    valid = torch.ones_like(prediction, dtype=torch.bool)
+    complete = torch.ones_like(valid)
+
+    def fail_on_tensor_bool(_: torch.Tensor) -> bool:
+        raise AssertionError("ROM execution must not synchronize through Tensor.__bool__")
+
+    with monkeypatch.context() as context:
+        context.setattr(torch.Tensor, "__bool__", fail_on_tensor_bool)
+        loss = _rom_loss(prediction, target, valid, complete)
+
+    assert torch.isfinite(loss)
+
+
+def test_zero_weight_losses_preserve_reporting_and_active_gradients() -> None:
+    batch, output, spec = _batch_and_output()
+    fused = (output.fused_kpts.detach().clone() + 0.05).requires_grad_()
+    output = replace(output, fused_kpts=fused)
+    zero_weight_config = LossConfig(
+        circular_axial_rotation_weight=0.0,
+        so3_rotation_weight=0.0,
+        adaptive_temporal_acceleration_weight=0.0,
+        complete_cycle_rom_weight=0.0,
+    )
+    comparison_fused = fused.detach().clone().requires_grad_()
+    comparison_output = replace(output, fused_kpts=comparison_fused)
+
+    actual = compute_self_supervised_losses(output, batch, zero_weight_config, spec)
+    expected = compute_self_supervised_losses(comparison_output, batch, LossConfig(), spec)
+    expected_total = (
+        expected.corruption_recovery
+        + expected.high_consensus_identity
+        + expected.trial_bone_length
+        + expected.local_rigidity
+        + LossConfig().minimal_residual_weight * expected.minimal_residual
+    )
+
+    for name in expected.as_dict():
+        if name != "total":
+            torch.testing.assert_close(
+                getattr(actual, name), getattr(expected, name), rtol=1e-7, atol=1e-7
+            )
+    torch.testing.assert_close(actual.total, expected_total, rtol=1e-7, atol=1e-7)
+    actual.total.backward()
+    expected_total.backward()
+    torch.testing.assert_close(fused.grad, comparison_fused.grad, rtol=1e-7, atol=1e-7)
+
+
 def test_missing_complete_cycle_disables_rom() -> None:
     batch, output, spec = _batch_and_output()
     batch.pop("complete_cycle")

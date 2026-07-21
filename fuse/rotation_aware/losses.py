@@ -170,7 +170,8 @@ def _unwrap_circular(values: Tensor, valid: Tensor) -> Tensor:
     return unwrapped
 
 
-def _rom_loss(prediction: Tensor, target: Tensor, valid: Tensor, complete: Tensor) -> Tensor:
+def _rom_loss_reference(prediction: Tensor, target: Tensor, valid: Tensor, complete: Tensor) -> Tensor:
+    """Original per-frame ROM implementation retained for equivalence tests."""
     values: list[Tensor] = []
     for batch_index in range(prediction.shape[0]):
         usable = valid[batch_index] & complete[batch_index]
@@ -187,6 +188,39 @@ def _rom_loss(prediction: Tensor, target: Tensor, valid: Tensor, complete: Tenso
             target_run = _unwrap_circular(target[batch_index : batch_index + 1, index:end], run_valid)[0]
             values.append((pred_run.max() - pred_run.min() - target_run.max() + target_run.min()).square())
             index = end
+    if not values:
+        return prediction.new_zeros(())
+    return torch.stack(values).mean()
+
+
+def _unwrap_valid_run(values: Tensor) -> Tensor:
+    """Unwrap one contiguous valid angle run without per-frame branching."""
+    if values.shape[0] <= 1:
+        return values
+    steps = circular_diff(values[1:], values[:-1])
+    return torch.cat((values[:1], values[:1] + torch.cumsum(steps, dim=0)))
+
+
+def _contiguous_true_runs(mask: Tensor) -> list[tuple[int, int, int]]:
+    """Return [batch, start, end) spans after one host transfer of mask changes."""
+    padded = torch.nn.functional.pad(mask.bool(), (1, 1), value=False)
+    changes = (padded[:, 1:] ^ padded[:, :-1]).nonzero(as_tuple=False).cpu()
+    boundaries: dict[int, list[int]] = {}
+    for batch_index, frame_index in changes.tolist():
+        boundaries.setdefault(batch_index, []).append(frame_index)
+    return [
+        (batch_index, points[offset], points[offset + 1])
+        for batch_index, points in boundaries.items()
+        for offset in range(0, len(points), 2)
+    ]
+
+
+def _rom_loss(prediction: Tensor, target: Tensor, valid: Tensor, complete: Tensor) -> Tensor:
+    values: list[Tensor] = []
+    for batch_index, start, end in _contiguous_true_runs(valid & complete):
+        pred_run = _unwrap_valid_run(prediction[batch_index, start:end])
+        target_run = _unwrap_valid_run(target[batch_index, start:end])
+        values.append((pred_run.max() - pred_run.min() - target_run.max() + target_run.min()).square())
     if not values:
         return prediction.new_zeros(())
     return torch.stack(values).mean()
@@ -364,6 +398,8 @@ def compute_self_supervised_losses(
     }
     total = fused.new_zeros(())
     for name, value in values.items():
-        total = total + config.weights[name] * value
+        weight = config.weights[name]
+        if weight > 0:
+            total = total + weight * value
     total = torch.where(torch.isfinite(total), total, fused.new_zeros(()))
     return LossBreakdown(total=total, **values)
