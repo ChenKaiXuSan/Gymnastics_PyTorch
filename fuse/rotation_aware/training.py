@@ -99,10 +99,69 @@ def _prepare_window(
     skeleton: SkeletonSpec,
     corruption_config: CorruptionConfig | None,
     epoch: int = 0,
+    profiler: StageProfiler | None = None,
+    phase: str | None = None,
 ) -> dict[str, object]:
     """Prepare deterministic synthetic corruptions on the CPU."""
-    return _corrupt_batch(
-        batch, seed=seed, skeleton=skeleton, corruption_config=corruption_config, epoch=epoch
+    if profiler is None or phase is None:
+        return _corrupt_batch(
+            batch, seed=seed, skeleton=skeleton, corruption_config=corruption_config, epoch=epoch
+        )
+    with profiler.cpu_stage(f"{phase}.corruption"):
+        return _corrupt_batch(
+            batch, seed=seed, skeleton=skeleton, corruption_config=corruption_config, epoch=epoch
+        )
+
+
+def _profiled_source(
+    source: Iterable[Mapping[str, object]],
+    profiler: StageProfiler,
+    phase: str,
+    *,
+    stage: str = "acquisition",
+) -> Iterable[Mapping[str, object]]:
+    """Time source acquisition only when stage profiling is active."""
+    if not profiler.enabled:
+        yield from source
+        return
+    iterator = iter(source)
+    while True:
+        try:
+            with profiler.cpu_stage(f"{phase}.{stage}"):
+                batch = next(iterator)
+        except StopIteration:
+            return
+        yield batch
+
+
+def _stage_name(phase: str | None, stage: str) -> str:
+    return f"{phase}.{stage}" if phase else stage
+
+
+def _prepared_stream(
+    loader: Iterable[Mapping[str, object]],
+    skeleton: SkeletonSpec,
+    *,
+    seed: int,
+    corruption_config: CorruptionConfig | None,
+    epoch: int,
+    throughput: ThroughputConfig,
+    profiler: StageProfiler,
+    phase: str,
+) -> Iterable[dict[str, object]]:
+    def prepare(batch: Mapping[str, object]) -> dict[str, object]:
+        return _prepare_window(
+            batch,
+            seed=seed,
+            skeleton=skeleton,
+            corruption_config=corruption_config,
+            epoch=epoch,
+            profiler=profiler,
+            phase=phase,
+        )
+
+    return ordered_prefetch(
+        _profiled_source(loader, profiler, phase), prepare, depth=throughput.prefetch_batches
     )
 
 
@@ -114,11 +173,12 @@ def _forward_prepared(
     device: torch.device,
     non_blocking: bool = False,
     profiler: StageProfiler | None = None,
+    phase: str | None = None,
 ) -> tuple[FusionOutput, dict[str, object]]:
     """Transfer one prepared CPU batch and run the model and feature pipeline."""
     if profiler is None:
         profiler = StageProfiler(enabled=False, device=device)
-    with profiler.stage("transfer"):
+    with profiler.stage(_stage_name(phase, "transfer")):
         prepared = _tensor_batch(prepared, device, non_blocking=non_blocking)
     prepared = dict(prepared)
     face = _required_tensor(prepared, "face")
@@ -133,7 +193,7 @@ def _forward_prepared(
     effective_side_valid = valid_side.bool() & temporal_valid.bool()[..., None]
     safe_face = torch.where(effective_face_valid[..., None], face, torch.zeros_like(face))
     safe_side = torch.where(effective_side_valid[..., None], side, torch.zeros_like(side))
-    with profiler.stage("features"):
+    with profiler.stage(_stage_name(phase, "features")):
         face_features = _feature_bundle(safe_face, effective_face_valid, skeleton, dt)
         side_features = _feature_bundle(safe_side, effective_side_valid, skeleton, dt)
         face_trunk = extract_trunk_features(safe_face, effective_face_valid, skeleton, dt=dt)
@@ -141,7 +201,7 @@ def _forward_prepared(
         cross = compute_disagreement_features(
             safe_face, safe_side, face_trunk, side_trunk, effective_face_valid, effective_side_valid
         )
-    with profiler.stage("forward"):
+    with profiler.stage(_stage_name(phase, "forward")):
         output = model(
             safe_face, safe_side, face_features, side_features, cross, effective_face_valid, effective_side_valid,
             temporal_valid=temporal_valid, dt=dt,
@@ -159,7 +219,7 @@ def _forward_prepared(
     safe_reference_side = torch.where(
         effective_reference_side_valid[..., None], reference_side, torch.zeros_like(reference_side)
     )
-    with profiler.stage("reference_features"):
+    with profiler.stage(_stage_name(phase, "features")):
         reference_face_features = _feature_bundle(safe_reference_face, effective_reference_face_valid, skeleton, dt)
         reference_side_features = _feature_bundle(safe_reference_side, effective_reference_side_valid, skeleton, dt)
     prepared["valid_face"] = reference_valid_face.bool()
@@ -185,14 +245,22 @@ def _forward_window(
     device: torch.device,
     epoch: int = 0,
     profiler: StageProfiler | None = None,
+    phase: str | None = None,
 ) -> tuple[FusionOutput, dict[str, object]]:
     if profiler is None:
         profiler = StageProfiler(enabled=False, device=device)
-    with profiler.stage("corruption"):
-        prepared = _prepare_window(
-            batch, seed=seed, skeleton=skeleton, corruption_config=corruption_config, epoch=epoch
-        )
-    return _forward_prepared(model, prepared, skeleton, device=device, profiler=profiler)
+    prepared = _prepare_window(
+        batch,
+        seed=seed,
+        skeleton=skeleton,
+        corruption_config=corruption_config,
+        epoch=epoch,
+        profiler=profiler,
+        phase=phase,
+    )
+    return _forward_prepared(
+        model, prepared, skeleton, device=device, profiler=profiler, phase=phase
+    )
 
 
 def _mean_metrics(losses: list[dict[str, float]]) -> dict[str, float]:
@@ -282,19 +350,23 @@ def _prepared_validation_stream(
     seed: int,
     corruption_config: CorruptionConfig | None,
     throughput_config: ThroughputConfig | None = None,
+    profiler: StageProfiler | None = None,
+    phase: str = "validation_window",
 ) -> Iterable[dict[str, object]]:
     """Prepare validation inputs with bounded lookahead and no retained batch list."""
     throughput = throughput_config or ThroughputConfig()
+    profiler = profiler if profiler is not None else StageProfiler(enabled=False, device="cpu")
 
-    def prepare(batch: Mapping[str, object]) -> dict[str, object]:
-        return _prepare_window(
-            batch,
-            seed=int(seed),
-            skeleton=skeleton,
-            corruption_config=corruption_config,
-        )
-
-    return ordered_prefetch(loader, prepare, depth=throughput.prefetch_batches)
+    return _prepared_stream(
+        loader,
+        skeleton,
+        seed=int(seed),
+        corruption_config=corruption_config,
+        epoch=0,
+        throughput=throughput,
+        profiler=profiler,
+        phase=phase,
+    )
 
 
 def train_one_epoch(
@@ -326,17 +398,16 @@ def train_one_epoch(
     )
     torch.manual_seed(int(seed) + int(epoch))
     history: list[dict[str, float]] = []
-    def prepare(batch: Mapping[str, object]) -> dict[str, object]:
-        return _prepare_window(
-            batch,
-            seed=int(seed),
-            skeleton=skeleton,
-            corruption_config=corruption_config,
-            epoch=epoch,
-        )
-
-    for batch_index, prepared in enumerate(
-        ordered_prefetch(loader, prepare, depth=throughput.prefetch_batches)
+    train_window_phase = "train_window"
+    for prepared in _prepared_stream(
+        loader,
+        skeleton,
+        seed=int(seed),
+        corruption_config=corruption_config,
+        epoch=epoch,
+        throughput=throughput,
+        profiler=profiler,
+        phase=train_window_phase,
     ):
         optimizer.zero_grad(set_to_none=True)
         if throughput.pin_memory:
@@ -348,22 +419,31 @@ def train_one_epoch(
             device=target_device,
             non_blocking=throughput.non_blocking_transfer,
             profiler=profiler,
+            phase=train_window_phase,
         )
-        with profiler.stage("loss"):
+        with profiler.stage(f"{train_window_phase}.loss"):
             losses = compute_self_supervised_losses(output, prepared, window_config, skeleton)
         if not torch.isfinite(losses.total):
             raise FloatingPointError("self-supervised loss is non-finite")
         objective = _objective_with_zero_gradient_anchor(losses.total, model)
-        with profiler.stage("backward"):
+        with profiler.stage(f"{train_window_phase}.backward"):
             objective.backward()
-        with profiler.stage("optimizer"):
+        with profiler.stage(f"{train_window_phase}.optimizer"):
             optimizer.step()
         history.append({name: float(value.detach().cpu()) for name, value in losses.as_dict().items()})
     means = _mean_metrics(history)
     if complete_cycle_loader is not None and config.complete_cycle_rom_weight > 0:
         rom_values: list[float] = []
-        for prepared in ordered_prefetch(
-            complete_cycle_loader, prepare, depth=throughput.prefetch_batches
+        train_cycle_phase = "train_complete_cycle"
+        for prepared in _prepared_stream(
+            complete_cycle_loader,
+            skeleton,
+            seed=int(seed),
+            corruption_config=corruption_config,
+            epoch=epoch,
+            throughput=throughput,
+            profiler=profiler,
+            phase=train_cycle_phase,
         ):
             optimizer.zero_grad(set_to_none=True)
             if throughput.pin_memory:
@@ -375,16 +455,17 @@ def train_one_epoch(
                 device=target_device,
                 non_blocking=throughput.non_blocking_transfer,
                 profiler=profiler,
+                phase=train_cycle_phase,
             )
-            with profiler.stage("complete_cycle_loss"):
+            with profiler.stage(f"{train_cycle_phase}.loss"):
                 rom = compute_complete_cycle_rom_loss(output, prepared, config, skeleton)
             if not torch.isfinite(rom):
                 raise FloatingPointError("complete-cycle ROM loss is non-finite")
             weighted_rom = config.complete_cycle_rom_weight * rom
             objective = _objective_with_zero_gradient_anchor(weighted_rom, model)
-            with profiler.stage("complete_cycle_backward"):
+            with profiler.stage(f"{train_cycle_phase}.backward"):
                 objective.backward()
-            with profiler.stage("complete_cycle_optimizer"):
+            with profiler.stage(f"{train_cycle_phase}.optimizer"):
                 optimizer.step()
             rom_values.append(float(rom.detach().cpu()))
         if not rom_values:
@@ -427,11 +508,13 @@ def validate(
     )
     samples: list[tuple[str, dict[str, float], FusionOutput, dict[str, object]]] = []
 
-    def append_sample(output: FusionOutput, prepared: dict[str, object]) -> None:
+    def append_sample(
+        output: FusionOutput, prepared: dict[str, object], phase: str
+    ) -> None:
         window_ids = prepared.get("window_id")
         if not isinstance(window_ids, list) or len(window_ids) != 1 or not isinstance(window_ids[0], str):
             raise ValueError("validation samples require one stable string window_id")
-        with profiler.stage("loss"):
+        with profiler.stage(f"{phase}.loss"):
             losses = compute_self_supervised_losses(output, prepared, window_config, skeleton)
         samples.append(
             (
@@ -442,7 +525,9 @@ def validate(
             )
         )
 
-    def forward_prepared_batch(batch: Mapping[str, object]) -> tuple[FusionOutput, dict[str, object]]:
+    def forward_prepared_batch(
+        batch: Mapping[str, object], phase: str
+    ) -> tuple[FusionOutput, dict[str, object]]:
         prepared = pin_tensor_batch(batch) if throughput.pin_memory else dict(batch)
         return _forward_prepared(
             model,
@@ -451,11 +536,12 @@ def validate(
             device=target_device,
             non_blocking=throughput.non_blocking_transfer,
             profiler=profiler,
+            phase=phase,
         )
 
     with torch.no_grad():
         if scalar_forward and prepared_loader is None:
-            for batch in loader:
+            for batch in _profiled_source(loader, profiler, "validation_window"):
                 face = _required_tensor(batch, "face")
                 for sample_index in range(face.shape[0]):
                     output, prepared = _forward_window(
@@ -466,8 +552,9 @@ def validate(
                         corruption_config=corruption_config,
                         device=target_device,
                         profiler=profiler,
+                        phase="validation_window",
                     )
-                    append_sample(output, prepared)
+                    append_sample(output, prepared, "validation_window")
         else:
             batches = prepared_loader
             if batches is None:
@@ -477,21 +564,28 @@ def validate(
                     seed=int(seed),
                     corruption_config=corruption_config,
                     throughput_config=throughput,
+                    profiler=profiler,
+                    phase="validation_window",
+                )
+            else:
+                batches = _profiled_source(
+                    batches, profiler, "validation_window", stage="cache_acquisition"
                 )
             for batch in batches:
                 if scalar_forward:
                     face = _required_tensor(batch, "face")
                     for sample_index in range(face.shape[0]):
                         output, prepared = forward_prepared_batch(
-                            _single_sample(batch, sample_index)
+                            _single_sample(batch, sample_index), "validation_window"
                         )
-                        append_sample(output, prepared)
+                        append_sample(output, prepared, "validation_window")
                     continue
-                output, prepared = forward_prepared_batch(batch)
+                output, prepared = forward_prepared_batch(batch, "validation_window")
                 for sample_index in range(output.fused_kpts.shape[0]):
                     append_sample(
                         _single_output(output, sample_index),
                         _single_sample(prepared, sample_index),
+                        "validation_window",
                     )
     samples.sort(key=lambda value: value[0])
     means = _mean_metrics([metrics for _, metrics, _, _ in samples])
@@ -506,10 +600,21 @@ def validate(
                     seed=int(seed),
                     corruption_config=corruption_config,
                     throughput_config=throughput,
+                    profiler=profiler,
+                    phase="validation_complete_cycle",
+                )
+            else:
+                cycle_batches = _profiled_source(
+                    cycle_batches,
+                    profiler,
+                    "validation_complete_cycle",
+                    stage="cache_acquisition",
                 )
             for batch in cycle_batches:
-                output, prepared = forward_prepared_batch(batch)
-                with profiler.stage("complete_cycle_loss"):
+                output, prepared = forward_prepared_batch(
+                    batch, "validation_complete_cycle"
+                )
+                with profiler.stage("validation_complete_cycle.loss"):
                     rom = compute_complete_cycle_rom_loss(output, prepared, config, skeleton)
                 rom_values.append(float(rom.cpu()))
         if not rom_values:

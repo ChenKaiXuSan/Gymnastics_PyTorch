@@ -215,6 +215,7 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     assert checkpoint["provenance"]["training_config_hash"]
 
     tiny_config["training"]["device"] = "cuda:0"
+    tiny_config["performance"]["profile_stages"] = True
     config.write_text(yaml.safe_dump(tiny_config, sort_keys=False), encoding="utf-8")
     benchmark = importlib.import_module("analysis.benchmark_rotation_aware_training")
     profiler_enabled: list[bool] = []
@@ -251,6 +252,8 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     assert benchmark_report["config"]["effective_training"]["device"] == "cpu"
     assert profiler_enabled == [False, False, False, True]
     assert benchmark_report["stage_timings"]["mode"] == "untimed_diagnostic_epoch"
+    assert benchmark_report["stage_timings"]["configured_profile_stages"] is True
+    assert benchmark_report["stage_timings"]["measured_epochs"] == []
     assert benchmark_report["stage_timings"]["diagnostic"]["timed"] is False
     history = benchmark_report["validation_history"]
     assert [entry["epoch"] for entry in history["epochs"]] == [0, 1, 2]

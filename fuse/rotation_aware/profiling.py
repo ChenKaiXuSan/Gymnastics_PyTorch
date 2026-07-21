@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from contextlib import contextmanager
+from threading import Lock
 from typing import Iterator
 
 import torch
@@ -17,6 +18,7 @@ class StageProfiler:
         self.device = torch.device(device)
         self._wall: dict[str, list[float]] = {}
         self._events: dict[str, list[tuple[torch.cuda.Event, torch.cuda.Event]]] = {}
+        self._lock = Lock()
 
     @contextmanager
     def stage(self, name: str) -> Iterator[None]:
@@ -37,24 +39,45 @@ class StageProfiler:
         finally:
             if events is not None:
                 events[1].record(stream)
-                self._events.setdefault(name, []).append(events)
-            self._wall.setdefault(name, []).append(time.perf_counter() - started)
+            with self._lock:
+                if events is not None:
+                    self._events.setdefault(name, []).append(events)
+                self._wall.setdefault(name, []).append(time.perf_counter() - started)
+
+    @contextmanager
+    def cpu_stage(self, name: str) -> Iterator[None]:
+        """Collect CPU wall time without creating CUDA events, including in workers."""
+        if not self.enabled:
+            yield
+            return
+
+        started = time.perf_counter()
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._wall.setdefault(name, []).append(time.perf_counter() - started)
 
     def summary(self) -> dict[str, dict[str, float | int]]:
         if not self.enabled:
             return {}
-        if self._events:
+        with self._lock:
+            wall = {name: list(values) for name, values in self._wall.items()}
+            events_by_name = {
+                name: list(events) for name, events in self._events.items()
+            }
+        if events_by_name:
             torch.cuda.synchronize(self.device)
 
-        names = set(self._wall) | set(self._events)
+        names = set(wall) | set(events_by_name)
         summary: dict[str, dict[str, float | int]] = {}
         for name in sorted(names):
-            wall = self._wall.get(name, [])
+            wall_values = wall.get(name, [])
             values: dict[str, float | int] = {
-                "calls": len(wall),
-                "wall_seconds": float(sum(wall)),
+                "calls": len(wall_values),
+                "wall_seconds": float(sum(wall_values)),
             }
-            events = self._events.get(name, [])
+            events = events_by_name.get(name, [])
             if events:
                 values["cuda_seconds"] = float(
                     sum(begin.elapsed_time(end) for begin, end in events) / 1000.0

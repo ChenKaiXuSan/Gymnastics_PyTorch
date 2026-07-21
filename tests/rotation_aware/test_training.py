@@ -214,6 +214,31 @@ def test_stage_profiler_collects_cpu_wall_time() -> None:
     assert StageProfiler(enabled=False, device=torch.device("cpu")).summary() == {}
 
 
+def test_stage_profiler_cpu_stage_is_worker_safe_and_json_serializable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event_calls: list[object] = []
+
+    class UnexpectedEvent:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            event_calls.append((args, kwargs))
+
+    monkeypatch.setattr(torch.cuda, "Event", UnexpectedEvent)
+    profiler = StageProfiler(enabled=True, device=torch.device("cuda:0"))
+
+    def prepare(value: int) -> int:
+        with profiler.cpu_stage("train_window.corruption"):
+            return value * 2
+
+    assert list(ordered_prefetch(range(4), prepare, depth=2)) == [0, 2, 4, 6]
+    summary = profiler.summary()
+
+    assert event_calls == []
+    assert summary["train_window.corruption"]["calls"] == 4
+    assert "cuda_seconds" not in summary["train_window.corruption"]
+    json.dumps(summary)
+
+
 def test_stage_profiler_uses_profiler_device_stream(monkeypatch: pytest.MonkeyPatch) -> None:
     device = torch.device("cuda:1")
     stream = object()
@@ -355,6 +380,104 @@ def test_a6_training_prefetches_complete_cycle_batches_with_configured_transfer(
     assert [batch["face"].shape[1] for batch in pin_calls] == [5, 129]
     assert non_blocking_values == [True, True]
     assert optimizer.step_count == 2
+
+
+def test_profiled_training_and_uncached_validation_use_distinct_phase_stages() -> None:
+    spec = _spec()
+    model = RotationAwareFusionModel(spec, hidden_channels=8)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    profiler = StageProfiler(enabled=True, device=torch.device("cpu"))
+    throughput = ThroughputConfig(prefetch_batches=1)
+
+    train_one_epoch(
+        model,
+        _loader(count=1, batch_size=1),
+        optimizer,
+        spec,
+        complete_cycle_loader=[_complete_cycle_batch()],
+        seed=3,
+        profiler=profiler,
+        throughput_config=throughput,
+    )
+    validate(
+        model,
+        _loader(count=1, batch_size=1),
+        spec,
+        complete_cycle_loader=[_complete_cycle_batch()],
+        seed=3,
+        profiler=profiler,
+        throughput_config=throughput,
+    )
+    stages = profiler.summary()
+
+    expected = {
+        "train_window.acquisition",
+        "train_window.corruption",
+        "train_window.transfer",
+        "train_window.features",
+        "train_window.forward",
+        "train_window.loss",
+        "train_window.backward",
+        "train_window.optimizer",
+        "train_complete_cycle.acquisition",
+        "train_complete_cycle.corruption",
+        "train_complete_cycle.transfer",
+        "train_complete_cycle.features",
+        "train_complete_cycle.forward",
+        "train_complete_cycle.loss",
+        "train_complete_cycle.backward",
+        "train_complete_cycle.optimizer",
+        "validation_window.acquisition",
+        "validation_window.corruption",
+        "validation_window.transfer",
+        "validation_window.features",
+        "validation_window.forward",
+        "validation_window.loss",
+        "validation_complete_cycle.acquisition",
+        "validation_complete_cycle.corruption",
+        "validation_complete_cycle.transfer",
+        "validation_complete_cycle.features",
+        "validation_complete_cycle.forward",
+        "validation_complete_cycle.loss",
+    }
+    assert expected <= stages.keys()
+    assert not {"transfer", "features", "forward", "loss", "complete_cycle_loss"} & stages.keys()
+
+
+def test_profiled_cached_validation_records_cache_acquisition_and_phase_compute() -> None:
+    spec = _spec()
+    window_loader = list(_loader(count=1, batch_size=1))
+    cycle_loader = [_complete_cycle_batch()]
+    cached_windows = prepare_validation_batches(window_loader, spec, seed=3, corruption_config=None)
+    cached_cycles = prepare_validation_batches(cycle_loader, spec, seed=3, corruption_config=None)
+    profiler = StageProfiler(enabled=True, device=torch.device("cpu"))
+
+    validate(
+        RotationAwareFusionModel(spec, hidden_channels=8),
+        window_loader,
+        spec,
+        complete_cycle_loader=cycle_loader,
+        seed=3,
+        profiler=profiler,
+        prepared_loader=cached_windows,
+        prepared_complete_cycle_loader=cached_cycles,
+    )
+    stages = profiler.summary()
+
+    expected = {
+        "validation_window.cache_acquisition",
+        "validation_window.transfer",
+        "validation_window.features",
+        "validation_window.forward",
+        "validation_window.loss",
+        "validation_complete_cycle.cache_acquisition",
+        "validation_complete_cycle.transfer",
+        "validation_complete_cycle.features",
+        "validation_complete_cycle.forward",
+        "validation_complete_cycle.loss",
+    }
+    assert expected <= stages.keys()
+    assert not {"validation_window.acquisition", "validation_window.corruption"} & stages.keys()
 
 
 def test_fully_masked_window_and_cycle_advance_adam_with_zero_gradients() -> None:

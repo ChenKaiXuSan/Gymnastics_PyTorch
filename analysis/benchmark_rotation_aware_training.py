@@ -241,14 +241,10 @@ def _run_epoch(
     *,
     epoch: int,
     device: torch.device,
-    profiler_enabled: bool | None = None,
+    profiler_enabled: bool = False,
 ) -> tuple[dict[str, float], dict[str, Any], StageProfiler]:
     profiler = StageProfiler(
-        enabled=(
-            workload.throughput_config.profile_stages
-            if profiler_enabled is None
-            else profiler_enabled
-        ),
+        enabled=profiler_enabled,
         device=device,
     )
     train_metrics = train_one_epoch(
@@ -509,13 +505,12 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
 
     for epoch in range(args.warmup_epochs):
         _synchronize(device)
-        _run_epoch(workload, epoch=epoch, device=device)
+        _run_epoch(workload, epoch=epoch, device=device, profiler_enabled=False)
         _synchronize(device)
         record_validation_history(epoch, "warmup")
 
     epoch_timings: list[float] = []
     measured_peak_cuda_memory_bytes: list[int] = []
-    measured_stage_timings: list[dict[str, dict[str, float | int]]] = []
     train_metrics_by_epoch: list[dict[str, float]] = []
     validation_metrics_by_epoch: list[dict[str, Any]] = []
     for measurement_index in range(args.measured_epochs):
@@ -525,21 +520,20 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         _synchronize(device)
         started = time.perf_counter()
         train_metrics, validation_metrics, profiler = _run_epoch(
-            workload, epoch=epoch, device=device
+            workload, epoch=epoch, device=device, profiler_enabled=False
         )
         _synchronize(device)
         elapsed = time.perf_counter() - started
         if not math.isfinite(elapsed) or elapsed <= 0:
             raise FloatingPointError("benchmark epoch time must be finite and positive")
-        stages = profiler.summary() if workload.throughput_config.profile_stages else {}
-        _require_finite(stages, "measured_stages")
+        if profiler.summary() != {}:
+            raise AssertionError("timed benchmark epochs must not collect stage timings")
         measured_peak_cuda_memory_bytes.append(
             int(torch.cuda.max_memory_allocated(device))
             if device.type == "cuda"
             else 0
         )
         epoch_timings.append(elapsed)
-        measured_stage_timings.append(stages)
         train_metrics_by_epoch.append(train_metrics)
         validation_metrics_by_epoch.append(validation_metrics)
         record_validation_history(epoch, "measured")
@@ -569,35 +563,27 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     }
     _require_finite(validation_history, "validation_history")
     _require_validation_acceptance(validation_history)
-    if workload.throughput_config.profile_stages:
-        stage_timings: dict[str, object] = {
-            "mode": "configured_measured_epochs",
-            "configured_profile_stages": True,
-            "measured_epochs": measured_stage_timings,
-            "diagnostic": None,
-        }
-    else:
-        diagnostic_epoch = args.warmup_epochs + args.measured_epochs
-        _synchronize(device)
-        _, _, diagnostic_profiler = _run_epoch(
-            workload,
-            epoch=diagnostic_epoch,
-            device=device,
-            profiler_enabled=True,
-        )
-        _synchronize(device)
-        diagnostic_stages = diagnostic_profiler.summary()
-        _require_finite(diagnostic_stages, "diagnostic_stages")
-        stage_timings = {
-            "mode": "untimed_diagnostic_epoch",
-            "configured_profile_stages": False,
-            "measured_epochs": measured_stage_timings,
-            "diagnostic": {
-                "epoch": diagnostic_epoch,
-                "timed": False,
-                "stages": diagnostic_stages,
-            },
-        }
+    diagnostic_epoch = args.warmup_epochs + args.measured_epochs
+    _synchronize(device)
+    _, _, diagnostic_profiler = _run_epoch(
+        workload,
+        epoch=diagnostic_epoch,
+        device=device,
+        profiler_enabled=True,
+    )
+    _synchronize(device)
+    diagnostic_stages = diagnostic_profiler.summary()
+    _require_finite(diagnostic_stages, "diagnostic_stages")
+    stage_timings: dict[str, object] = {
+        "mode": "untimed_diagnostic_epoch",
+        "configured_profile_stages": workload.throughput_config.profile_stages,
+        "measured_epochs": [],
+        "diagnostic": {
+            "epoch": diagnostic_epoch,
+            "timed": False,
+            "stages": diagnostic_stages,
+        },
+    }
     device_report: dict[str, Any] = {
         "resolved": str(device),
         "type": device.type,

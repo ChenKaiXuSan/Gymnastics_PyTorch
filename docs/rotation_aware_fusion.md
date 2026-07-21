@@ -86,11 +86,11 @@ complete epoch wall time, which includes the configured complete-cycle and
 validation work; it is not raw per-loader throughput. It requires at least two
 measured epochs and synchronizes CUDA at each timing boundary.
 
-Warmup and measured epochs use `performance.profile_stages` exactly as the
-training command does. When that setting is false, the report captures stage
-timings in one separately labeled, untimed diagnostic profiled epoch after the
-timing and peak-memory windows. When it is true, stage timings come from the
-configured measured workload.
+Warmup and measured epochs always disable stage profiling so timing and peak
+memory acceptance exclude profiling instrumentation. The report separately
+records the configured `performance.profile_stages` value and captures stage
+timings in one labeled, untimed diagnostic profiled epoch after the timing and
+peak-memory windows.
 
 After every warmup and measured trained epoch, the benchmark validates the
 same model state on the resolved device and cache through both the retained
