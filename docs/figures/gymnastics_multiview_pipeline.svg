@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">マルチビュー体操動作解析フロー</title>
+  <desc id="desc">正面・側面映像からSAM3D-Body、時間同期、三角測量による3D疑似参照、ベースライン融合、回転感知型自己教師あり融合、MPJPE評価、動作分類までを示すフローチャート。</desc>
+  <defs>
+    <marker id="arrow-grey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4b5563" />
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4f78a8" />
+    </marker>
+    <marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b87800" />
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5d8f58" />
+    </marker>
+    <style>
+      text { font-family: "Noto Sans CJK JP", "Yu Gothic", "Hiragino Kaku Gothic ProN", sans-serif; fill: #1f2937; }
+      .container { stroke-width: 2; }
+      .node { stroke-width: 1.6; }
+      .label { font-size: 14px; text-anchor: middle; dominant-baseline: middle; }
+      .small { font-size: 12px; }
+      .lane-title { font-size: 15px; font-weight: 700; text-anchor: middle; dominant-baseline: middle; }
+      .edge { fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1600" height="900" fill="#ffffff" />
+  <text x="800" y="45" font-size="24" font-weight="700" text-anchor="middle">マルチビュー体操動作解析フロー</text>
+
+  <!-- Containers -->
+  <rect class="container" x="40" y="80" width="210" height="500" rx="12" fill="#f5f5f5" stroke="#666666" />
+  <line x1="40" y1="112" x2="250" y2="112" stroke="#666666" stroke-width="2" />
+  <text class="lane-title" x="145" y="96">共通処理</text>
+
+  <rect class="container" x="300" y="80" width="1000" height="160" rx="12" fill="#eaf4e9" stroke="#82b366" />
+  <line x1="300" y1="112" x2="1300" y2="112" stroke="#82b366" stroke-width="2" />
+  <text class="lane-title" x="800" y="96">評価用疑似参照の生成</text>
+
+  <rect class="container" x="520" y="280" width="800" height="190" rx="12" fill="#eef5fd" stroke="#6c8ebf" />
+  <line x1="520" y1="316" x2="1320" y2="316" stroke="#6c8ebf" stroke-width="2" />
+  <text class="lane-title" x="920" y="298">ベースライン手法：sim3_face_stable_smooth_kpt</text>
+
+  <rect class="container" x="520" y="510" width="800" height="280" rx="12" fill="#fff4e8" stroke="#d79b00" />
+  <line x1="520" y1="546" x2="1320" y2="546" stroke="#d79b00" stroke-width="2" />
+  <text class="lane-title" x="920" y="528">提案手法：回転感知型自己教師ありマルチビュー融合</text>
+
+  <!-- Data-flow connectors -->
+  <path class="edge" d="M145 195 V235" stroke="#4b5563" marker-end="url(#arrow-grey)" />
+  <path class="edge" d="M145 295 V335" stroke="#4b5563" marker-end="url(#arrow-grey)" />
+  <path class="edge" d="M145 405 V445" stroke="#4b5563" marker-end="url(#arrow-grey)" />
+  <path class="edge" d="M230 480 H270 V170 H330" stroke="#4b5563" marker-end="url(#arrow-grey)" />
+  <rect x="251" y="302" width="38" height="24" rx="5" fill="#ffffff" />
+  <text x="270" y="318" class="small" text-anchor="middle">2D</text>
+  <path class="edge" d="M230 498 H270 V410 H300" stroke="#4b5563" marker-end="url(#arrow-grey)" />
+  <rect x="232" y="435" width="66" height="38" rx="5" fill="#ffffff" />
+  <text x="265" y="449" class="small" text-anchor="middle">3D</text>
+  <text x="265" y="465" class="small" text-anchor="middle">+ offset</text>
+
+  <path class="edge" d="M480 170 H530" stroke="#5d8f58" marker-end="url(#arrow-green)" />
+  <path class="edge" d="M680 170 H730" stroke="#5d8f58" marker-end="url(#arrow-green)" />
+  <path class="edge" d="M815 205 V260 H1465 V350" stroke="#5d8f58" marker-end="url(#arrow-green)" />
+  <rect x="1080" y="247" width="76" height="24" rx="5" fill="#ffffff" />
+  <text x="1118" y="263" class="small" text-anchor="middle" fill="#3d6b3a">評価基準</text>
+
+  <path class="edge" d="M470 390 H540" stroke="#4f78a8" marker-end="url(#arrow-blue)" />
+  <path class="edge" d="M470 430 H500 V615 H540" stroke="#b87800" marker-end="url(#arrow-orange)" />
+  <path class="edge" d="M670 385 H690" stroke="#4f78a8" marker-end="url(#arrow-blue)" />
+  <path class="edge" d="M840 385 H860" stroke="#4f78a8" marker-end="url(#arrow-blue)" />
+  <path class="edge" d="M990 385 H1010" stroke="#4f78a8" marker-end="url(#arrow-blue)" />
+  <path class="edge" d="M1140 385 H1160" stroke="#4f78a8" marker-end="url(#arrow-blue)" />
+  <path class="edge" d="M690 615 H710" stroke="#b87800" marker-end="url(#arrow-orange)" />
+  <path class="edge" d="M870 615 H890" stroke="#b87800" marker-end="url(#arrow-orange)" />
+  <path class="edge" d="M1120 615 H1150" stroke="#b87800" marker-end="url(#arrow-orange)" />
+  <path class="edge" d="M1000 690 V655" stroke="#b87800" stroke-dasharray="8 6" marker-end="url(#arrow-orange)" />
+  <rect x="1010" y="661" width="62" height="22" rx="4" fill="#ffffff" />
+  <text x="1041" y="676" class="small" text-anchor="middle" fill="#8a4f00">学習制約</text>
+
+  <path class="edge" d="M1300 385 H1380" stroke="#4f78a8" stroke-width="3" marker-end="url(#arrow-blue)" />
+  <path class="edge" d="M1300 615 H1350 V462 H1380" stroke="#b87800" stroke-width="3" marker-end="url(#arrow-orange)" />
+  <path class="edge" d="M1465 500 V620" stroke="#5d8f58" stroke-width="3" marker-end="url(#arrow-green)" />
+
+  <!-- Shared processing nodes -->
+  <path class="node" d="M72 135 H230 L218 195 H60 Z" fill="#f5f5f5" stroke="#666666" />
+  <text class="label" x="145" y="165">正面・側面映像</text>
+  <rect class="node" x="60" y="235" width="170" height="60" rx="10" fill="#f5f5f5" stroke="#666666" />
+  <text class="label" x="145" y="265" font-weight="700">SAM3D-Body</text>
+  <rect class="node" x="60" y="335" width="170" height="70" rx="10" fill="#f5f5f5" stroke="#666666" />
+  <text class="label" x="145" y="370">2D / 3D関節点抽出</text>
+  <rect class="node" x="60" y="445" width="170" height="70" rx="10" fill="#f5f5f5" stroke="#666666" />
+  <text class="label" x="145" y="474">時間同期・</text>
+  <text class="label" x="145" y="494">動作周期分割</text>
+
+  <!-- Pseudo-reference nodes -->
+  <rect class="node" x="330" y="140" width="150" height="60" rx="10" fill="#d5e8d4" stroke="#82b366" />
+  <text class="label" x="405" y="170">2D関節点</text>
+  <rect class="node" x="530" y="140" width="150" height="60" rx="10" fill="#d5e8d4" stroke="#82b366" />
+  <text class="label" x="605" y="170">三角測量</text>
+  <path class="node" d="M730 135 H900 V190 Q858 215 815 195 Q772 175 730 195 Z" fill="#d5e8d4" stroke="#82b366" />
+  <text class="label" x="815" y="168" font-weight="700">3D疑似参照</text>
+  <rect class="node" x="950" y="140" width="310" height="60" rx="10" fill="#ffffff" stroke="#82b366" stroke-dasharray="8 6" />
+  <text class="label" x="1105" y="162" fill="#3d6b3a">評価時のみ使用</text>
+  <text class="label small" x="1105" y="183" fill="#3d6b3a">学習・モデル選択には不使用</text>
+
+  <!-- Fusion input -->
+  <path class="node" d="M320 360 H470 L450 460 H300 Z" fill="#f5f5f5" stroke="#666666" />
+  <text class="label" x="385" y="397" font-weight="700">正面・側面3D関節点</text>
+  <text class="label small" x="385" y="425">+ offset_side_to_face</text>
+
+  <!-- Baseline lane -->
+  <rect class="node" x="540" y="350" width="130" height="70" rx="10" fill="#dae8fc" stroke="#6c8ebf" />
+  <text class="label" x="605" y="385">安定関節の選択</text>
+  <rect class="node" x="690" y="350" width="150" height="70" rx="10" fill="#dae8fc" stroke="#6c8ebf" />
+  <text class="label small" x="765" y="376">side → face</text>
+  <text class="label" x="765" y="397">Sim3位置合わせ</text>
+  <rect class="node" x="860" y="350" width="130" height="70" rx="10" fill="#dae8fc" stroke="#6c8ebf" />
+  <text class="label" x="925" y="385">平均融合</text>
+  <rect class="node" x="1010" y="350" width="130" height="70" rx="10" fill="#dae8fc" stroke="#6c8ebf" />
+  <text class="label" x="1075" y="385">時間平滑化</text>
+  <rect class="node" x="1160" y="350" width="140" height="70" rx="10" fill="#cfe2f3" stroke="#3d85c6" />
+  <text class="label" x="1230" y="385" font-weight="700">融合3D姿勢</text>
+
+  <!-- Proposed lane -->
+  <rect class="node" x="540" y="580" width="150" height="70" rx="10" fill="#ffe6cc" stroke="#d79b00" />
+  <text class="label small" x="615" y="606">身体中心座標への</text>
+  <text class="label" x="615" y="627">正規化</text>
+  <rect class="node" x="710" y="580" width="160" height="70" rx="10" fill="#ffe6cc" stroke="#d79b00" />
+  <text class="label" x="790" y="606">回転・視点間</text>
+  <text class="label" x="790" y="627">差分特徴</text>
+  <rect class="node" x="890" y="575" width="230" height="80" rx="10" fill="#ffe6cc" stroke="#d79b00" />
+  <text class="label" x="1005" y="598" font-weight="700">視点交換不変の</text>
+  <text class="label small" x="1005" y="620">残差時系列畳み込み</text>
+  <text class="label small" x="1005" y="640">融合モデル</text>
+  <rect class="node" x="1150" y="580" width="150" height="70" rx="10" fill="#f9cb9c" stroke="#b45f06" />
+  <text class="label" x="1225" y="615" font-weight="700">融合3D姿勢</text>
+  <rect class="node" x="820" y="690" width="360" height="60" rx="10" fill="#ffffff" stroke="#d79b00" stroke-dasharray="8 6" />
+  <text class="label" x="1000" y="712" fill="#8a4f00">自己教師あり学習</text>
+  <text class="label small" x="1000" y="734" fill="#8a4f00">破損・合意性・幾何・時間的一貫性・周期回転</text>
+
+  <!-- Evaluation and downstream -->
+  <rect class="node" x="1380" y="350" width="170" height="150" rx="12" fill="#d5e8d4" stroke="#82b366" stroke-width="2.5" />
+  <text class="label" x="1465" y="402" font-weight="700">3D疑似参照との比較</text>
+  <line x1="1405" y1="430" x2="1525" y2="430" stroke="#82b366" stroke-width="1.5" />
+  <text class="label" x="1465" y="461" font-size="18" font-weight="700">MPJPE</text>
+  <rect class="node" x="1380" y="620" width="170" height="80" rx="10" fill="#d5e8d4" stroke="#82b366" />
+  <text class="label" x="1465" y="650">動作解析・分類</text>
+  <text class="label small" x="1465" y="676">（任意）</text>
+
+  <!-- Legend -->
+  <rect x="40" y="650" width="210" height="150" fill="#ffffff" stroke="#999999" />
+  <text x="145" y="673" font-size="13" font-weight="700" text-anchor="middle">凡例</text>
+  <rect x="55" y="685" width="28" height="16" fill="#f5f5f5" stroke="#666666" />
+  <text x="95" y="698" class="small">共通処理</text>
+  <rect x="55" y="712" width="28" height="16" fill="#dae8fc" stroke="#6c8ebf" />
+  <text x="95" y="725" class="small">ベースライン</text>
+  <rect x="55" y="739" width="28" height="16" fill="#ffe6cc" stroke="#d79b00" />
+  <text x="95" y="752" class="small">提案手法</text>
+  <rect x="55" y="766" width="28" height="16" fill="#d5e8d4" stroke="#82b366" />
+  <text x="95" y="779" class="small">評価</text>
+</svg>
