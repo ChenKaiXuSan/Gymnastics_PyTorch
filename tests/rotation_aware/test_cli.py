@@ -1095,7 +1095,10 @@ def test_evaluate_combines_a4_a5_a6_runs_with_deterministic_a0_a3(
         )
     config = tmp_path / "config.yaml"
     config.write_text(
-        f"paths:\n  sam3d_root: {tmp_path / 'sam3d'}\n  split_cycle_root: {tmp_path / 'split'}\n  output_root: {out}\n  skeleton: configs/fuse/skeleton_mhr70.yaml\n  fold_json: {tmp_path / 'fold.json'}"
+        # old_fuse_root must be pinned inside tmp_path: it otherwise defaults to
+        # the repository's real logs/fuse_experiments and this test then picks up
+        # the nine deterministic methods stored there for person_1.
+        f"paths:\n  sam3d_root: {tmp_path / 'sam3d'}\n  split_cycle_root: {tmp_path / 'split'}\n  output_root: {out}\n  skeleton: configs/fuse/skeleton_mhr70.yaml\n  old_fuse_root: {tmp_path / 'old_fuse'}\n  fold_json: {tmp_path / 'fold.json'}"
     )
 
     assert (
