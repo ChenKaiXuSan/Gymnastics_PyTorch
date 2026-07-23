@@ -862,7 +862,7 @@ Run:
 
 ```bash
 conda run -n gymnastic python -m pytest tests/test_sam3d_inference_monitor.py -q
-conda run -n gymnastic python -m pytest tests/test_sam3d_body_rotation.py tests/test_sam3d_inference_monitor.py -q
+conda run -n sam_3d_body python -m pytest tests/test_sam3d_body_rotation.py -q
 ```
 
 Expected: all tests pass, with no real SMTP connection.
