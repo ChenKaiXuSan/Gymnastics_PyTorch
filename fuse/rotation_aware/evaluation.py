@@ -128,18 +128,78 @@ def _trunk(
     )
 
 
+EXTERNAL_ALIGNMENT_MODES = ("root", "similarity", "procrustes")
+DEFAULT_EXTERNAL_ALIGNMENT = "similarity"
+
+
+def _fit_similarity(src: np.ndarray, dst: np.ndarray) -> tuple[float, np.ndarray, np.ndarray]:
+    """Least-squares (Umeyama) similarity mapping ``src`` onto ``dst``."""
+    src_mean, dst_mean = src.mean(axis=0), dst.mean(axis=0)
+    src_c, dst_c = src - src_mean, dst - dst_mean
+    variance = float((src_c**2).sum())
+    if variance < 1e-12:
+        return 1.0, np.eye(3), dst_mean - src_mean
+    u, singular, vt = np.linalg.svd(src_c.T @ dst_c)
+    sign = float(np.sign(np.linalg.det(u @ vt)))
+    rotation = u @ np.diag([1.0, 1.0, sign]) @ vt
+    scale = float(singular[0] + singular[1] + sign * singular[2]) / variance
+    return scale, rotation, dst_mean - scale * (src_mean @ rotation)
+
+
+def _align_external(
+    candidate: np.ndarray,
+    reference: np.ndarray,
+    usable: np.ndarray,
+    alignment: str,
+) -> np.ndarray:
+    """Remove the static world-frame and scale mismatch before measuring error.
+
+    The fused keypoints live in the SAM3D world frame while the triangulated
+    reference lives in the calibrated camera frame; the two differ by a fixed
+    rotation and a per-person scale. ``root`` leaves that difference inside the
+    error and makes the metric nearly blind to the fusion itself.
+    """
+    if alignment == "similarity":
+        if usable.sum() < 3:
+            return candidate
+        scale, rotation, translation = _fit_similarity(
+            candidate[usable], reference[usable]
+        )
+        return scale * (candidate @ rotation) + translation
+    aligned = np.array(candidate, copy=True)
+    for frame in range(candidate.shape[0]):
+        frame_usable = usable[frame]
+        if frame_usable.sum() < 3:
+            continue
+        scale, rotation, translation = _fit_similarity(
+            candidate[frame][frame_usable], reference[frame][frame_usable]
+        )
+        aligned[frame] = scale * (candidate[frame] @ rotation) + translation
+    return aligned
+
+
 def _external_errors(
     candidate: np.ndarray,
     reference: np.ndarray,
     skeleton: SkeletonSpec,
     candidate_valid: np.ndarray | None = None,
+    alignment: str = DEFAULT_EXTERNAL_ALIGNMENT,
 ) -> tuple[np.ndarray, np.ndarray]:
+    if alignment not in EXTERNAL_ALIGNMENT_MODES:
+        raise ValueError(
+            f"alignment must be one of {EXTERNAL_ALIGNMENT_MODES}: {alignment}"
+        )
     candidate, reference = (
         np.asarray(candidate, dtype=np.float64),
         np.asarray(reference, dtype=np.float64),
     )
     if candidate.shape != reference.shape:
         raise ValueError("candidate and external reference shapes must match")
+    if alignment != "root":
+        usable = np.isfinite(candidate).all(axis=-1) & np.isfinite(reference).all(axis=-1)
+        if candidate_valid is not None:
+            usable = usable & np.asarray(candidate_valid, dtype=bool)
+        candidate = _align_external(candidate, reference, usable, alignment)
     hip_indices: list[int] = []
     for role_name in ("left_hip", "right_hip"):
         role = skeleton.role(role_name)
@@ -181,9 +241,12 @@ def external_metrics_from_reference(
     reference: np.ndarray,
     skeleton: SkeletonSpec,
     candidate_valid: np.ndarray | None = None,
+    alignment: str = DEFAULT_EXTERNAL_ALIGNMENT,
 ) -> tuple[dict[str, float], list[dict[str, float]]]:
     """Optional pseudo-GT metrics; this is intentionally isolated from training."""
-    errors, valid = _external_errors(candidate, reference, skeleton, candidate_valid)
+    errors, valid = _external_errors(
+        candidate, reference, skeleton, candidate_valid, alignment=alignment
+    )
     values = errors[valid]
     summary = {
         name: (float(fn(values)) if len(values) else float("nan"))
@@ -354,6 +417,7 @@ def evaluate_person_trials(
     sequences: Sequence[MethodSequence],
     skeleton: SkeletonSpec,
     references: Mapping[str, np.ndarray] | None = None,
+    alignment: str = DEFAULT_EXTERNAL_ALIGNMENT,
 ) -> EvaluationReport:
     grouped: dict[str, list[MethodSequence]] = {}
     for sequence in sequences:
@@ -406,7 +470,11 @@ def evaluate_person_trials(
                         f"external reference length/shape mismatch for {cycle.trial_id}"
                     )
                 errors, mask = _external_errors(
-                    cycle.kpts_world, reference, skeleton, _valid(cycle)
+                    cycle.kpts_world,
+                    reference,
+                    skeleton,
+                    _valid(cycle),
+                    alignment=alignment,
                 )
                 external_errors.append(errors)
                 external_masks.append(mask)

@@ -40,6 +40,8 @@ from .dataset import (
     collate_pose_pair_windows,
 )
 from .evaluation import (
+    DEFAULT_EXTERNAL_ALIGNMENT,
+    EXTERNAL_ALIGNMENT_MODES,
     discover_method_sequences,
     evaluate_person_trials,
     load_triangulated_references,
@@ -886,6 +888,7 @@ def _cmd_evaluate(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
     if not args.run_id:
         raise ValueError("evaluate requires explicit --run-id")
     run_ids = [args.run_id] if isinstance(args.run_id, str) else list(args.run_id)
+    alignment = str(getattr(args, "alignment", DEFAULT_EXTERNAL_ALIGNMENT))
     if _config_has_protocol(config):
         for run_id in run_ids:
             _validate_config_protocol_run_id(run_id, config)
@@ -962,7 +965,11 @@ def _cmd_evaluate(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
                 else None
             )
             report = evaluate_person_trials(
-                str(person), new_sequences, skeleton, references=references
+                str(person),
+                new_sequences,
+                skeleton,
+                references=references,
+                alignment=alignment,
             )
             rows.extend(report.person_metrics)
             joints.extend(report.joint_metrics)
@@ -1028,6 +1035,7 @@ def _cmd_evaluate(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
                 "person_metrics": rows,
                 "joint_metrics": joints,
                 "method_availability": availability,
+                "external_alignment": alignment,
                 "no_pseudo_gt_training": True,
             },
             indent=2,
@@ -1057,6 +1065,17 @@ def make_parser() -> argparse.ArgumentParser:
             )
         if name == "evaluate":
             child.add_argument("--run-id", action="append")
+            child.add_argument(
+                "--alignment",
+                default=DEFAULT_EXTERNAL_ALIGNMENT,
+                choices=list(EXTERNAL_ALIGNMENT_MODES),
+                help=(
+                    "Alignment applied before comparing against the triangulated "
+                    "pseudo-reference. 'similarity' (default) removes the static "
+                    "world-frame and scale mismatch per sequence; 'root' is the "
+                    "legacy pelvis-only behaviour."
+                ),
+            )
         if name == "infer":
             child.add_argument("--checkpoint")
     return parser

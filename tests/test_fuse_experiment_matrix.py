@@ -7,13 +7,81 @@ from fuse.experiment_matrix import (
     bodypart_weights,
     estimate_joint_weights,
     estimate_sim3,
+    fit_similarity,
     fuse_weighted,
     iter_person_ids,
+    joint_errors,
     load_split_alignment_offset,
     root_align_to_reference,
     sam3d_person_root,
     smooth_sequence,
 )
+
+
+def _rotation_z(angle: float) -> np.ndarray:
+    cos, sin = np.cos(angle), np.sin(angle)
+    return np.array([[cos, -sin, 0.0], [sin, cos, 0.0], [0.0, 0.0, 1.0]])
+
+
+def test_fit_similarity_recovers_a_known_scale_rotation_and_translation():
+    rng = np.random.default_rng(0)
+    source = rng.normal(size=(40, 3))
+    rotation = _rotation_z(0.7)
+    target = 2.5 * (source @ rotation) + np.array([1.0, -2.0, 3.0])
+
+    transform = fit_similarity(source, target)
+
+    assert transform.scale == pytest.approx(2.5, rel=1e-9)
+    assert apply_sim3(source, transform) == pytest.approx(target, abs=1e-6)
+
+
+def test_similarity_alignment_removes_a_pure_frame_and_scale_mismatch():
+    """A candidate differing only by world frame and scale must score ~0."""
+    rng = np.random.default_rng(1)
+    triangulated = rng.normal(size=(8, 12, 3))
+    rotation = _rotation_z(0.9)
+    candidate = (triangulated @ rotation.T) / 1.4 + np.array([0.3, -0.2, 0.5])
+
+    root_errors, _ = joint_errors(candidate, triangulated, alignment="root")
+    similarity_errors, valid = joint_errors(
+        candidate, triangulated, alignment="similarity"
+    )
+
+    assert valid.all()
+    assert root_errors.mean() > 0.5
+    assert similarity_errors.mean() < 1e-6
+
+
+def test_similarity_alignment_still_reports_genuine_pose_error():
+    """Alignment must not absorb a real per-joint deformation."""
+    rng = np.random.default_rng(2)
+    triangulated = rng.normal(size=(8, 12, 3))
+    candidate = triangulated.copy()
+    candidate[:, 3] += np.array([0.4, 0.0, 0.0])
+
+    errors, _ = joint_errors(candidate, triangulated, alignment="similarity")
+
+    assert errors.mean() > 0.01
+    assert errors[:, 3].mean() > errors.mean()
+
+
+def test_root_alignment_remains_available_for_legacy_comparisons():
+    triangulated = np.zeros((4, 12, 3))
+    candidate = np.zeros((4, 12, 3))
+    candidate[:, 2] += np.array([0.0, 0.0, 1.0])
+
+    errors, valid = joint_errors(candidate, triangulated, alignment="root")
+
+    assert valid.all()
+    # The pelvis joints stay at the origin, so root centering is a no-op here.
+    assert errors[:, 2] == pytest.approx(np.ones(4), abs=1e-9)
+    assert errors[:, 0] == pytest.approx(np.zeros(4), abs=1e-9)
+
+
+def test_joint_errors_rejects_an_unknown_alignment_mode():
+    points = np.zeros((2, 4, 3))
+    with pytest.raises(ValueError, match="alignment must be one of"):
+        joint_errors(points, points, alignment="affine")
 
 
 def test_estimate_sim3_recovers_scale_rotation_translation():

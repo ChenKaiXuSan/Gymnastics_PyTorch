@@ -357,11 +357,14 @@ def test_external_percentiles_are_computed_from_all_valid_points_not_cycle_means
     for points, error in ((short_reference, 1.0), (long_reference, 10.0)):
         points[:, [2, 5, 6], 0] += error
 
+    # Pinned to root alignment so the injected 1.0/10.0 offsets stay exact; this
+    # test is about pooling percentiles across cycles, not about frame alignment.
     report = evaluate_person_trials(
         "1",
         [short, long],
         SPEC,
         references={"cycle_000": short_reference, "cycle_001": long_reference},
+        alignment="root",
     )
 
     row = report.person_metrics[0]

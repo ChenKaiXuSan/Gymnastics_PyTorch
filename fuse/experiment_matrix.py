@@ -459,11 +459,89 @@ def root_normalize(kpts: np.ndarray) -> np.ndarray:
     return kpts - root
 
 
-def joint_errors(candidate: np.ndarray, triangulated: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    candidate = root_normalize(candidate)
-    triangulated = root_normalize(triangulated)
+ALIGNMENT_MODES = ("root", "similarity", "procrustes")
+DEFAULT_ALIGNMENT = "similarity"
+
+
+def fit_similarity(src: np.ndarray, dst: np.ndarray) -> Sim3Transform:
+    """Least-squares (Umeyama) similarity mapping ``src`` onto ``dst``.
+
+    Uses the module's ``points @ rotation`` convention so the result can be fed
+    straight to :func:`apply_sim3`.
+    """
+    src = np.asarray(src, dtype=np.float64)
+    dst = np.asarray(dst, dtype=np.float64)
+    if len(src) < 3:
+        return Sim3Transform(scale=1.0, rotation=np.eye(3), translation=np.zeros(3))
+    src_mean, dst_mean = src.mean(axis=0), dst.mean(axis=0)
+    src_c, dst_c = src - src_mean, dst - dst_mean
+    variance = float((src_c**2).sum())
+    if variance < 1e-12:
+        return Sim3Transform(scale=1.0, rotation=np.eye(3), translation=dst_mean - src_mean)
+    u, singular, vt = np.linalg.svd(src_c.T @ dst_c)
+    sign = float(np.sign(np.linalg.det(u @ vt)))
+    rotation = u @ np.diag([1.0, 1.0, sign]) @ vt
+    scale = float(singular[0] + singular[1] + sign * singular[2]) / variance
+    translation = dst_mean - scale * (src_mean @ rotation)
+    return Sim3Transform(scale=scale, rotation=rotation, translation=translation)
+
+
+def align_candidate(
+    candidate: np.ndarray,
+    triangulated: np.ndarray,
+    valid: np.ndarray,
+    alignment: str,
+) -> np.ndarray:
+    """Bring ``candidate`` into the triangulated frame before measuring error.
+
+    ``root`` only removes the pelvis translation. It leaves any difference in
+    world orientation or scale between the SAM3D world frame and the calibrated
+    triangulation frame inside the reported error, which makes the metric
+    insensitive to the fusion itself.
+
+    ``similarity`` fits one Sim3 transform per sequence, which removes exactly
+    that static frame and scale mismatch while keeping per-frame pose and
+    rotation differences measurable. ``procrustes`` fits one transform per frame
+    and therefore also removes per-frame orientation error; it is a diagnostic
+    lower bound on shape error, not a pose metric.
+    """
+    if alignment not in ALIGNMENT_MODES:
+        raise ValueError(f"alignment must be one of {ALIGNMENT_MODES}: {alignment}")
+    if alignment == "root":
+        return root_normalize(candidate)
+    if alignment == "similarity":
+        if valid.sum() < 3:
+            return root_normalize(candidate)
+        transform = fit_similarity(candidate[valid], triangulated[valid])
+        return apply_sim3(candidate, transform).astype(np.float64)
+    aligned = np.array(candidate, dtype=np.float64, copy=True)
+    for frame in range(candidate.shape[0]):
+        frame_valid = valid[frame]
+        if frame_valid.sum() < 3:
+            aligned[frame] = candidate[frame] - np.nanmean(
+                candidate[frame][list(PELVIS_INDICES)], axis=0
+            )
+            continue
+        transform = fit_similarity(
+            candidate[frame][frame_valid], triangulated[frame][frame_valid]
+        )
+        aligned[frame] = apply_sim3(candidate[frame], transform)
+    return aligned
+
+
+def joint_errors(
+    candidate: np.ndarray,
+    triangulated: np.ndarray,
+    alignment: str = DEFAULT_ALIGNMENT,
+) -> Tuple[np.ndarray, np.ndarray]:
     valid = np.isfinite(candidate).all(axis=-1) & np.isfinite(triangulated).all(axis=-1)
-    errors = np.linalg.norm(candidate - triangulated, axis=-1)
+    if alignment == "root":
+        candidate_aligned = root_normalize(candidate)
+        reference = root_normalize(triangulated)
+    else:
+        candidate_aligned = align_candidate(candidate, triangulated, valid, alignment)
+        reference = triangulated
+    errors = np.linalg.norm(candidate_aligned - reference, axis=-1)
     return errors, valid
 
 
@@ -492,6 +570,7 @@ def evaluate_sequence(
     face_map: np.ndarray,
     side_map: np.ndarray,
     triangulated_person_root: Path,
+    alignment: str = DEFAULT_ALIGNMENT,
 ) -> Tuple[PersonMetric, List[JointMetric]]:
     pair_index = build_pair_index(face_map, side_map)
     all_values: List[np.ndarray] = []
@@ -513,7 +592,9 @@ def evaluate_sequence(
         if not candidate_frames:
             continue
         eval_frames += len(candidate_frames)
-        errors, valid = joint_errors(np.stack(candidate_frames), np.stack(tri_frames))
+        errors, valid = joint_errors(
+            np.stack(candidate_frames), np.stack(tri_frames), alignment=alignment
+        )
         all_values.append(errors[valid])
         for joint_idx in range(n_joints):
             joint_values[joint_idx].append(errors[:, joint_idx][valid[:, joint_idx]])
@@ -556,6 +637,7 @@ def estimate_weights_from_triangulated(
     face_map: np.ndarray,
     side_map: np.ndarray,
     triangulated_person_root: Path,
+    alignment: str = DEFAULT_ALIGNMENT,
 ) -> np.ndarray:
     pair_index = build_pair_index(face_map, side_map)
     face_errors_by_joint: List[List[np.ndarray]] = [[] for _ in range(face.shape[1])]
@@ -575,8 +657,12 @@ def estimate_weights_from_triangulated(
         if not face_frames:
             continue
         tri_seq = np.stack(tri_frames)
-        face_errors, face_valid = joint_errors(np.stack(face_frames), tri_seq)
-        side_errors, side_valid = joint_errors(np.stack(side_frames), tri_seq)
+        face_errors, face_valid = joint_errors(
+            np.stack(face_frames), tri_seq, alignment=alignment
+        )
+        side_errors, side_valid = joint_errors(
+            np.stack(side_frames), tri_seq, alignment=alignment
+        )
         for joint_idx in range(face.shape[1]):
             face_errors_by_joint[joint_idx].append(face_errors[:, joint_idx][face_valid[:, joint_idx]])
             side_errors_by_joint[joint_idx].append(side_errors[:, joint_idx][side_valid[:, joint_idx]])
@@ -631,6 +717,7 @@ def process_person(
     split_root: Path,
     out_root: Path,
     save_frame_npz: bool,
+    alignment: str = DEFAULT_ALIGNMENT,
 ) -> Tuple[List[PersonMetric], List[JointMetric]]:
     face_by_frame = load_sam3d_world_by_frame(sam3d_root, person_id, "face")
     side_by_frame = load_sam3d_world_by_frame(sam3d_root, person_id, "side")
@@ -680,7 +767,12 @@ def process_person(
                 sim3_stable, sim3_stable_scales = sim3_align_to_reference(side, face, STABLE_SIM3_JOINTS)
             if has_triangulated:
                 weights = estimate_weights_from_triangulated(
-                    face, sim3_stable, face_map, side_map, triangulated_person_root
+                    face,
+                    sim3_stable,
+                    face_map,
+                    side_map,
+                    triangulated_person_root,
+                    alignment=alignment,
                 )
                 extra["joint_weight_source"] = "triangulated"
             else:
@@ -741,6 +833,7 @@ def process_person(
                 face_map=face_map,
                 side_map=side_map,
                 triangulated_person_root=triangulated_person_root,
+                alignment=alignment,
             )
             metrics.append(person_metric)
             joint_metrics.extend(per_joint)
@@ -782,6 +875,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--person", nargs="*", default=None, help="Optional person ids, e.g. 27 29")
     parser.add_argument("--methods", nargs="*", default=list(ALL_METHODS), choices=ALL_METHODS)
     parser.add_argument("--save-frame-npz", action="store_true", help="Also save old per-frame npz format.")
+    parser.add_argument(
+        "--alignment",
+        default=DEFAULT_ALIGNMENT,
+        choices=ALIGNMENT_MODES,
+        help=(
+            "How to bring fused keypoints into the triangulated frame before "
+            "measuring error. 'similarity' (default) removes the static world "
+            "frame and scale mismatch once per sequence. 'root' is the legacy "
+            "pelvis-only behaviour and leaves that mismatch in the error. "
+            "'procrustes' aligns every frame and is a diagnostic shape-only bound."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -797,6 +902,7 @@ def main() -> None:
         "methods": list(args.methods),
         "stable_sim3_joints": list(STABLE_SIM3_JOINTS),
         "save_frame_npz": bool(args.save_frame_npz),
+        "alignment": str(args.alignment),
     }
     (args.out_dir / "experiment_config.json").write_text(
         json.dumps(config, indent=2, ensure_ascii=False),
@@ -813,6 +919,7 @@ def main() -> None:
             split_root=args.split_root,
             out_root=args.out_dir,
             save_frame_npz=args.save_frame_npz,
+            alignment=args.alignment,
         )
         all_person_metrics.extend(person_metrics)
         all_joint_metrics.extend(joint_metrics)
