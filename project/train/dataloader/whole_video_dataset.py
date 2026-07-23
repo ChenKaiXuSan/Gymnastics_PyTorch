@@ -82,6 +82,26 @@ class LabeledPersonDataset(Dataset):
         if not fused_kpt_dir.exists() or not fused_kpt_dir.is_dir():
             raise FileNotFoundError(f"Fused kpt directory not found: {fused_kpt_dir}")
 
+        # 当前 fuse 输出是每人一个紧凑的 fused_sequence.npz。
+        sequence_path = fused_kpt_dir / "fused_sequence.npz"
+        if sequence_path.exists():
+            with np.load(sequence_path, allow_pickle=False) as data:
+                if "kpts_body" not in data:
+                    raise KeyError(f"kpts_body missing in {sequence_path}")
+                kpts = np.asarray(data["kpts_body"], dtype=np.float32)  # (T,J,3)
+
+            total = int(kpts.shape[0])
+            start = 0 if frame_start is None or frame_start < 0 else int(frame_start)
+            end = total if frame_end is None or frame_end < 0 else int(frame_end)
+            start = max(0, min(start, total))
+            end = max(start, min(end, total))
+            if end == start:
+                raise ValueError(
+                    f"Empty fused kpt sequence after slicing [{start}, {end}) in {sequence_path}"
+                )
+            return torch.from_numpy(kpts[start:end]).float()
+
+        # 旧的逐帧导出格式，保留兼容。
         frame_files = sorted(fused_kpt_dir.glob("frame_*.npz"))
         if not frame_files:
             raise FileNotFoundError(f"No fused npz files found in: {fused_kpt_dir}")

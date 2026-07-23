@@ -8,6 +8,9 @@ hydra-core
 # for cross validation
 scikit-learn
 
+# for reading the label spreadsheets during fold generation
+openpyxl
+
 imblearn
 
 grad-cam

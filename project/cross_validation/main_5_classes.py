@@ -91,6 +91,7 @@ def generate_index_files(
     sam3d_export_root: Optional[str] = None,
     annotation_path: Optional[str] = None,
     fused_kpt_root: Optional[str] = None,
+    split_cycle_root: Optional[str] = None,
 ):
     """
     生成所有策略的索引文件
@@ -139,6 +140,7 @@ def generate_index_files(
             sam3d_export_root=sam3d_export_root,
             annotation_path=annotation_path,
             fused_kpt_root=fused_kpt_root,
+            split_cycle_root=split_cycle_root,
             index_save_path=str(index_mapping_dir / f"camera_pairs_{strategy}.json"),
         )
 
@@ -237,6 +239,7 @@ def hydra_main(cfg: Optional[DictConfig] = None) -> None:
         sam3d_export_root=str(cfg.data.get("sam3d_export_path", "")),
         annotation_path=str(cfg.data.get("annotation_path", "")),
         fused_kpt_root=str(cfg.data.raw.get("fused_kpt_path", "")),
+        split_cycle_root=str(cfg.data.raw.get("split_cycle", "")),
     )
 
 if __name__ == "__main__":

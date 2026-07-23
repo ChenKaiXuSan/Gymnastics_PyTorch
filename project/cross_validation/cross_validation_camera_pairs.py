@@ -34,6 +34,22 @@ except Exception:  # pragma: no cover
     load_workbook = None
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _resolve_repo_path(path: Any) -> Path:
+    """Resolve a possibly repo-relative path against the repository root.
+
+    Hydra changes the working directory before the entry point runs, so
+    repo-relative roots such as ``logs/split_cycle`` cannot be resolved
+    against the current directory.
+    """
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return candidate
+    return (PROJECT_ROOT / candidate).resolve()
+
+
 @dataclass
 class CameraPairSample:
     """表示一个训练样本，按照人物的turn进行划分"""
@@ -98,10 +114,15 @@ class CameraPairCrossValidation:
         sam3d_export_root: Optional[str] = None,
         annotation_path: Optional[str] = None,
         fused_kpt_root: Optional[str] = None,
+        split_cycle_root: Optional[str] = None,
         index_save_path: Optional[str] = None,
     ):
         self.data_root = Path(data_root)
         self.data_dir = self.data_root / "data"
+        if split_cycle_root and str(split_cycle_root).strip():
+            self.split_cycle_root = _resolve_repo_path(split_cycle_root)
+        else:
+            self.split_cycle_root = self.data_root / "split_cycle"
         if sam3d_export_root and str(sam3d_export_root).strip():
             self.sam3d_export_root = Path(sam3d_export_root)
         else:
@@ -119,7 +140,7 @@ class CameraPairCrossValidation:
                 default_annotation if default_annotation.exists() else None
             )
         if fused_kpt_root and str(fused_kpt_root).strip():
-            self.fused_kpt_root = Path(fused_kpt_root)
+            self.fused_kpt_root = _resolve_repo_path(fused_kpt_root)
         else:
             self.fused_kpt_root = self.data_root / "fuse"
         self.num_persons = num_persons
@@ -288,9 +309,9 @@ class CameraPairCrossValidation:
         return person_map
 
     def _is_turn_dataset_layout(self) -> bool:
-        return (self.data_root / "raw" / "person").exists() and (
-            self.data_root / "split_cycle"
-        ).exists()
+        return (
+            self.data_root / "raw" / "person"
+        ).exists() and self.split_cycle_root.exists()
 
     @staticmethod
     def _person_sort_key(person_id: str) -> Tuple[int, str]:
@@ -327,9 +348,27 @@ class CameraPairCrossValidation:
 
     @staticmethod
     def _load_fused_frame_maps(fused_kpt_path: Path) -> Tuple[np.ndarray, np.ndarray]:
+        """Read the face/side frame maps written by the fuse experiment matrix.
+
+        The current fuse output is one compact ``fused_sequence.npz`` per person.
+        The older per-frame export kept the maps in a sidecar JSON file, which is
+        still accepted so previously generated data remains readable.
+        """
+        sequence_path = fused_kpt_path / "fused_sequence.npz"
+        if sequence_path.exists():
+            with np.load(sequence_path, allow_pickle=False) as data:
+                if "face_map" not in data or "side_map" not in data:
+                    raise KeyError(f"face_map/side_map missing in {sequence_path}")
+                return (
+                    np.asarray(data["face_map"], dtype=np.int32),
+                    np.asarray(data["side_map"], dtype=np.int32),
+                )
+
         metadata_files = sorted(fused_kpt_path.parent.glob("fused_kpts_metadata_*.json"))
         if not metadata_files:
-            raise FileNotFoundError(f"fused metadata not found under {fused_kpt_path.parent}")
+            raise FileNotFoundError(
+                f"neither {sequence_path} nor fused metadata found under {fused_kpt_path.parent}"
+            )
 
         metadata_path = metadata_files[0]
         with open(metadata_path, "r", encoding="utf-8") as f:
@@ -365,10 +404,12 @@ class CameraPairCrossValidation:
 
     def _discover_turn_samples(self) -> List[CameraPairSample]:
         raw_person_root = self.data_root / "raw" / "person"
-        split_cycle_root = self.data_root / "split_cycle"
+        split_cycle_root = self.split_cycle_root
         sam3d_person_root = self.sam3d_export_root
 
         samples: List[CameraPairSample] = []
+        unlabelled: List[str] = []
+        no_split_cycle: List[str] = []
 
         person_dirs = sorted(
             (p for p in raw_person_root.iterdir() if p.is_dir()),
@@ -379,10 +420,12 @@ class CameraPairCrossValidation:
             person_id = str(person_dir.name)
             cycle_dir = split_cycle_root / f"person_{person_id}"
             if not cycle_dir.exists():
+                no_split_cycle.append(person_id)
                 continue
 
             align_files = sorted(cycle_dir.glob("alignment_record_*.json"))
             if not align_files:
+                no_split_cycle.append(person_id)
                 continue
             align_path = align_files[0]
 
@@ -395,11 +438,11 @@ class CameraPairCrossValidation:
             sam3d_face_dir = sam3d_person_root / person_id / "face"
             sam3d_side_dir = sam3d_person_root / person_id / "side"
             if person_id not in self._person_label_map:
-                raise KeyError(
-                    f"人物 {person_id} 在 annotation 中找不到标签: {self.annotation_path}"
-                )
+                # 只有一部分人物有标注；未标注的人物无法用于分类，直接跳过。
+                unlabelled.append(person_id)
+                continue
             person_label = self._person_label_map[person_id]
-            fused_kpt_path = self.fused_kpt_root / f"person_{person_id}" / "frames"
+            fused_kpt_path = self.fused_kpt_root / f"person_{person_id}"
 
             try:
                 face_map, side_map = self._load_fused_frame_maps(fused_kpt_path)
@@ -465,6 +508,14 @@ class CameraPairCrossValidation:
         print(f"  - 人物数: {len({s.person_id for s in samples})}")
         print(f"  - turn数: {len({s.turn_id for s in samples if s.turn_id})}")
         print("  - 每个样本包含: 双视角视频路径 + 双视角SAM3D结果路径")
+        print(f"  - split_cycle 根目录: {split_cycle_root}")
+        print(f"  - fused kpt 根目录: {self.fused_kpt_root}")
+        if no_split_cycle:
+            print(f"  - 跳过（无 split_cycle 记录）: {len(no_split_cycle)} 人")
+        if unlabelled:
+            print(
+                f"  - 跳过（annotation 中无标签）: {len(unlabelled)} 人 -> {self.annotation_path}"
+            )
 
         return samples
 
