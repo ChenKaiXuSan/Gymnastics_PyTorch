@@ -188,8 +188,7 @@ They read alignment records from `logs/split_cycle` and fused frame maps from
 | Path | Approx. Size | Notes |
 |---|---:|---|
 | `/home/data/xchen/gymnastics/run_data` | 323G | Older run directory with previous SAM3D/Mediapipe-style outputs. |
-| `/home/data/xchen/gymnastics/bak` | 140G | Backup data/results. |
-| `/home/data/xchen/gymnastics/split_cycle` | 1.8G | Data-root split-cycle results covering only 26 persons; not the current active split-cycle root. |
+| `/home/data/xchen/gymnastics/bak` | 140G | Backup data/results; flagged for deletion. |
 | `logs/train` | 8.5G | Training logs and outputs. |
 | `logs/total_5_class` | 25G | Five-class experiment outputs. |
 | `logs/calibration_vis` | 977M | Camera calibration parameters and visualizations. |
