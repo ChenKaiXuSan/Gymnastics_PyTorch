@@ -1,0 +1,22 @@
+paths:
+  sam3d_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}/sam3d_body_results
+  split_cycle_root: logs/split_cycle
+  output_root: logs/fuse_rotation_aware
+  skeleton: configs/fuse/skeleton_mhr70.yaml
+  fold_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}/index_mapping/camera_pairs_by_person_folds
+  default_fold: fold_00.json
+  old_fuse_root: logs/fuse_experiments
+  triangulated_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}/sam3d_triangulated/person
+data:
+  fps: 60.0
+  cache_dir: ${paths.output_root}/cache
+window:
+  length: 128
+  train_stride: 32
+  eval_stride: 64
+training:
+  epochs: 20
+  batch_size: 4
+  learning_rate: 0.001
+  hidden_channels: 128
+  seed: 0
