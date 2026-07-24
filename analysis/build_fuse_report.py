@@ -83,6 +83,48 @@ def load_group_of() -> Callable[[int], str]:
 LEAKY = {"sim3_face_stable_joint_weight"}
 RECOMMENDED = "avg_body_current"
 
+# How each deterministic method fuses the two views. "Stable joints" = the trunk
+# and legs (shoulders, hips, knees, ankles, feet), which move less than the arms
+# and so give a steadier cross-view alignment. Source: fuse/experiment_matrix.py.
+METHOD_DESC = {
+    "avg_body_current": (
+        "map both views into a pelvis-centred, orientation-normalised body frame, "
+        "average there, then map back through the face pelvis/orientation — cancels "
+        "the inter-view world-frame scale and rotation mismatch"
+    ),
+    "sim3_face_stable": (
+        "fit one similarity transform (rotation+scale+translation) aligning side→face "
+        "from the stable joints only, then average the two views 50/50"
+    ),
+    "sim3_face_stable_bodypart_weight": (
+        "sim3_face_stable, but average with fixed per-body-part weights (torso 50/50, "
+        "distal limbs/hands lean to face, a few joints lean to side)"
+    ),
+    "sim3_face_stable_smooth_transform": (
+        "sim3_face_stable, but temporally smooth the aligned side sequence "
+        "(window 5) before averaging"
+    ),
+    "sim3_face_stable_smooth_kpt": (
+        "sim3_face_stable, average, then temporally smooth the fused keypoints (window 5)"
+    ),
+    "sim3_face_all": (
+        "like sim3_face_stable but fit the similarity transform from ALL joints — "
+        "moving limbs bias the fit, so it is noisier"
+    ),
+    "avg_world_face_ref": (
+        "naive 0.5·(face+side) in world coordinates, no alignment — leaves the "
+        "inter-view world-frame mismatch in the result"
+    ),
+    "root_face_stable": (
+        "align side to face by pelvis translation only (no rotation/scale), then average"
+    ),
+    "sim3_face_stable_joint_weight": (
+        "sim3_face_stable, but weight each joint by its face-vs-side error against the "
+        "triangulated GT — needs the GT it is scored on (leaky); without GT it falls "
+        "back to 50/50, i.e. sim3_face_stable"
+    ),
+}
+
 
 def _load_mpjpe(path: Path, key_col: str) -> Tuple[List[str], Dict[str, np.ndarray]]:
     """Return (person id order, {key: per-person mpjpe array}) aligned on that order."""
@@ -239,6 +281,17 @@ def main() -> None:
           "per-joint weights from the triangulated GT it is then evaluated against, so it "
           "is excluded as a biased comparison rather than recommended.")
         A("")
+    A("**How each method fuses the two views** (\"stable joints\" = trunk + legs — "
+      "shoulders, hips, knees, ankles, feet — which move less than the arms and give a "
+      "steadier cross-view alignment):")
+    A("")
+    A("| method | how it fuses |")
+    A("|---|---|")
+    for m in [best] + [r["method"] for r in sig_rows]:
+        desc = METHOD_DESC.get(m, "")
+        tag = " *(recommended)*" if m == RECOMMENDED else (" *(leaky)*" if m in LEAKY else "")
+        A(f"| `{m}`{tag} | {desc} |")
+    A("")
 
     A("## 2. Recommended method by cohort")
     A("")
