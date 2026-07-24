@@ -27,6 +27,11 @@ class LossConfig:
     adaptive_temporal_acceleration_weight: float = 1.0
     minimal_residual_weight: float = 0.05
     complete_cycle_rom_weight: float = 1.0
+    # 改法4: anchor the fused twist range-of-motion to the larger of the two clean
+    # views' per-cycle ROM instead of the averaged pseudo-target, because
+    # coordinate-space averaging systematically shrinks the twist. Weight 0 keeps
+    # A4/A5/A6 byte-identical; the new ablations turn it on.
+    complete_cycle_rom_peak_weight: float = 0.0
     consensus_distance: float = 0.10
     quality_advantage_ratio: float = 1.5
     epsilon: float = 1e-6
@@ -49,6 +54,7 @@ class LossConfig:
             "adaptive_temporal_acceleration": self.adaptive_temporal_acceleration_weight,
             "minimal_residual": self.minimal_residual_weight,
             "complete_cycle_rom": self.complete_cycle_rom_weight,
+            "complete_cycle_rom_peak": self.complete_cycle_rom_peak_weight,
         }
 
 
@@ -65,6 +71,7 @@ class LossBreakdown:
     adaptive_temporal_acceleration: Tensor
     minimal_residual: Tensor
     complete_cycle_rom: Tensor
+    complete_cycle_rom_peak: Tensor
     total: Tensor
 
     def as_dict(self) -> dict[str, Tensor]:
@@ -78,6 +85,7 @@ class LossBreakdown:
             "adaptive_temporal_acceleration": self.adaptive_temporal_acceleration,
             "minimal_residual": self.minimal_residual,
             "complete_cycle_rom": self.complete_cycle_rom,
+            "complete_cycle_rom_peak": self.complete_cycle_rom_peak,
             "total": self.total,
         }
 
@@ -223,6 +231,42 @@ def _rom_loss(prediction: Tensor, target: Tensor, valid: Tensor, complete: Tenso
         values.append((pred_run.max() - pred_run.min() - target_run.max() + target_run.min()).square())
     if not values:
         return prediction.new_zeros(())
+    return torch.stack(values).mean()
+
+
+def _rom_peak_loss(
+    fused_angle: Tensor,
+    face_angle: Tensor,
+    side_angle: Tensor,
+    fused_valid: Tensor,
+    face_valid: Tensor,
+    side_valid: Tensor,
+    complete: Tensor,
+) -> Tensor:
+    """Push the fused twist ROM toward the larger of the two clean views' ROM.
+
+    Coordinate-space averaging shrinks the twist, so the averaged pseudo-target
+    under-states the range of motion. Per complete cycle this anchors the fused
+    range to whichever calibrated view actually observed the wider twist; the
+    per-view targets are detached (they come from clean reference inputs). A view
+    only contributes its ROM when it is valid across the whole run, which avoids
+    unwrapping across gaps.
+    """
+    values: list[Tensor] = []
+    for batch_index, start, end in _contiguous_true_runs(fused_valid & complete):
+        fused_run = _unwrap_valid_run(fused_angle[batch_index, start:end])
+        fused_rom = fused_run.max() - fused_run.min()
+        view_roms: list[Tensor] = []
+        for angle, valid in ((face_angle, face_valid), (side_angle, side_valid)):
+            if bool(valid[batch_index, start:end].all()):
+                run = _unwrap_valid_run(angle[batch_index, start:end])
+                view_roms.append(run.max() - run.min())
+        if not view_roms:
+            continue
+        target_rom = torch.stack(view_roms).max().detach()
+        values.append((fused_rom - target_rom).square())
+    if not values:
+        return fused_angle.new_zeros(())
     return torch.stack(values).mean()
 
 
@@ -385,6 +429,23 @@ def compute_self_supervised_losses(
     complete = _complete_cycle_mask(batch, frames, fused.device, batch_size=batch_size)
     complete_cycle_rom = _rom_loss(fused_trunk.angle, target_trunk.angle, axial_mask, complete)
 
+    # 改法4: only pay the per-view-peak ROM cost when its weight is active, since
+    # it needs two extra trunk extractions on the clean references.
+    if config.complete_cycle_rom_peak_weight > 0:
+        face_ref_trunk = extract_trunk_features(reference_face, valid_face, skeleton, dt=dt)
+        side_ref_trunk = extract_trunk_features(reference_side, valid_side, skeleton, dt=dt)
+        complete_cycle_rom_peak = _rom_peak_loss(
+            fused_trunk.angle,
+            face_ref_trunk.angle,
+            side_ref_trunk.angle,
+            axial_mask,
+            fused_trunk.angle_valid & face_ref_trunk.angle_valid,
+            fused_trunk.angle_valid & side_ref_trunk.angle_valid,
+            complete,
+        )
+    else:
+        complete_cycle_rom_peak = fused.new_zeros(())
+
     values = {
         "corruption_recovery": corruption_recovery,
         "high_consensus_identity": high_consensus_identity,
@@ -395,6 +456,7 @@ def compute_self_supervised_losses(
         "adaptive_temporal_acceleration": adaptive_temporal_acceleration,
         "minimal_residual": minimal_residual,
         "complete_cycle_rom": complete_cycle_rom,
+        "complete_cycle_rom_peak": complete_cycle_rom_peak,
     }
     total = fused.new_zeros(())
     for name, value in values.items():

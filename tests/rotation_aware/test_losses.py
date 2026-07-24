@@ -8,7 +8,13 @@ import torch
 from fuse.rotation_aware.config import RoleSpec, SkeletonSpec
 from fuse.rotation_aware import losses as losses_module
 from fuse.rotation_aware.features import extract_pose_features
-from fuse.rotation_aware.losses import LossConfig, _complete_cycle_mask, _rom_loss, compute_self_supervised_losses
+from fuse.rotation_aware.losses import (
+    LossConfig,
+    _complete_cycle_mask,
+    _rom_loss,
+    _rom_peak_loss,
+    compute_self_supervised_losses,
+)
 from fuse.rotation_aware.model import FusionOutput
 from fuse.rotation_aware.trunk import extract_trunk_features
 
@@ -187,6 +193,50 @@ def test_so3_exact_agreement_has_finite_backward_gradient() -> None:
 
     assert fused.grad is not None
     assert torch.isfinite(fused.grad).all()
+
+
+def test_rom_peak_anchors_to_the_wider_view_not_the_average() -> None:
+    # face twists 1.0 rad, side 0.6 rad, fused only 0.5 -> the target must be the
+    # larger view ROM (1.0), NOT the averaged pseudo-target, so the shrunk fused
+    # range is penalised toward the view that actually saw the wider twist.
+    fused = torch.tensor([[0.0, 0.25, 0.5]], requires_grad=True)
+    face = torch.tensor([[0.0, 0.5, 1.0]])
+    side = torch.tensor([[0.0, 0.3, 0.6]])
+    valid = torch.ones((1, 3), dtype=torch.bool)
+    complete = torch.ones_like(valid)
+
+    loss = _rom_peak_loss(fused, face, side, valid, valid, valid, complete)
+    loss.backward()
+
+    assert loss.item() == pytest.approx((0.5 - 1.0) ** 2, abs=1e-6)
+    assert fused.grad is not None and torch.isfinite(fused.grad).all()
+
+
+def test_rom_peak_is_zero_when_fused_matches_the_wider_view() -> None:
+    fused = torch.tensor([[0.0, 0.5, 1.0]])
+    face = torch.tensor([[0.0, 0.5, 1.0]])
+    side = torch.tensor([[0.0, 0.3, 0.6]])
+    valid = torch.ones((1, 3), dtype=torch.bool)
+    complete = torch.ones_like(valid)
+
+    loss = _rom_peak_loss(fused, face, side, valid, valid, valid, complete)
+
+    assert loss.item() == pytest.approx(0.0, abs=1e-7)
+
+
+def test_rom_peak_skips_a_view_with_a_gap_in_the_run() -> None:
+    # face has a mid-run gap, so only side (ROM 0.6) may anchor the target.
+    fused = torch.tensor([[0.0, 0.25, 0.5]])
+    face = torch.tensor([[0.0, 0.5, 1.0]])
+    side = torch.tensor([[0.0, 0.3, 0.6]])
+    fused_valid = torch.ones((1, 3), dtype=torch.bool)
+    face_valid = torch.tensor([[True, False, True]])
+    side_valid = torch.ones((1, 3), dtype=torch.bool)
+    complete = torch.ones_like(fused_valid)
+
+    loss = _rom_peak_loss(fused, face, side, fused_valid, face_valid, side_valid, complete)
+
+    assert loss.item() == pytest.approx((0.5 - 0.6) ** 2, abs=1e-6)
 
 
 def test_rom_unwraps_across_the_pi_boundary() -> None:
