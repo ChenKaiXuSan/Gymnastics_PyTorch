@@ -4,7 +4,7 @@
 This gathers the artefacts that were produced across several tools -- the fuse
 metric matrix, the fair three-way source comparison, the body-scale-normalized
 metric, and the extrinsics-quality summary -- copies them into one bundle under
-``logs/fuse_experiments/analysis_new_gt`` and writes ``RESULTS_SUMMARY.md``.
+``logs/fuse_experiments/analysis`` and writes ``RESULTS_SUMMARY.md``.
 
 All figures are recomputed here from the per-person CSVs, so the report always
 matches the files it bundles.
@@ -23,7 +23,7 @@ import numpy as np
 from scipy.stats import wilcoxon
 
 FUSE_DIR = Path("logs/fuse_experiments")
-BUNDLE = FUSE_DIR / "analysis_new_gt"
+BUNDLE = FUSE_DIR / "analysis"  # all derived analysis, consolidated in one place
 CMP_DIR = Path("logs/analysis/fused_vs_triangulated")
 BODY_DIR = Path("logs/analysis/body_scale_normalized")
 EXTR = Path("logs/analysis/extrinsics/extrinsics_comparison.json")
@@ -209,7 +209,7 @@ def main() -> None:
       f"Methods: `{len(methods)}`  •  "
       "GT: per-person estimated extrinsics (`triangulation.estimate_extrinsics`)")
     A(f"- Recommended method: **`{RECOMMENDED}`**")
-    A("- Bundle: `logs/fuse_experiments/analysis_new_gt/` (per-person CSV/JSON behind every table)")
+    A("- Analysis bundle: `logs/fuse_experiments/analysis/` (per-person CSV/JSON behind every table)")
     A("")
     A("The triangulated pseudo-GT was rebuilt after replacing the assumed camera "
       "layout with per-person extrinsics recovered from the data; earlier numbers "
