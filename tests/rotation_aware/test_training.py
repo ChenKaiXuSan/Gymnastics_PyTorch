@@ -406,11 +406,14 @@ def test_a6_training_prefetches_complete_cycle_batches_with_configured_transfer(
         ),
     )
 
+    # A6 forwards the 5-frame window and the 129-frame complete cycle, but the
+    # complete-cycle ROM gradient is folded into the window's optimizer step
+    # rather than taking its own step, so a single window batch yields one step.
     assert model.frame_lengths == [5, 129]
     assert prefetch_depths == [2, 2]
     assert [batch["face"].shape[1] for batch in pin_calls] == [5, 129]
     assert non_blocking_values == [True, True]
-    assert optimizer.step_count == 2
+    assert optimizer.step_count == 1
 
 
 def test_synchronous_reference_bypasses_every_throughput_optimization(
@@ -484,15 +487,17 @@ def test_training_trace_matches_reference_order_corruptions_and_every_a6_step() 
     )
 
     assert reference_trace.as_dict() == optimized_trace.as_dict()
+    # Each window batch now folds one round-robin complete-cycle batch into its own
+    # optimizer step, so there are only window steps and the complete-cycle samples
+    # are interleaved right after the window batch that consumes them.
     assert reference_trace.optimizer_steps == {
         "train_window": 2,
-        "train_complete_cycle": 2,
     }
     assert [sample.window_id for sample in reference_trace.samples] == [
         "window-0",
         "window-1",
-        "window-2",
         "person_person-1/trial-1/complete_cycle",
+        "window-2",
         "person_person-1/trial-2/complete_cycle",
     ]
     assert all(
@@ -552,8 +557,6 @@ def test_profiled_training_and_uncached_validation_use_distinct_phase_stages() -
         "train_complete_cycle.features",
         "train_complete_cycle.forward",
         "train_complete_cycle.loss",
-        "train_complete_cycle.backward",
-        "train_complete_cycle.optimizer",
         "validation_window.acquisition",
         "validation_window.corruption",
         "validation_window.transfer",
@@ -684,12 +687,14 @@ def test_fully_masked_window_and_cycle_advance_adam_with_zero_gradients() -> Non
         seed=3,
     )
 
-    assert optimizer.step_count == 2
+    # The window and its paired complete cycle share one optimizer step, so a
+    # single fully masked window batch advances Adam exactly once.
+    assert optimizer.step_count == 1
     assert all(torch.isfinite(torch.tensor(value)) for value in metrics.values())
     assert all(torch.equal(parameter, initial) for parameter, initial in zip(model.parameters(), before, strict=True))
     assert len(optimizer.state) == len(list(model.parameters()))
     for state in optimizer.state.values():
-        assert state["step"].item() == 2
+        assert state["step"].item() == 1
         assert torch.count_nonzero(state["exp_avg"]) == 0
         assert torch.count_nonzero(state["exp_avg_sq"]) == 0
 

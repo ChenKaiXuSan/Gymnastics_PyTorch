@@ -7,7 +7,7 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Iterator, Mapping
 
 import torch
 from torch import Tensor, nn
@@ -490,6 +490,33 @@ def train_one_epoch(
     torch.manual_seed(int(seed) + int(epoch))
     history: list[dict[str, float]] = []
     train_window_phase = "train_window"
+    train_cycle_phase = "train_complete_cycle"
+    rom_active = (
+        complete_cycle_loader is not None and config.complete_cycle_rom_weight > 0
+    )
+    rom_values: list[float] = []
+
+    def _prepared_cycle_batches() -> Iterator[Mapping[str, object]]:
+        """Stream the complete-cycle batches so each fold into one window step.
+
+        Every cycle produces at least one strided window, so the window loader is
+        never shorter than the complete-cycle loader and each cycle batch pairs with
+        a distinct window step. Folding the complete-cycle ROM gradient into the
+        window step's optimizer update — instead of driving an isolated ROM-only
+        trajectory — is what previously left A6 unable to reduce its loss.
+        """
+        yield from _prepared_stream(
+            complete_cycle_loader,
+            skeleton,
+            seed=int(seed),
+            corruption_config=corruption_config,
+            epoch=epoch,
+            throughput=throughput,
+            profiler=profiler,
+            phase=train_cycle_phase,
+        )
+
+    cycle_iterator = _prepared_cycle_batches() if rom_active else None
     for prepared in _prepared_stream(
         loader,
         skeleton,
@@ -526,7 +553,40 @@ def train_one_epoch(
             losses = compute_self_supervised_losses(output, prepared, window_config, skeleton)
         if not torch.isfinite(losses.total):
             raise FloatingPointError("self-supervised loss is non-finite")
-        objective = _objective_with_zero_gradient_anchor(losses.total, model)
+        combined = losses.total
+        if cycle_iterator is not None:
+            cycle_prepared = next(cycle_iterator, None)
+            if cycle_prepared is not None:
+                if trace is not None:
+                    trace.record_pre_transfer(
+                        cycle_prepared,
+                        phase=train_cycle_phase,
+                        optimizer_steps_before=trace.total_optimizer_steps,
+                    )
+                if throughput.pin_memory:
+                    if profiler.enabled:
+                        with profiler.cpu_stage(f"{train_cycle_phase}.pin_memory"):
+                            cycle_prepared = pin_tensor_batch(cycle_prepared)
+                    else:
+                        cycle_prepared = pin_tensor_batch(cycle_prepared)
+                cycle_output, cycle_prepared = _forward_prepared(
+                    model,
+                    cycle_prepared,
+                    skeleton,
+                    device=target_device,
+                    non_blocking=throughput.non_blocking_transfer,
+                    profiler=profiler,
+                    phase=train_cycle_phase,
+                )
+                with profiler.stage(f"{train_cycle_phase}.loss"):
+                    rom = compute_complete_cycle_rom_loss(
+                        cycle_output, cycle_prepared, config, skeleton
+                    )
+                if not torch.isfinite(rom):
+                    raise FloatingPointError("complete-cycle ROM loss is non-finite")
+                combined = combined + config.complete_cycle_rom_weight * rom
+                rom_values.append(float(rom.detach().cpu()))
+        objective = _objective_with_zero_gradient_anchor(combined, model)
         with profiler.stage(f"{train_window_phase}.backward"):
             objective.backward()
         with profiler.stage(f"{train_window_phase}.optimizer"):
@@ -535,54 +595,7 @@ def train_one_epoch(
             trace.record_optimizer_step(train_window_phase)
         history.append({name: float(value.detach().cpu()) for name, value in losses.as_dict().items()})
     means = _mean_metrics(history)
-    if complete_cycle_loader is not None and config.complete_cycle_rom_weight > 0:
-        rom_values: list[float] = []
-        train_cycle_phase = "train_complete_cycle"
-        for prepared in _prepared_stream(
-            complete_cycle_loader,
-            skeleton,
-            seed=int(seed),
-            corruption_config=corruption_config,
-            epoch=epoch,
-            throughput=throughput,
-            profiler=profiler,
-            phase=train_cycle_phase,
-        ):
-            if trace is not None:
-                trace.record_pre_transfer(
-                    prepared,
-                    phase=train_cycle_phase,
-                    optimizer_steps_before=trace.total_optimizer_steps,
-                )
-            optimizer.zero_grad(set_to_none=True)
-            if throughput.pin_memory:
-                if profiler.enabled:
-                    with profiler.cpu_stage(f"{train_cycle_phase}.pin_memory"):
-                        prepared = pin_tensor_batch(prepared)
-                else:
-                    prepared = pin_tensor_batch(prepared)
-            output, prepared = _forward_prepared(
-                model,
-                prepared,
-                skeleton,
-                device=target_device,
-                non_blocking=throughput.non_blocking_transfer,
-                profiler=profiler,
-                phase=train_cycle_phase,
-            )
-            with profiler.stage(f"{train_cycle_phase}.loss"):
-                rom = compute_complete_cycle_rom_loss(output, prepared, config, skeleton)
-            if not torch.isfinite(rom):
-                raise FloatingPointError("complete-cycle ROM loss is non-finite")
-            weighted_rom = config.complete_cycle_rom_weight * rom
-            objective = _objective_with_zero_gradient_anchor(weighted_rom, model)
-            with profiler.stage(f"{train_cycle_phase}.backward"):
-                objective.backward()
-            with profiler.stage(f"{train_cycle_phase}.optimizer"):
-                optimizer.step()
-            if trace is not None:
-                trace.record_optimizer_step(train_cycle_phase)
-            rom_values.append(float(rom.detach().cpu()))
+    if rom_active:
         if not rom_values:
             raise ValueError("complete-cycle ROM loader produced no batches")
         means["complete_cycle_rom"] = sum(rom_values) / len(rom_values)
@@ -619,6 +632,17 @@ def train_one_epoch_reference(
     torch.manual_seed(int(seed) + int(epoch))
     history: list[dict[str, float]] = []
     train_window_phase = "train_window"
+    train_cycle_phase = "train_complete_cycle"
+    rom_active = (
+        complete_cycle_loader is not None and config.complete_cycle_rom_weight > 0
+    )
+    rom_values: list[float] = []
+
+    # Mirrors ``train_one_epoch``: the complete-cycle loader is never longer than the
+    # window loader, so each cycle batch folds into a distinct window step. The ROM
+    # gradient is accumulated into that step instead of taking an isolated ROM-only
+    # optimizer step, keeping the two paths bit-identical.
+    cycle_iterator = iter(complete_cycle_loader) if rom_active else None
     for batch in loader:
         optimizer.zero_grad(set_to_none=True)
         output, prepared = _forward_window(
@@ -636,7 +660,32 @@ def train_one_epoch_reference(
         losses = compute_self_supervised_losses(output, prepared, window_config, skeleton)
         if not torch.isfinite(losses.total):
             raise FloatingPointError("self-supervised loss is non-finite")
-        _objective_with_zero_gradient_anchor(losses.total, model).backward()
+        combined = losses.total
+        if cycle_iterator is not None:
+            cycle_batch = next(cycle_iterator, None)
+            if cycle_batch is not None:
+                cycle_output, cycle_prepared = _forward_window(
+                    model,
+                    cycle_batch,
+                    skeleton,
+                    seed=int(seed),
+                    corruption_config=corruption_config,
+                    device=target_device,
+                    epoch=epoch,
+                    phase=train_cycle_phase,
+                    trace=trace,
+                    optimizer_steps_before=(
+                        trace.total_optimizer_steps if trace is not None else None
+                    ),
+                )
+                rom = compute_complete_cycle_rom_loss(
+                    cycle_output, cycle_prepared, config, skeleton
+                )
+                if not torch.isfinite(rom):
+                    raise FloatingPointError("complete-cycle ROM loss is non-finite")
+                combined = combined + config.complete_cycle_rom_weight * rom
+                rom_values.append(float(rom.detach().cpu()))
+        _objective_with_zero_gradient_anchor(combined, model).backward()
         optimizer.step()
         if trace is not None:
             trace.record_optimizer_step(train_window_phase)
@@ -644,36 +693,7 @@ def train_one_epoch_reference(
             {name: float(value.detach().cpu()) for name, value in losses.as_dict().items()}
         )
     means = _mean_metrics(history)
-    if complete_cycle_loader is not None and config.complete_cycle_rom_weight > 0:
-        rom_values: list[float] = []
-        train_cycle_phase = "train_complete_cycle"
-        for batch in complete_cycle_loader:
-            optimizer.zero_grad(set_to_none=True)
-            output, prepared = _forward_window(
-                model,
-                batch,
-                skeleton,
-                seed=int(seed),
-                corruption_config=corruption_config,
-                device=target_device,
-                epoch=epoch,
-                phase=train_cycle_phase,
-                trace=trace,
-                optimizer_steps_before=(
-                    trace.total_optimizer_steps if trace is not None else None
-                ),
-            )
-            rom = compute_complete_cycle_rom_loss(output, prepared, config, skeleton)
-            if not torch.isfinite(rom):
-                raise FloatingPointError("complete-cycle ROM loss is non-finite")
-            objective = _objective_with_zero_gradient_anchor(
-                config.complete_cycle_rom_weight * rom, model
-            )
-            objective.backward()
-            optimizer.step()
-            if trace is not None:
-                trace.record_optimizer_step(train_cycle_phase)
-            rom_values.append(float(rom.detach().cpu()))
+    if rom_active:
         if not rom_values:
             raise ValueError("complete-cycle ROM loader produced no batches")
         means["complete_cycle_rom"] = sum(rom_values) / len(rom_values)

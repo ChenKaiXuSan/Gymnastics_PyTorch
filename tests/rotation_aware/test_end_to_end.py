@@ -211,7 +211,9 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     assert main(["prepare", "--config", str(config), "--person", "1"]) == 0
     assert main(["train", "--config", str(config), "--run-id", "batch64_a6_b64_e1", "--ablation", "A6"]) == 0
 
-    assert step_count == 2
+    # A6 folds the complete-cycle ROM gradient into the window step instead of
+    # taking a separate ROM-only step, so one window batch is one optimizer step.
+    assert step_count == 1
     assert validation_modes == [True]
     checkpoint = torch.load(
         output / "runs" / "batch64_a6_b64_e1" / "checkpoints" / "best.pt",
@@ -319,7 +321,9 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
 
     for ablation, expected_steps in (
         ("A4", {"train_window": 1}),
-        ("A6", {"train_window": 1, "train_complete_cycle": 1}),
+        # A6 folds the complete-cycle ROM gradient into the window step, so it no
+        # longer takes a separate train_complete_cycle optimizer step.
+        ("A6", {"train_window": 1}),
     ):
         scalar_equivalence = benchmark._run_training_equivalence(
             tiny_config,
@@ -338,8 +342,9 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
             loss["equivalent"]
             for loss in scalar_equivalence["validation"]["losses"].values()
         )
-    assert scalar_equivalence["optimizer_steps"]["reference"]["total_optimizer_steps"] == 2
-    assert scalar_equivalence["optimizer_steps"]["optimized"]["total_optimizer_steps"] == 2
+    # A6 (the last ablation in the loop) now takes one folded window step, not two.
+    assert scalar_equivalence["optimizer_steps"]["reference"]["total_optimizer_steps"] == 1
+    assert scalar_equivalence["optimizer_steps"]["optimized"]["total_optimizer_steps"] == 1
     profiler_enabled: list[bool] = []
     original_profiler = benchmark.StageProfiler
 

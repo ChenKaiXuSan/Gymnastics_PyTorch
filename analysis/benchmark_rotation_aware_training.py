@@ -898,11 +898,11 @@ def _run_training_equivalence(
         relative_tolerance=0.0,
         absolute_tolerance=0.0,
     )
+    # The complete-cycle ROM gradient is folded into the window optimizer step, so
+    # every optimizer step is a window step even for A6. The complete-cycle batches
+    # are still forwarded and traced (see expected_phase_samples), they just no
+    # longer take a separate optimizer step.
     expected_optimizer_steps = {"train_window": len(reference_workload.train_loader)}
-    if reference_workload.loss_config.complete_cycle_rom_weight > 0:
-        expected_optimizer_steps["train_complete_cycle"] = len(
-            reference_workload.complete_cycle_loader
-        )
     reference = _probe_result(
         reference_workload,
         device=device,
