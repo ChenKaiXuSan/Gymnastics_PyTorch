@@ -125,6 +125,79 @@ def test_end_to_end_overlap_inference_exports_person_metrics(tmp_path: Path) -> 
     assert {row["method"] for row in rows} >= {"A6"}
 
 
+def test_end_to_end_a8_twist_matrix_trains_infers_and_evaluates(tmp_path: Path) -> None:
+    # Prove the new twist-fusion ablation (改法2 + 改法4) runs the full CLI path on
+    # CPU: A8 uses the rotation-parameterised twist residual and the per-view-peak
+    # ROM anchor. Kept off the GPU so it never competes with real training.
+    frames = 48
+    sam3d = tmp_path / "sam3d_body_results"
+    _write_sam3d(sam3d, "face", frames)
+    _write_sam3d(sam3d, "side", frames)
+    split_root = tmp_path / "split_cycle"
+    record = split_root / "person_1" / "alignment_record_1.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(
+        json.dumps(
+            {
+                "metadata": {"offset_side_to_face": 0, "fps": 60.0},
+                "cycles": [
+                    {
+                        "cycle_index": 0,
+                        "face_video_frames": {"start": 0, "end": frames},
+                        "side_video_frames": {"start": 0, "end": frames},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    fold = tmp_path / "fold_00.json"
+    fold.write_text(
+        json.dumps({"train": [{"person_id": "1"}], "val": [], "test": []}),
+        encoding="utf-8",
+    )
+    output = tmp_path / "outputs"
+    old_fuse_root = tmp_path / "legacy_fuse_outputs"
+    old_fuse_root.mkdir()
+    config = tmp_path / "rotation_aware.yaml"
+    config.write_text(
+        "\n".join(
+            (
+                "paths:",
+                f"  sam3d_root: {sam3d}",
+                f"  split_cycle_root: {split_root}",
+                f"  output_root: {output}",
+                "  skeleton: configs/fuse/skeleton_mhr70.yaml",
+                f"  fold_json: {fold}",
+                f"  old_fuse_root: {old_fuse_root}",
+                "window:",
+                "  length: 32",
+                "  train_stride: 16",
+                "  eval_stride: 16",
+                "training:",
+                "  epochs: 1",
+                "  batch_size: 2",
+                "  hidden_channels: 8",
+                "  seed: 0",
+                "  device: cpu",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["prepare", "--config", str(config), "--person", "1"]) == 0
+    assert main(["train", "--config", str(config), "--run-id", "tiny_a8", "--ablation", "A8"]) == 0
+    assert main(["infer", "--config", str(config), "--run-id", "tiny_a8", "--person", "1"]) == 0
+    assert main(["evaluate", "--config", str(config), "--run-id", "tiny_a8", "--person", "1"]) == 0
+
+    sequence_path = output / "inference" / "tiny_a8" / "person_1" / "cycle_000" / "fused_sequence.npz"
+    with np.load(sequence_path, allow_pickle=False) as sequence:
+        assert sequence["kpts_world"].shape == (frames, 70, 3)
+        assert np.isfinite(sequence["kpts_world"]).all()
+        metadata = json.loads(str(sequence["metadata"].item()))
+    assert metadata["ablation"] == "A8"
+
+
 def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     tmp_path: Path, monkeypatch
 ) -> None:
