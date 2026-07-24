@@ -16,9 +16,13 @@ import numpy as np
 
 DEFAULT_SAM3D_ROOT = Path("/home/data/xchen/gymnastics/sam3d_body_results")
 DEFAULT_FUSED_ROOT = Path("logs/fuse_experiments")
-DEFAULT_FUSED_METHOD = "sim3_face_stable_joint_weight"
+# The recommended leakage-free method (sim3_face_stable_joint_weight derives its
+# weights from the triangulated GT it is scored against, so it is not a valid
+# default for this comparison).
+DEFAULT_FUSED_METHOD = "avg_body_current"
 DEFAULT_TRIANGULATED_ROOT = Path("/home/data/xchen/gymnastics/sam3d_triangulated/person")
-DEFAULT_OUT_DIR = Path("logs/analysis/source_vs_triangulated_by_person")
+# Matches build_fuse_report.py's CMP_DIR so the report picks up fresh comparisons.
+DEFAULT_OUT_DIR = Path("logs/analysis/fused_vs_triangulated")
 PELVIS_INDICES = (9, 10)
 SOURCES = ("face", "side", "fuse")
 
@@ -534,11 +538,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--align",
         choices=("none", "root", "similarity", "procrustes"),
-        default="root",
+        default="similarity",
         help=(
             "Alignment before computing Euclidean joint errors. 'similarity' "
-            "matches the fuse metric (one Sim3 per sequence) and makes "
-            "face/side/fuse mutually comparable."
+            "(default) matches the fuse metric (one Sim3 per sequence) and makes "
+            "face/side/fuse mutually comparable; 'root' leaves the ~87 deg "
+            "side-camera world-frame rotation inside the error."
         ),
     )
     return parser.parse_args()

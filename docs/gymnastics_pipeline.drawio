@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="26.0.0">
+  <diagram name="Gymnastics-Pipeline">
+    <mxGraphModel dx="1400" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1580" pageHeight="1180" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="Gymnastics 双视角 3D 关键点流水线（SAM3D → 三角化伪真值 → 融合 → 评估）" style="text;html=1;align=left;verticalAlign=middle;fontStyle=1;fontSize=16;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="60" y="20" width="900" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rawface" value="face 视频&#xa;raw/person/{id}/ID{id}_face.MOV" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="540" y="70" width="180" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="rawside" value="side 视频&#xa;raw/person/{id}/ID{id}_side.MOV" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="740" y="70" width="180" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="sam3d" value="① SAM3D-Body&#xa;python -m SAM3Dbody.main&#xa;逐帧 2D + 3D 关键点（每视角）&#xa;→ sam3d_body_results/person/{id}/{face,side}/*.npz" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontColor=#1a1a1a;" vertex="1" parent="1">
+          <mxGeometry x="530" y="170" width="400" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="split" value="② split_cycle&#xa;python -m split_cycle.main&#xa;face↔side 时间对齐 + 动作周期切分&#xa;→ alignment_record_{id}.json（offset_side_to_face, cycles）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontColor=#1a1a1a;" vertex="1" parent="1">
+          <mxGeometry x="530" y="320" width="400" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="calib" value="相机标定（内参）&#xa;棋盘格 K, dist（每台相机）&#xa;logs/calibration_vis/IMG_*/*.npz" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontColor=#1a1a1a;" vertex="1" parent="1">
+          <mxGeometry x="1120" y="180" width="320" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="gtband" value="三角化伪真值生成路径（GT path）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#82b366;dashed=1;verticalAlign=top;fontStyle=2;fontColor=#5b8a44;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="440" width="400" height="330" as="geometry" />
+        </mxCell>
+        <mxCell id="fuseband" value="融合路径（Fusion path）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#6c8ebf;dashed=1;verticalAlign=top;fontStyle=2;fontColor=#4a6a99;" vertex="1" parent="1">
+          <mxGeometry x="40" y="440" width="420" height="330" as="geometry" />
+        </mxCell>
+
+        <mxCell id="extr" value="③a triangulation.estimate_extrinsics&#xa;本质矩阵 RANSAC（旋转+平移方向）&#xa;+ Kabsch 单目3D 定尺度 + rig 聚类&#xa;→ estimated_extrinsics.json&#xa;[留出帧重投影 21→6 px；129逐人 + 8簇共识]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontColor=#1a1a1a;" vertex="1" parent="1">
+          <mxGeometry x="1110" y="470" width="360" height="120" as="geometry" />
+        </mxCell>
+
+        <mxCell id="tri" value="③b triangulation.sam3d_from_split_cycle&#xa;两视角 DLT 三角化 → 3D 伪真值&#xa;sam3d_triangulated/person/…&#xa;[重投影中位 6.1 px；重建身高中位 1.60 m]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontColor=#0e3d0e;fontStyle=1;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1110" y="640" width="360" height="110" as="geometry" />
+        </mxCell>
+
+        <mxCell id="fuse" value="④a python -m fuse — 9 种确定性方法&#xa;稳定关节 Sim3 / 身体坐标系对齐 + 双视角融合&#xa;→ fuse_experiments/{method}/…/fused_sequence.npz + 指标&#xa;推荐方法：avg_body_current" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontColor=#1a1a1a;" vertex="1" parent="1">
+          <mxGeometry x="60" y="470" width="380" height="120" as="geometry" />
+        </mxCell>
+
+        <mxCell id="net" value="④b fuse.rotation_aware — 学习式融合网络&#xa;自监督消融 A4 / A5 / A6&#xa;train → infer → evaluate&#xa;→ fuse_rotation_aware/…" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontColor=#1a1a1a;" vertex="1" parent="1">
+          <mxGeometry x="60" y="640" width="380" height="110" as="geometry" />
+        </mxCell>
+
+        <mxCell id="eval" value="⑤ 评估 / 分析（analysis/*, rotation_aware evaluate）&#xa;对三角化伪真值比较（similarity 逐序列 Sim3 对齐）&#xa;→ logs/fuse_experiments/RESULTS_SUMMARY.md&#xa;[融合 vs 单视角 −26%（100%人）；网络 ≈ 简单平均]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontColor=#1a1a1a;" vertex="1" parent="1">
+          <mxGeometry x="530" y="830" width="400" height="120" as="geometry" />
+        </mxCell>
+
+        <mxCell id="cls" value="⑥ project/train（可选下游）&#xa;用融合关键点（avg_body_current）做动作分类&#xa;→ logs/train/" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="540" y="1010" width="380" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_face" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.4;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="rawface" target="sam3d">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_side" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.6;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="rawside" target="sam3d">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_s2sp" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="sam3d" target="split">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_sp2extr" value="2D 对应 + 帧配对" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;labelBackgroundColor=#ffffff;fontSize=11;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="split" target="extr">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_sp2fuse" value="对齐后双视角 3D" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;labelBackgroundColor=#ffffff;fontSize=11;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.2;entryDx=0;entryDy=0;" edge="1" parent="1" source="split" target="fuse">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_calib2extr" value="内参 K, dist" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;labelBackgroundColor=#ffffff;fontSize=11;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="calib" target="extr">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_calib2tri" value="内参" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;labelBackgroundColor=#ffffff;fontSize=11;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.15;entryDx=0;entryDy=0;" edge="1" parent="1" source="calib" target="tri">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1530" y="220" />
+              <mxPoint x="1530" y="657" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e_extr2tri" value="逐人外参 R, t" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;labelBackgroundColor=#ffffff;fontSize=11;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="extr" target="tri">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_fuse2net" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;strokeColor=#9aa7b8;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fuse" target="net">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_fuse2eval" value="融合预测" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;labelBackgroundColor=#ffffff;fontSize=11;exitX=1;exitY=0.33;exitDx=0;exitDy=0;entryX=0;entryY=0.35;entryDx=0;entryDy=0;" edge="1" parent="1" source="fuse" target="eval">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="490" y="510" />
+              <mxPoint x="490" y="872" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_net2eval" value="网络预测" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;labelBackgroundColor=#ffffff;fontSize=11;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.7;entryDx=0;entryDy=0;" edge="1" parent="1" source="net" target="eval">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="470" y="695" />
+              <mxPoint x="470" y="914" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e_tri2eval" value="伪真值参考（reference）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;strokeColor=#82b366;strokeWidth=2;labelBackgroundColor=#ffffff;fontSize=11;fontColor=#5b8a44;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.8;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="tri" target="eval">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1290" y="800" />
+              <mxPoint x="850" y="800" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e_fuse2cls" value="avg_body_current 关键点" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;labelBackgroundColor=#ffffff;fontSize=11;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="fuse" target="cls">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="30" y="530" />
+              <mxPoint x="30" y="1050" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="legend" value="图例" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#666666;verticalAlign=top;fontStyle=1;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="60" y="820" width="360" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="lg1" value="" style="rounded=0;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="legend">
+          <mxGeometry x="12" y="34" width="28" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="lg1t" value="处理模块（SAM3D / split_cycle / fuse / 网络）" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" vertex="1" parent="legend">
+          <mxGeometry x="48" y="32" width="300" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="lg2" value="" style="rounded=0;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="legend">
+          <mxGeometry x="12" y="58" width="28" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="lg2t" value="相机标定内参（外部输入）" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" vertex="1" parent="legend">
+          <mxGeometry x="48" y="56" width="300" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="lg3" value="" style="rounded=0;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="legend">
+          <mxGeometry x="12" y="82" width="28" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="lg3t" value="外参估计（从数据自标定）" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" vertex="1" parent="legend">
+          <mxGeometry x="48" y="80" width="300" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="lg4" value="" style="rounded=0;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="legend">
+          <mxGeometry x="12" y="106" width="28" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="lg4t" value="三角化 3D 伪真值（评估参考）" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" vertex="1" parent="legend">
+          <mxGeometry x="48" y="104" width="300" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="lg5" value="" style="rounded=0;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="legend">
+          <mxGeometry x="12" y="130" width="28" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="lg5t" value="评估 / 报告" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" vertex="1" parent="legend">
+          <mxGeometry x="48" y="128" width="300" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="lg6" value="" style="rounded=0;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="legend">
+          <mxGeometry x="12" y="154" width="28" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="lg6t" value="原始输入 / 可选下游（虚线）" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" vertex="1" parent="legend">
+          <mxGeometry x="48" y="152" width="300" height="20" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
