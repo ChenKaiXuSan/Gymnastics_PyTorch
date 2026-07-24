@@ -21,6 +21,8 @@ ABLATION_REGISTRY = {
     "A4": "learned_spatial",
     "A5": "learned_rotation_temporal",
     "A6": "rotation_aware_self_supervised",
+    "A7": "learned_rom_peak",
+    "A8": "learned_twist_rom_peak",
 }
 
 
@@ -601,7 +603,7 @@ def discover_method_sequences(
             if not isinstance(diagnostics, dict):
                 diagnostics = {}
             learned_ablation = str(metadata.get("ablation", "A6"))
-            if learned_ablation not in {"A4", "A5", "A6"}:
+            if learned_ablation not in {"A4", "A5", "A6", "A7", "A8"}:
                 learned_ablation = "A6"
             frames = np.array(data["frame_valid"])
             joints = np.array(data["joint_valid"]) if "joint_valid" in data else None
@@ -726,7 +728,7 @@ def discover_method_sequences(
                 sequence
                 for sequence in found
                 if sequence.method
-                in {"A4", "A5", "A6", "rotation_aware_self_supervised"}
+                in {"A4", "A5", "A6", "A7", "A8", "rotation_aware_self_supervised"}
                 and sequence.face_map is not None
                 and sequence.side_map is not None
             ]

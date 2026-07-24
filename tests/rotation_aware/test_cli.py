@@ -215,10 +215,10 @@ def test_protected_evaluate_requires_one_resolved_protocol_token_before_output_p
 @pytest.mark.parametrize(
     ("schedule", "ablation", "message"),
     [
-        ({"A4": 200, "A5": 200}, "A6", "exactly A4, A5, and A6"),
+        ({"A4": 200, "A5": 200}, "A6", "must define epochs for A6"),
         ({"A4": 200, "A5": 200, "A6": 0}, "A6", "positive"),
-        ({"A4": 200, "A5": 200, "A6": 100}, "A7", "A4, A5, or A6"),
-        ({"A4": 200, "A5": 200, "A6": 100, "A7": 100}, "A6", "exactly A4, A5, and A6"),
+        ({"A4": 200, "A5": 200, "A6": 100}, "A7", "must define epochs for A7"),
+        ({"A4": 200, "X": 100}, "A4", "must be learned ablations"),
     ],
 )
 def test_training_schedule_rejects_invalid_ablation_or_epochs(
@@ -228,6 +228,15 @@ def test_training_schedule_rejects_invalid_ablation_or_epochs(
         _training_config_for_ablation(
             {"training": {"epochs_by_ablation": schedule}}, ablation
         )
+
+
+@pytest.mark.parametrize("ablation", ["A7", "A8"])
+def test_training_schedule_accepts_the_new_twist_ablations(ablation: str) -> None:
+    resolved = _training_config_for_ablation(
+        {"training": {"epochs_by_ablation": {"A6": 100, "A7": 30, "A8": 30}}}, ablation
+    )
+    assert resolved["epochs"] == 30
+    assert resolved["ablation"] == ablation
 
 
 def test_train_rejects_invalid_schedule_before_loading_cache(
@@ -251,7 +260,7 @@ def test_train_rejects_invalid_schedule_before_loading_cache(
 
     monkeypatch.setattr(cli, "_cached_trials_with_provenance", fail_if_cache_is_loaded)
 
-    with pytest.raises(ValueError, match="exactly A4, A5, and A6"):
+    with pytest.raises(ValueError, match="must define epochs for A6"):
         cli._cmd_train(
             Namespace(
                 run_id="ordering-test",

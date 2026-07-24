@@ -146,8 +146,17 @@ def resolve_fold(config: Mapping[str, Any], value: str | None) -> Path:
     return candidate
 
 
+# The learned (network) ablations. A4/A5/A6 are the original objective ladder;
+# A7/A8 are the twist-fusion matrix: A7 = A6 + per-view-peak ROM anchor (改法4),
+# A8 = A7 + rotation-parameterised trunk-twist residual (改法2). Kept additive so
+# A4/A5/A6 are byte-identical.
+LEARNED_ABLATIONS = ("A4", "A5", "A6", "A7", "A8")
+# Ablations whose model uses the opt-in twist residual (改法2).
+TWIST_ABLATIONS = frozenset({"A8"})
+
+
 def loss_config_for_ablation(ablation: str) -> LossConfig:
-    """Return the declared self-supervised objective set for A4--A6."""
+    """Return the declared self-supervised objective set for A4--A8."""
     full = LossConfig()
     if ablation == "A4":
         return replace(
@@ -161,7 +170,11 @@ def loss_config_for_ablation(ablation: str) -> LossConfig:
         return replace(full, complete_cycle_rom_weight=0.0)
     if ablation == "A6":
         return full
-    raise ValueError(f"learned ablation must be A4, A5, or A6: {ablation}")
+    if ablation in ("A7", "A8"):
+        # 改法4: full A6 objective plus the per-view-peak ROM anchor. A8 also flips
+        # on the twist residual in the model; the loss weights are identical.
+        return replace(full, complete_cycle_rom_peak_weight=1.0)
+    raise ValueError(f"learned ablation must be one of {LEARNED_ABLATIONS}: {ablation}")
 
 
 def _training_config_for_ablation(
@@ -171,12 +184,16 @@ def _training_config_for_ablation(
     training = dict(config.get("training", {}))
     schedule = training.pop("epochs_by_ablation", None)
     if schedule is not None:
-        if not isinstance(schedule, Mapping) or set(schedule) != {"A4", "A5", "A6"}:
+        if (
+            not isinstance(schedule, Mapping)
+            or not schedule
+            or not set(schedule).issubset(LEARNED_ABLATIONS)
+        ):
             raise ValueError(
-                "training.epochs_by_ablation must define exactly A4, A5, and A6"
+                f"training.epochs_by_ablation keys must be learned ablations {LEARNED_ABLATIONS}"
             )
         if ablation not in schedule:
-            raise ValueError(f"learned ablation must be A4, A5, or A6: {ablation}")
+            raise ValueError(f"epochs_by_ablation must define epochs for {ablation}")
         training["epochs"] = int(schedule[ablation])
     epochs = int(training.get("epochs", 1))
     if epochs < 1:
@@ -607,7 +624,9 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
         generator=generator,
     )
     model = RotationAwareFusionModel(
-        skeleton, hidden_channels=int(training.get("hidden_channels", 128))
+        skeleton,
+        hidden_channels=int(training.get("hidden_channels", 128)),
+        twist_residual=str(training.get("ablation", "")) in TWIST_ABLATIONS,
     )
     optimizer = torch.optim.Adam(
         model.parameters(), lr=float(training.get("learning_rate", 1e-3))
@@ -782,11 +801,13 @@ def _cmd_infer(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
         _validate_protocol_run_id(args.run_id, active_training)
         if not _validate_protocol_run_id(args.run_id, saved_training):
             raise ValueError("protected infer checkpoint is missing training.protocol")
+    saved_ablation = str(saved_training.get("ablation", "A6"))
     model = RotationAwareFusionModel(
-        skeleton, hidden_channels=int(saved_training.get("hidden_channels", 128))
+        skeleton,
+        hidden_channels=int(saved_training.get("hidden_channels", 128)),
+        twist_residual=saved_ablation in TWIST_ABLATIONS,
     )
     payload = load_checkpoint(checkpoint, model)
-    saved_ablation = str(saved_training.get("ablation", "A6"))
     if args.ablation and args.ablation != saved_ablation:
         raise ValueError(
             f"--ablation {args.ablation} does not match checkpoint ablation {saved_ablation}"
@@ -1061,7 +1082,7 @@ def make_parser() -> argparse.ArgumentParser:
         if name in {"train", "infer"}:
             child.add_argument("--run-id")
             child.add_argument(
-                "--ablation", choices=[f"A{index}" for index in range(4, 7)]
+                "--ablation", choices=list(LEARNED_ABLATIONS)
             )
         if name == "evaluate":
             child.add_argument("--run-id", action="append")
