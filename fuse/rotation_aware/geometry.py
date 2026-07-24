@@ -162,3 +162,53 @@ def restore_pose(points: Tensor, transform: CanonicalTransform) -> Tensor:
     return (
         points * transform.scale[:, None, None, None]
     ) @ transform.rotation.transpose(-1, -2) + transform.origin[:, :, None, :]
+
+
+def apply_axial_twist(
+    points: Tensor,
+    valid: Tensor,
+    delta_theta: Tensor,
+    spec: SkeletonSpec,
+    *,
+    gate_sharpness: float = 8.0,
+) -> tuple[Tensor, Tensor]:
+    """改法2: rotate points about the pelvis long axis by a height-graded twist.
+
+    ``delta_theta`` ([B, T], radians) is a per-frame trunk-twist correction applied
+    about the pelvis frame's long (y) axis. Each joint's rotation angle is scaled
+    by a smooth sigmoid gate on its signed height above the pelvis origin along
+    that axis: upper body (torso / arms / head) receives the full twist, legs
+    receive ~0. This is a rigid, skeleton-agnostic twist -- a physically meaningful
+    residual for a trunk-rotation task, and one that also acts on single-view
+    frames (unlike a free 3D delta gated to both-view joints).
+
+    Note: the pelvis frame is defined partly from the pelvis->thorax direction,
+    so rotating the upper body also rotates the pelvis frame; the *measured*
+    pelvis->thorax twist therefore changes by a stable sub-unity (~0.5),
+    pose-dependent gain rather than 1:1. That is fine for a learned residual (the
+    network simply commands a larger angle) -- ``max_twist`` is set accordingly.
+
+    Returns the twisted points ([B, T, J, 3]) and the pelvis-frame validity
+    ([B, T]); frames without a valid pelvis frame keep the original points.
+    """
+    if points.ndim != 4 or points.shape[-1] != 3:
+        raise ValueError("points must have shape [B, T, J, 3]")
+    if valid.shape != points.shape[:-1]:
+        raise ValueError("valid must have shape [B, T, J]")
+    if delta_theta.shape != points.shape[:2]:
+        raise ValueError("delta_theta must have shape [B, T]")
+    pelvis = build_pelvis_frame(points, valid, spec)
+    axis = pelvis.rotation[..., :, 1]  # [B, T, 3] unit long axis in world coords
+    origin = pelvis.origin[..., None, :]  # [B, T, 1, 3]
+    rel = points - origin  # [B, T, J, 3]
+    height = (rel * axis[..., None, :]).sum(dim=-1)  # [B, T, J]
+    gate = torch.sigmoid(gate_sharpness * height)  # ~1 above pelvis, ~0 in the legs
+    angle = (gate * delta_theta[..., None])[..., None]  # [B, T, J, 1]
+    cos, sin = torch.cos(angle), torch.sin(angle)
+    k = axis[..., None, :].expand_as(rel)  # [B, T, J, 3]
+    k_cross_v = torch.cross(k, rel, dim=-1)
+    k_dot_v = (k * rel).sum(dim=-1, keepdim=True)
+    rotated = rel * cos + k_cross_v * sin + k * k_dot_v * (1.0 - cos)  # Rodrigues
+    twisted = origin + rotated
+    applicable = pelvis.valid[..., None] & valid.bool()
+    return torch.where(applicable[..., None], twisted, points), pelvis.valid

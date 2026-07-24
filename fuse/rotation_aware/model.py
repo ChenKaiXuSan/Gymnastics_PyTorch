@@ -11,6 +11,7 @@ from torch import Tensor, nn
 from .base_fusion import quality_weighted_fusion
 from .config import SkeletonSpec
 from .features import DisagreementFeatures, FeatureBundle
+from .geometry import apply_axial_twist
 from .trunk import extract_trunk_features
 
 
@@ -136,10 +137,15 @@ class RotationAwareFusionModel(nn.Module):
         *,
         hidden_channels: int = 128,
         max_delta_by_joint: float | Tensor | Sequence[float] = 0.05,
+        twist_residual: bool = False,
+        max_twist: float = 1.0,
+        twist_gate_sharpness: float = 8.0,
     ) -> None:
         super().__init__()
         if hidden_channels <= 0:
             raise ValueError("hidden_channels must be positive")
+        if max_twist < 0:
+            raise ValueError("max_twist must be non-negative")
         self.spec = spec
         self.joint_count = len(spec.joint_names)
         self.view_encoder = SharedViewEncoder(hidden_channels)
@@ -154,6 +160,12 @@ class RotationAwareFusionModel(nn.Module):
         )
         self.tcn = DilatedResidualTCN(hidden_channels)
         self.delta_head = nn.Linear(hidden_channels, 3)
+        # 改法2: opt-in rotation-parameterised trunk-twist residual. Off by default
+        # so A4/A5/A6 are byte-identical; new ablations turn it on.
+        self.twist_residual = bool(twist_residual)
+        self.max_twist = float(max_twist)
+        self.twist_gate_sharpness = float(twist_gate_sharpness)
+        self.twist_head = nn.Linear(hidden_channels, 1) if self.twist_residual else None
         limits = self._residual_limits(max_delta_by_joint)
         self.register_buffer("max_delta_by_joint", limits)
 
@@ -336,12 +348,28 @@ class RotationAwareFusionModel(nn.Module):
         raw_delta = self.delta_head(temporal.reshape(batch, joints, channels, frames).permute(0, 3, 1, 2))
         bounded_delta = torch.tanh(raw_delta) * self.max_delta_by_joint[None, None, :, None].to(dtype=face.dtype)
         delta = torch.where(effective_mask[..., None], bounded_delta, torch.zeros_like(bounded_delta))
-        fused = base.points + delta
+        if self.twist_residual and self.twist_head is not None:
+            # Pool the per-joint fused features to one per-frame vector, predict a
+            # bounded trunk-twist correction, and apply it about the pelvis long
+            # axis before the free residual. The twist acts on every joint above
+            # the pelvis, including single-view frames.
+            pool_mask = effective_mask.to(fused_features.dtype)[..., None]
+            pooled = (fused_features * pool_mask).sum(dim=2) / pool_mask.sum(dim=2).clamp_min(1.0)
+            raw_twist = self.twist_head(pooled)[..., 0]
+            delta_theta = torch.tanh(raw_twist) * self.max_twist
+            delta_theta = torch.where(temporal_valid, delta_theta, torch.zeros_like(delta_theta))
+            twisted_base, _ = apply_axial_twist(
+                base.points, base.valid, delta_theta, self.spec,
+                gate_sharpness=self.twist_gate_sharpness,
+            )
+            fused = twisted_base + delta
+        else:
+            fused = base.points + delta
         fused_trunk = extract_trunk_features(fused, base.valid, self.spec, dt=dt)
         return FusionOutput(
             fused_kpts=fused,
             base_kpts=base.points,
-            delta_kpts=delta,
+            delta_kpts=fused - base.points,
             valid=base.valid,
             fused_theta=fused_trunk.angle,
             fused_theta_valid=fused_trunk.angle_valid,

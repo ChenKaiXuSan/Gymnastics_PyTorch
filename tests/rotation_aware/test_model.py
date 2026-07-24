@@ -140,6 +140,50 @@ def _rebuild_inputs(
     return face_features, side_features, cross
 
 
+def test_apply_axial_twist_shifts_trunk_twist_by_commanded_angle_and_is_identity_at_zero() -> None:
+    from fuse.rotation_aware.geometry import apply_axial_twist
+    from fuse.rotation_aware.trunk import axial_rotation_angle_from_points, circular_diff
+
+    points, valid = synthetic_mhr70_pose(theta_deg=20.0, frames=4)
+    angle0, valid0 = axial_rotation_angle_from_points(points, valid, SPEC)
+
+    # Zero twist is an exact identity.
+    identity, _ = apply_axial_twist(points, valid, torch.zeros(points.shape[:2]), SPEC)
+    torch.testing.assert_close(identity, points, atol=1e-6, rtol=0)
+
+    # A command shifts the measured pelvis->thorax twist in the same direction,
+    # proportionally and bounded (the pelvis frame co-rotates, giving a stable
+    # ~0.5 sub-unity gain), and the shift is antisymmetric in the command sign.
+    shifts = {}
+    for command in (0.3, -0.3):
+        twisted, _ = apply_axial_twist(
+            points, valid, torch.full(points.shape[:2], command), SPEC
+        )
+        assert torch.isfinite(twisted).all()
+        angle1, valid1 = axial_rotation_angle_from_points(twisted, valid, SPEC)
+        shifts[command] = circular_diff(angle1, angle0)[valid0 & valid1]
+        assert (shifts[command] * command > 0).all()  # same direction everywhere
+        mean_abs = shifts[command].abs().mean().item()
+        assert 0.1 < mean_abs < abs(command)  # proportional and strictly bounded
+    torch.testing.assert_close(shifts[0.3], -shifts[-0.3], atol=1e-4, rtol=0)
+
+
+def test_twist_residual_is_opt_in_runs_and_flows_gradient_to_the_twist_head() -> None:
+    torch.manual_seed(0)
+    face, side, ff, sf, cross, vf, vs = _inputs()
+
+    assert RotationAwareFusionModel(SPEC, hidden_channels=16).twist_head is None
+
+    model = RotationAwareFusionModel(SPEC, hidden_channels=16, twist_residual=True)
+    out = model(face, side, ff, sf, cross, vf, vs)
+    assert torch.isfinite(out.fused_kpts).all() and torch.isfinite(out.delta_kpts).all()
+
+    out.fused_kpts.sum().backward()
+    assert model.twist_head is not None
+    grad = model.twist_head.weight.grad
+    assert grad is not None and torch.isfinite(grad).all() and grad.abs().sum() > 0
+
+
 def test_model_uses_shared_encoders_and_the_required_noncausal_tcn_schedule() -> None:
     model = RotationAwareFusionModel(SPEC, hidden_channels=16)
 
