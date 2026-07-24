@@ -7,10 +7,17 @@ self-supervised face/side SAM3D-Body 3D-keypoint fusion. It consumes only the
 two SAM3D 3D keypoint streams and produces complete 70-joint sequences.
 
 The existing `python -m fuse` command, its nine methods, and
-`logs/fuse_experiments` remain deterministic comparison experiments. In
-particular, `sim3_face_stable_smooth_kpt` remains the established comparison
-baseline. The rotation-aware route never overwrites or trains inside that
-directory.
+`logs/fuse_experiments` remain deterministic comparison experiments. The
+established comparison baseline is `avg_body_current`: on the regenerated
+triangulated pseudo-ground-truth it is the best leakage-free deterministic
+method (mean person MPJPE 64.05 mm, better than every other leakage-free method
+on 69-100% of the 137 people). It replaces the earlier baseline
+`sim3_face_stable_smooth_kpt`, which the regenerated GT ranks sixth; runs
+recorded against that older baseline are not directly comparable to ones scored
+against `avg_body_current`. Note that `sim3_face_stable_joint_weight` scores
+marginally lower still but derives its per-joint weights from the triangulated
+GT it is then evaluated against, so it is excluded as a biased baseline. The
+rotation-aware route never overwrites or trains inside that directory.
 
 Time alignment is strict: the adapter reads only
 `logs/split_cycle/person_<id>/alignment_record_<id>.json` and its

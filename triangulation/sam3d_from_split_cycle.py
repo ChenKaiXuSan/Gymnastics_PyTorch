@@ -340,9 +340,9 @@ def process_person(
     output_root: Path,
     face_calib: Dict[str, np.ndarray],
     side_calib: Dict[str, np.ndarray],
-    rt_info: Dict[int, Dict[str, np.ndarray]],
-    face_camera_id: int,
-    side_camera_id: int,
+    face_rt: Dict[str, np.ndarray],
+    side_rt: Dict[str, np.ndarray],
+    extrinsics_source: str,
     vis_stride: int,
     save_vis: bool,
     make_video: bool,
@@ -367,8 +367,8 @@ def process_person(
             output_person_root=output_person_root,
             face_calib=face_calib,
             side_calib=side_calib,
-            face_rt=rt_info[face_camera_id],
-            side_rt=rt_info[side_camera_id],
+            face_rt=face_rt,
+            side_rt=side_rt,
             vis_stride=vis_stride,
             save_vis=save_vis,
             make_video=make_video,
@@ -381,8 +381,9 @@ def process_person(
     person_summary = {
         "person_id": person_id,
         "alignment_record": str(record_path),
-        "face_camera_id": face_camera_id,
-        "side_camera_id": side_camera_id,
+        "extrinsics_source": extrinsics_source,
+        "face_extrinsics": {"R": face_rt["R"].tolist(), "t": face_rt["t"].tolist()},
+        "side_extrinsics": {"R": side_rt["R"].tolist(), "t": side_rt["t"].tolist()},
         "face_calibration": str(face_calib["path"]),
         "side_calibration": str(side_calib["path"]),
         "cycles": summaries,
@@ -415,6 +416,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-frames", type=int, default=None)
     parser.add_argument("--no-vis", action="store_true")
     parser.add_argument("--no-video", action="store_true")
+    parser.add_argument(
+        "--assumed-extrinsics",
+        action="store_true",
+        help="Force the legacy synthetic camera layout instead of estimated extrinsics.",
+    )
     return parser.parse_args()
 
 
@@ -442,16 +448,39 @@ def main() -> None:
         side_calib = {"path": np.asarray("camera_K"), "K": K_for_camera_vis, "dist": dist}
         image_size = cfg["camera_K"]["image_size"]
 
-    camera_output = output_root / "_camera"
+    # The synthetic layout assumes one shared rig for everybody. The cameras were
+    # actually re-positioned between sessions, so prefer per-person extrinsics
+    # recovered by triangulation.estimate_extrinsics when they are available.
+    extrinsics_cfg = cfg.get("extrinsics", {}) or {}
+    source = str(extrinsics_cfg.get("source", "assumed")).lower()
+    if args.assumed_extrinsics:
+        source = "assumed"
+    estimated: Dict[str, Any] = {}
+    if source == "estimated":
+        path = Path(extrinsics_cfg["path"])
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"extrinsics.source is 'estimated' but {path} is missing; "
+                "run `python -m triangulation.estimate_extrinsics` first."
+            )
+        estimated = json.loads(path.read_text(encoding="utf-8"))["persons"]
+        print(f"[INFO] Using estimated per-person extrinsics from {path}")
+
+    # The synthetic-layout figures describe the assumed rig, so they only belong
+    # in the dataset when that rig is what actually produced the 3D. With
+    # estimated extrinsics, `triangulation.estimate_extrinsics --camera-figure-dir`
+    # draws the recovered geometry instead.
     cam = prepare_camera_position(
         K=K_for_camera_vis,
         yaws=cfg["camera_position"]["yaws"],
         T=cfg["camera_position"]["T"],
         r=cfg["camera_position"]["r"],
         z=cfg["camera_position"]["z"],
-        output_path=str(camera_output),
+        output_path=str(output_root / "_camera") if source != "estimated" else None,
         img_size=image_size,
     )
+    assumed_face_rt = cam["rt_info"][int(cfg["view_camera"]["face"])]
+    assumed_side_rt = cam["rt_info"][int(cfg["view_camera"]["side"])]
 
     wanted = set(str(p) for p in args.person) if args.person else None
     records = sorted(split_root.glob("person_*/alignment_record_*.json"))
@@ -465,6 +494,21 @@ def main() -> None:
     summaries = []
     for record_path in records:
         print(f"[INFO] Processing {record_path}")
+        person_id = record_path.parent.name.removeprefix("person_")
+        entry = estimated.get(person_id)
+        if entry is not None:
+            # The face camera defines the world frame for estimated extrinsics.
+            face_rt = {"R": np.eye(3, dtype=np.float32), "t": np.zeros(3, dtype=np.float32)}
+            side_rt = {
+                "R": np.asarray(entry["R"], dtype=np.float32),
+                "t": np.asarray(entry["t"], dtype=np.float32),
+            }
+            person_source = f"estimated:{entry.get('method', 'per_person')}"
+        else:
+            if source == "estimated":
+                print(f"[WARN] No estimated extrinsics for person {person_id}; using assumed layout")
+            face_rt, side_rt = assumed_face_rt, assumed_side_rt
+            person_source = "assumed"
         summaries.append(
             process_person(
                 record_path=record_path,
@@ -472,9 +516,9 @@ def main() -> None:
                 output_root=output_root,
                 face_calib=face_calib,
                 side_calib=side_calib,
-                rt_info=cam["rt_info"],
-                face_camera_id=int(cfg["view_camera"]["face"]),
-                side_camera_id=int(cfg["view_camera"]["side"]),
+                face_rt=face_rt,
+                side_rt=side_rt,
+                extrinsics_source=person_source,
                 vis_stride=int(cfg["visualization"]["vis_stride"]),
                 save_vis=bool(cfg["visualization"]["save_frames"]) and not args.no_vis,
                 make_video=bool(cfg["visualization"]["make_video"]) and not args.no_video,

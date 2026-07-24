@@ -5,6 +5,64 @@ It contains the code that triangulates face/side 2D keypoints into 3D joints,
 the supporting visualization helpers, and the reporting tools for generated
 triangulated results.
 
+## Camera Extrinsics
+
+Intrinsics come from chessboard calibration, but the extrinsics used to be taken
+from a synthetic layout in `configs/sam3d_triangulation.yaml` (four cameras on a
+3.5 m circle, face/side assumed exactly 90 deg apart with a 4.95 m baseline)
+shared by every person. The rig was in fact re-positioned between sessions, so
+that single assumed pose fits nobody well: held-out reprojection error runs about
+25 px on average and reaches 58 px on the worst people.
+
+Estimate the real per-person extrinsics from the SAM3D correspondences first:
+
+```bash
+conda run -n gymnastic python -m triangulation.estimate_extrinsics
+```
+
+This writes `logs/analysis/extrinsics/estimated_extrinsics.json`, which
+`sam3d_from_split_cycle` picks up via the `extrinsics` block in the config. Pass
+`--assumed-extrinsics` to that script to force the legacy layout instead.
+
+Compare the two sources on reprojection error, shape error against SAM3D's own
+monocular 3D, and bone-length stability:
+
+```bash
+conda run -n gymnastic python triangulation/tools/compare_extrinsics.py
+```
+
+## Metric Scale
+
+Two-view geometry is scale-free, so reprojection error cannot detect a wrong
+baseline length: scaling the baseline scales the whole reconstruction and leaves
+every projection untouched (locked in by
+`tests/test_estimate_extrinsics.py::test_reprojection_error_is_blind_to_baseline_scale`).
+Metric scale therefore rests entirely on SAM3D's monocular 3D, which this module
+rescales from SAM3D's assumed focal length to the calibrated one.
+
+What that does and does not affect:
+
+* **Method rankings and relative comparisons are unaffected.** `fuse` measures
+  error after a per-sequence Sim3 fit, which absorbs any uniform scale error.
+* **Absolute millimetres are proportional to it.** If the true scale is `s` times
+  the current one, every reported MPJPE is off by the same `s`.
+
+Two ways to handle it without a calibration target:
+
+```bash
+# Report errors as a fraction of each subject's own body size -- cancels s exactly.
+conda run -n gymnastic python analysis/normalize_by_body_scale.py
+```
+
+That tool also prints the recovered limb-chain lengths and the implied `s` for a
+range of candidate true statures, which bounds the scale error from anthropometry
+alone.
+
+To pin `s` down properly, the recordings were made on a matted hall floor whose
+seams form a regular grid in both views. Judo tatami are manufactured to
+standard dimensions, so measuring one mat edge in a frame gives a direct metric
+reference; that is the cheapest route to a calibrated scale if it is needed.
+
 ## Main Workflow
 
 Triangulate SAM3D-Body 2D keypoints using cycle-level face/side alignment
@@ -95,8 +153,10 @@ logs/analysis/triangulated_results/triangulated_person_summary.csv
 ## Related Code
 
 - `sam3d_from_split_cycle.py`: active SAM3D-Body face/side triangulation path.
+- `estimate_extrinsics.py`: recovers per-person face/side extrinsics from the data.
 - `main.py`: older support triangulation path.
-- `camera_position_mapping.py`: camera calibration and pose selection helpers.
+- `camera_position_mapping.py`: synthetic camera layout, used for the pose figures
+  and as the fallback when `extrinsics.source` is `assumed`.
 - `load.py`: keypoint loading utilities.
 - `save.py`: 3D joint output helpers.
 - `vis/`: 3D pose and frame/video visualization helpers.
@@ -114,5 +174,6 @@ logs/analysis/triangulated_results/triangulated_person_summary.csv
 Focused tests:
 
 ```bash
-conda run -n gymnastic python -m pytest tests/test_sam3d_triangulation.py tests/test_compare_fused_triangulated.py
+conda run -n gymnastic python -m pytest tests/test_sam3d_triangulation.py \
+    tests/test_estimate_extrinsics.py tests/test_compare_fused_triangulated.py
 ```

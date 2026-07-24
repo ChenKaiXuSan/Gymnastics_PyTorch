@@ -444,23 +444,24 @@ def prepare_camera_position(
             "C": ext.C,
         }
 
-    # —— 可视化 & 多视图导出 ——
+    # —— 可视化 & 多视图导出（output_path 为 None 时只返回外参，不出图）——
     K_map = {cid: K for cid in CAMERA_LAYOUT.keys()}
-    
-    draw_cameras_matplotlib(
-        extr_map,
-        K_map=K_map,
-        img_size=img_size,
-        frustum_depth=0.6,
-        axis_len=0.25,
-        save_path=os.path.join(output_path, "camera_poses.png"),
-    )
-    save_multi_views(
-        extr_map,
-        K_map=K_map,
-        img_size=img_size,
-        save_prefix=os.path.join(output_path, "camera_poses"),
-    )
+
+    if output_path is not None:
+        draw_cameras_matplotlib(
+            extr_map,
+            K_map=K_map,
+            img_size=img_size,
+            frustum_depth=0.6,
+            axis_len=0.25,
+            save_path=os.path.join(output_path, "camera_poses.png"),
+        )
+        save_multi_views(
+            extr_map,
+            K_map=K_map,
+            img_size=img_size,
+            save_prefix=os.path.join(output_path, "camera_poses"),
+        )
 
     return {
         "layout": CAMERA_LAYOUT,  # {cid: {"pos": (x, y, z), "target": T}}

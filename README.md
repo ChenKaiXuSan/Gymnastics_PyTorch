@@ -103,10 +103,10 @@ Read the split-cycle offset, run the recommended fusion method, and compare the
 result with triangulated pseudo-GT:
 
 ```bash
-conda run -n gymnastic python -m fuse --methods sim3_face_stable_smooth_kpt
+conda run -n gymnastic python -m fuse --methods avg_body_current
 ```
 
-Omit `--methods sim3_face_stable_smooth_kpt` to run the complete experiment
+Omit `--methods avg_body_current` to run the complete experiment
 matrix.
 
 The existing `python -m fuse` nine-method matrix and

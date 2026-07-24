@@ -15,7 +15,8 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 import numpy as np
 
 DEFAULT_SAM3D_ROOT = Path("/home/data/xchen/gymnastics/sam3d_body_results")
-DEFAULT_FUSED_ROOT = Path("/home/data/xchen/gymnastics/fused_kpt")
+DEFAULT_FUSED_ROOT = Path("logs/fuse_experiments")
+DEFAULT_FUSED_METHOD = "sim3_face_stable_joint_weight"
 DEFAULT_TRIANGULATED_ROOT = Path("/home/data/xchen/gymnastics/sam3d_triangulated/person")
 DEFAULT_OUT_DIR = Path("logs/analysis/source_vs_triangulated_by_person")
 PELVIS_INDICES = (9, 10)
@@ -81,6 +82,37 @@ def load_fused_world_sequence(person_root: Path, metadata: Mapping[str, Any]) ->
     return np.stack(frames, axis=0)
 
 
+def load_fused_person(
+    fused_root: Path, person_id: str, method: str | None
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Fused world sequence plus its face/side frame maps, in either layout.
+
+    ``fuse.experiment_matrix`` writes ``<root>/<method>/person_<id>/fused_sequence.npz``
+    holding everything needed.  The retired ``fused_kpt`` pipeline instead wrote a
+    metadata JSON beside one npz per frame; that layout is still accepted so older
+    exports keep working.
+    """
+    if method:
+        sequence_path = fused_root / method / f"person_{person_id}" / "fused_sequence.npz"
+    else:
+        sequence_path = fused_root / f"person_{person_id}" / "fused_sequence.npz"
+    if sequence_path.exists():
+        with np.load(sequence_path) as data:
+            return (
+                np.asarray(data["kpts_world"], dtype=np.float32),
+                np.asarray(data["face_map"], dtype=np.int32),
+                np.asarray(data["side_map"], dtype=np.int32),
+            )
+
+    person_root = fused_root / f"person_{person_id}"
+    metadata = load_fused_metadata(person_root, person_id)
+    return (
+        load_fused_world_sequence(person_root, metadata),
+        np.asarray(metadata["face_map"], dtype=np.int32),
+        np.asarray(metadata["side_map"], dtype=np.int32),
+    )
+
+
 def sam3d_view_dir(sam3d_root: Path, person_id: str, view: str) -> Path:
     if sam3d_root.name == "sam3d_body_results":
         return sam3d_root / "person" / person_id / view
@@ -139,11 +171,27 @@ def align_sequences(
     triangulated: np.ndarray,
     mode: str,
 ) -> Tuple[np.ndarray, np.ndarray, float]:
-    """Align sequences before error computation."""
+    """Align a candidate sequence to the triangulated frame before scoring.
+
+    ``root`` removes only the pelvis translation, so any static rotation or scale
+    difference between the SAM3D world frame and the calibrated triangulation
+    frame stays inside the error -- this is what inflates the raw ``side`` number.
+
+    ``similarity`` fits one similarity transform for the whole sequence, removing
+    exactly that static frame and scale mismatch while leaving per-frame pose
+    error measurable. It matches ``fuse.experiment_matrix``'s default alignment,
+    so face/side/fuse become mutually comparable and comparable to the fuse MPJPE.
+
+    ``procrustes`` fits a transform per frame and therefore also absorbs per-frame
+    orientation error; it is a shape-error lower bound, not a pose metric.
+    """
     if mode == "none":
         return candidate, triangulated, 1.0
     if mode == "root":
         return candidate - pelvis_center(candidate), triangulated - pelvis_center(triangulated), 1.0
+    if mode == "similarity":
+        aligned, scale = similarity_align_sequence(candidate, triangulated)
+        return aligned, triangulated, scale
     if mode == "procrustes":
         aligned = np.empty_like(candidate, dtype=np.float32)
         scales: List[float] = []
@@ -152,6 +200,44 @@ def align_sequences(
             scales.append(scale)
         return aligned, triangulated, float(np.nanmean(scales)) if scales else 1.0
     raise ValueError(f"Unsupported alignment mode: {mode}")
+
+
+def similarity_align_sequence(
+    candidate: np.ndarray, triangulated: np.ndarray
+) -> Tuple[np.ndarray, float]:
+    """Fit one similarity transform over the whole sequence and apply it.
+
+    All finite (frame, joint) correspondences are pooled and a single rotation,
+    scale, and translation are solved, then applied to every candidate point.
+    NaNs are preserved so downstream masking is unchanged.
+    """
+    flat_src = candidate.reshape(-1, 3)
+    flat_dst = triangulated.reshape(-1, 3)
+    valid = np.isfinite(flat_src).all(axis=1) & np.isfinite(flat_dst).all(axis=1)
+    if valid.sum() < 3:
+        return candidate.astype(np.float32), 1.0
+
+    src = flat_src[valid].astype(np.float64)
+    dst = flat_dst[valid].astype(np.float64)
+    src_mean = src.mean(axis=0)
+    dst_mean = dst.mean(axis=0)
+    src0 = src - src_mean
+    dst0 = dst - dst_mean
+
+    norm_src = np.linalg.norm(src0)
+    norm_dst = np.linalg.norm(dst0)
+    if norm_src < 1e-8 or norm_dst < 1e-8:
+        return candidate.astype(np.float32), 1.0
+
+    u, _, vt = np.linalg.svd((src0 / norm_src).T @ (dst0 / norm_dst))
+    rotation = u @ vt
+    if np.linalg.det(rotation) < 0:
+        vt[-1, :] *= -1
+        rotation = u @ vt
+
+    scale = norm_dst / norm_src
+    aligned = (flat_src - src_mean) @ rotation * scale + dst_mean
+    return aligned.reshape(candidate.shape).astype(np.float32), float(scale)
 
 
 def procrustes_align(source: np.ndarray, target: np.ndarray) -> Tuple[np.ndarray, float]:
@@ -261,14 +347,10 @@ def compare_person(
     sam3d_root: Path,
     fused_root: Path,
     align: str,
+    fused_method: str | None,
 ) -> List[PersonSourceComparison]:
-    fused_person_root = fused_root / f"person_{person_id}"
-    metadata = load_fused_metadata(fused_person_root, person_id)
-    fused_world = load_fused_world_sequence(fused_person_root, metadata)
-    fused_pair_index = build_fused_pair_index(
-        np.asarray(metadata["face_map"], dtype=np.int32),
-        np.asarray(metadata["side_map"], dtype=np.int32),
-    )
+    fused_world, face_map, side_map = load_fused_person(fused_root, person_id, fused_method)
+    fused_pair_index = build_fused_pair_index(face_map, side_map)
 
     face_world = load_sam3d_world_by_frame(sam3d_root, person_id, "face")
     side_world = load_sam3d_world_by_frame(sam3d_root, person_id, "side")
@@ -315,6 +397,7 @@ def compare_all_by_person(
     person_ids: Sequence[str] | None,
     align: str,
     num_workers: int,
+    fused_method: str | None = DEFAULT_FUSED_METHOD,
 ) -> Tuple[List[PersonSourceComparison], List[str]]:
     rows: List[PersonSourceComparison] = []
     warnings: List[str] = []
@@ -332,6 +415,7 @@ def compare_all_by_person(
                         sam3d_root=sam3d_root,
                         fused_root=fused_root,
                         align=align,
+                        fused_method=fused_method,
                     )
                 )
             except Exception as exc:
@@ -347,6 +431,7 @@ def compare_all_by_person(
                 sam3d_root,
                 fused_root,
                 align,
+                fused_method,
             ): person_id_from_dir(tri_person_root)
             for tri_person_root in person_dirs
         }
@@ -437,15 +522,24 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--sam3d-root", type=Path, default=DEFAULT_SAM3D_ROOT)
     parser.add_argument("--fused-root", type=Path, default=DEFAULT_FUSED_ROOT)
+    parser.add_argument(
+        "--fused-method",
+        default=DEFAULT_FUSED_METHOD,
+        help="Fusion method subdirectory under --fused-root. Pass '' for a flat layout.",
+    )
     parser.add_argument("--triangulated-root", type=Path, default=DEFAULT_TRIANGULATED_ROOT)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--person", nargs="*", default=None, help="Optional person ids, e.g. 27 29")
     parser.add_argument("--num-workers", type=int, default=1, help="Number of persons to process in parallel.")
     parser.add_argument(
         "--align",
-        choices=("none", "root", "procrustes"),
+        choices=("none", "root", "similarity", "procrustes"),
         default="root",
-        help="Alignment before computing Euclidean joint errors.",
+        help=(
+            "Alignment before computing Euclidean joint errors. 'similarity' "
+            "matches the fuse metric (one Sim3 per sequence) and makes "
+            "face/side/fuse mutually comparable."
+        ),
     )
     return parser.parse_args()
 
@@ -459,6 +553,7 @@ def main() -> None:
         person_ids=args.person,
         align=args.align,
         num_workers=max(1, int(args.num_workers)),
+        fused_method=args.fused_method or None,
     )
     write_outputs(rows, warnings, args.out_dir, args.align)
     summary = overall_summary(rows)

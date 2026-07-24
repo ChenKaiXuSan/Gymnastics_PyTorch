@@ -28,7 +28,7 @@ data:
     video_path: ${data.root_path}/raw/person # 暂时不使用kpt
     sam_3d_body_results_path: ${data.root_path}/sam3d_body_results/person # 没有标签的训练数据
     split_cycle: logs/split_cycle # 活动的 split cycle 结果（相对仓库根目录）
-    fused_kpt_path: logs/fuse_experiments/sim3_face_stable_smooth_kpt # 融合后的关键点（相对仓库根目录）
+    fused_kpt_path: logs/fuse_experiments/avg_body_current # 融合后的关键点（推荐方法，相对仓库根目录）
 
   annotation_path: ${data.root_path}/高齢者体回旋20260513.xlsx
 

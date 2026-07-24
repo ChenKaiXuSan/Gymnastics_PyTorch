@@ -99,7 +99,23 @@ sed -n '1,220p' logs/split_cycle/person_46/alignment_record_46.json
 
 - 两个视角的 SAM3D 2D 关键点。
 - `alignment_record_46.json` 中的周期帧记录和时间偏移。
-- `configs/sam3d_triangulation.yaml` 指向的 face/side 相机标定文件。
+- `configs/sam3d_triangulation.yaml` 指向的 face/side 相机标定文件（内参）。
+- `logs/analysis/extrinsics/estimated_extrinsics.json` 中的逐人外参。
+
+内参来自棋盘格标定，外参必须先从数据中估计出来。相机在不同拍摄场次之间被重新摆放过，
+`configs/sam3d_triangulation.yaml` 里的 `camera_position` 合成布局对所有人共用一套位姿，
+留出帧重投影误差中位约 21 px、最差 57 px；逐人估计后降到约 6 px。若外参文件不存在，
+三角化会直接报错：
+
+```bash
+conda run -n gymnastic python -m triangulation.estimate_extrinsics
+```
+
+对比新旧外参对三角化质量的影响（重投影、与单目 3D 的形状误差、骨长稳定性）：
+
+```bash
+conda run -n gymnastic python triangulation/tools/compare_extrinsics.py
+```
 
 可以先处理一个周期的两个帧，确认加载和标定流程可用：
 
@@ -146,14 +162,14 @@ side_reprojection_error_mean_px
 以 face 为参考，用推荐方法处理 person `46`：
 
 ```bash
-conda run -n gymnastic python -m fuse --person 46 --methods sim3_face_stable_smooth_kpt
+conda run -n gymnastic python -m fuse --person 46 --methods avg_body_current
 ```
 
 主要输出：
 
 ```text
-logs/fuse_experiments/sim3_face_stable_smooth_kpt/person_46/fused_sequence.npz
-logs/fuse_experiments/sim3_face_stable_smooth_kpt/person_46/config.json
+logs/fuse_experiments/avg_body_current/person_46/fused_sequence.npz
+logs/fuse_experiments/avg_body_current/person_46/config.json
 logs/fuse_experiments/metrics_by_person.csv
 logs/fuse_experiments/metrics_by_joint.csv
 ```
@@ -204,7 +220,7 @@ conda run -n gymnastic python -m project.train.train
 conda run -n gymnastic python -m SAM3Dbody.main
 conda run -n gymnastic python -m split_cycle.main
 conda run -n gymnastic python -m triangulation.sam3d_from_split_cycle
-conda run -n gymnastic python -m fuse --methods sim3_face_stable_smooth_kpt
+conda run -n gymnastic python -m fuse --methods avg_body_current
 ```
 
 如需运行全部九种融合方法的实验矩阵，使用：
@@ -234,7 +250,7 @@ conda run -n gymnastic python -m split_cycle.main --raw-root /path/to/gymnastics
 `fuse` 也需要显式指定 SAM3D、三角化和切分记录目录：
 
 ```bash
-conda run -n gymnastic python -m fuse --sam3d-root /path/to/gymnastics/sam3d_body_results --triangulated-root /path/to/gymnastics/sam3d_triangulated/person --split-root logs/split_cycle --methods sim3_face_stable_smooth_kpt
+conda run -n gymnastic python -m fuse --sam3d-root /path/to/gymnastics/sam3d_body_results --triangulated-root /path/to/gymnastics/sam3d_triangulated/person --split-root logs/split_cycle --methods avg_body_current
 ```
 
 如果同时自定义 `--log-root`，后续三角化配置中的 `paths.split_cycle_root` 和融合命令的 `--split-root` 必须指向同一目录。

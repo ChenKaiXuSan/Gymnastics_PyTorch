@@ -97,7 +97,7 @@ python -m pytest tests/test_sam3d_triangulation.py tests/test_compare_fused_tria
 The current preferred fusion method is:
 
 ```text
-sim3_face_stable_smooth_kpt
+avg_body_current
 ```
 
 Current fuse behavior:
@@ -164,10 +164,18 @@ logs/split_cycle/person_<id>/alignment_record_<id>.json
 The current recommended fuse method is:
 
 ```text
-sim3_face_stable_smooth_kpt
+avg_body_current
 ```
 
-This method uses face as the reference, aligns side to face with Sim3 estimated from stable joints, averages face and aligned side, and then smooths the fused 3D keypoints over time.
+This method maps both views into a pelvis-centred, rotation-normalised body frame,
+averages them there, and maps the result back into the face view's world frame.
+
+It was selected on the regenerated triangulated pseudo-ground-truth (mean person
+MPJPE 64.05 mm, better than every other leakage-free method on 69-100% of the 137
+people, Holm-corrected Wilcoxon p < 1e-4). Note that `sim3_face_stable_joint_weight`
+scores lower still (63.48 mm) but derives its per-joint weights from the
+triangulated GT it is then evaluated against, so its number is optimistically
+biased and it is not a valid recommendation.
 
 ### Labels And Splits
 
