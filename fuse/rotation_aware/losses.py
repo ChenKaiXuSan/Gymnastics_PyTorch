@@ -256,13 +256,25 @@ def _twist_overshoot_loss(
     frame), positive only on over-rotation. This blocks the twist residual from
     overshooting without suppressing twist up to the observed level, so it does
     not fight the per-view-peak ROM anchor (改法4).
+
+    Angular velocity is a temporal derivative, so ``omega`` is undefined (nan/inf)
+    at padded or run-boundary frames. Those values are sanitised to a finite 0
+    *before* any arithmetic: a non-finite value surviving into ``square`` would
+    make its backward (``grad_out * 2 * value``) nan even where ``grad_out`` is 0,
+    poisoning the gradient of the whole network. Keep every tensor finite here.
     """
-    observed_envelope = torch.maximum(
-        torch.where(valid_face, omega_face.abs(), torch.zeros_like(omega_face)),
-        torch.where(valid_side, omega_side.abs(), torch.zeros_like(omega_side)),
-    )
-    rate_mask = fused_valid & (valid_face | valid_side)
-    overshoot = torch.relu(fused_omega.abs() - observed_envelope)
+
+    def _finite_abs(omega: Tensor, valid: Tensor) -> tuple[Tensor, Tensor]:
+        keep = valid.bool() & torch.isfinite(omega)
+        safe = torch.where(keep, omega, torch.zeros_like(omega))
+        return safe.abs(), keep
+
+    face_abs, face_keep = _finite_abs(omega_face, valid_face)
+    side_abs, side_keep = _finite_abs(omega_side, valid_side)
+    observed_envelope = torch.maximum(face_abs, side_abs)
+    fused_abs, fused_keep = _finite_abs(fused_omega, fused_valid)
+    rate_mask = fused_keep & (face_keep | side_keep)
+    overshoot = torch.relu(fused_abs - observed_envelope)
     return _finite_masked_mean(overshoot.square(), rate_mask)
 
 

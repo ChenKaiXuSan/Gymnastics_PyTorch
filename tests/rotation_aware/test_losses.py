@@ -217,6 +217,32 @@ def test_twist_overshoot_is_zero_within_envelope_and_positive_beyond_it() -> Non
     assert over.grad is not None and torch.isfinite(over.grad).all() and over.grad.abs().sum() > 0
 
 
+def test_twist_overshoot_gradient_is_finite_despite_nan_at_masked_frames() -> None:
+    # Regression: omega is a temporal derivative, so it is nan/inf at padded or
+    # run-boundary frames. A non-finite value reaching `square` makes its backward
+    # (grad_out * 2 * value) nan even where grad_out is 0 -- which previously
+    # poisoned every network weight and diverged training in ~1 epoch. The loss
+    # must sanitise inputs so the gradient is finite and driven only by the valid,
+    # over-rotating frames.
+    from fuse.rotation_aware.losses import _twist_overshoot_loss
+
+    valid = torch.tensor([[True, True, True, False]])  # last frame padded
+    omega_face = torch.tensor([[0.0, 0.3, 0.4, float("nan")]])
+    omega_side = torch.tensor([[0.0, 0.2, 0.1, float("inf")]])  # envelope frame2 = 0.4
+
+    fused = torch.tensor(
+        [[0.0, 0.3, 1.0, float("nan")]], requires_grad=True  # frame2 overshoots; frame3 nan+masked
+    )
+    loss = _twist_overshoot_loss(fused, valid, omega_face, valid, omega_side, valid)
+    # only the valid over-rotating frame (|1.0|-0.4)=0.6 contributes; masked nan frame ignored
+    assert loss.item() == pytest.approx((0.6**2) / 3, abs=1e-6)
+    loss.backward()
+    assert fused.grad is not None
+    assert torch.isfinite(fused.grad).all()  # no nan leaks from the masked frame
+    assert fused.grad[0, 3].item() == 0.0  # masked frame contributes exactly zero gradient
+    assert fused.grad[0, 2].item() != 0.0  # the overshooting frame carries the signal
+
+
 def test_rom_peak_anchors_to_the_wider_view_not_the_average() -> None:
     # face twists 1.0 rad, side 0.6 rad, fused only 0.5 -> the target must be the
     # larger view ROM (1.0), NOT the averaged pseudo-target, so the shrunk fused
