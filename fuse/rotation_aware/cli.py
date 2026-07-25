@@ -150,9 +150,9 @@ def resolve_fold(config: Mapping[str, Any], value: str | None) -> Path:
 # A7/A8 are the twist-fusion matrix: A7 = A6 + per-view-peak ROM anchor (改法4),
 # A8 = A7 + rotation-parameterised trunk-twist residual (改法2). Kept additive so
 # A4/A5/A6 are byte-identical.
-LEARNED_ABLATIONS = ("A4", "A5", "A6", "A7", "A8")
+LEARNED_ABLATIONS = ("A4", "A5", "A6", "A7", "A8", "A9")
 # Ablations whose model uses the opt-in twist residual (改法2).
-TWIST_ABLATIONS = frozenset({"A8"})
+TWIST_ABLATIONS = frozenset({"A8", "A9"})
 
 
 def loss_config_for_ablation(ablation: str) -> LossConfig:
@@ -174,6 +174,12 @@ def loss_config_for_ablation(ablation: str) -> LossConfig:
         # 改法4: full A6 objective plus the per-view-peak ROM anchor. A8 also flips
         # on the twist residual in the model; the loss weights are identical.
         return replace(full, complete_cycle_rom_peak_weight=1.0)
+    if ablation == "A9":
+        # 改法3: A8 + the observed twist-rate anchor that restrains the twist
+        # residual from over-rotating.
+        return replace(
+            full, complete_cycle_rom_peak_weight=1.0, observed_twist_rate_weight=1.0
+        )
     raise ValueError(f"learned ablation must be one of {LEARNED_ABLATIONS}: {ablation}")
 
 

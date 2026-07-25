@@ -32,6 +32,9 @@ class LossConfig:
     # coordinate-space averaging systematically shrinks the twist. Weight 0 keeps
     # A4/A5/A6 byte-identical; the new ablations turn it on.
     complete_cycle_rom_peak_weight: float = 0.0
+    # 改法3: anchor the fused trunk-twist rate to the per-view observed rate, so the
+    # twist residual cannot over-rotate. Default 0 keeps A4-A8 unchanged.
+    observed_twist_rate_weight: float = 0.0
     consensus_distance: float = 0.10
     quality_advantage_ratio: float = 1.5
     epsilon: float = 1e-6
@@ -55,6 +58,7 @@ class LossConfig:
             "minimal_residual": self.minimal_residual_weight,
             "complete_cycle_rom": self.complete_cycle_rom_weight,
             "complete_cycle_rom_peak": self.complete_cycle_rom_peak_weight,
+            "observed_twist_rate": self.observed_twist_rate_weight,
         }
 
 
@@ -72,6 +76,7 @@ class LossBreakdown:
     minimal_residual: Tensor
     complete_cycle_rom: Tensor
     complete_cycle_rom_peak: Tensor
+    observed_twist_rate: Tensor
     total: Tensor
 
     def as_dict(self) -> dict[str, Tensor]:
@@ -86,6 +91,7 @@ class LossBreakdown:
             "minimal_residual": self.minimal_residual,
             "complete_cycle_rom": self.complete_cycle_rom,
             "complete_cycle_rom_peak": self.complete_cycle_rom_peak,
+            "observed_twist_rate": self.observed_twist_rate,
             "total": self.total,
         }
 
@@ -429,11 +435,17 @@ def compute_self_supervised_losses(
     complete = _complete_cycle_mask(batch, frames, fused.device, batch_size=batch_size)
     complete_cycle_rom = _rom_loss(fused_trunk.angle, target_trunk.angle, axial_mask, complete)
 
-    # 改法4: only pay the per-view-peak ROM cost when its weight is active, since
-    # it needs two extra trunk extractions on the clean references.
-    if config.complete_cycle_rom_peak_weight > 0:
+    # 改法4/改法3 both need each clean view's own trunk kinematics; extract once
+    # when either weight is active (two extra trunk extractions on the references).
+    need_view_trunks = (
+        config.complete_cycle_rom_peak_weight > 0 or config.observed_twist_rate_weight > 0
+    )
+    if need_view_trunks:
         face_ref_trunk = extract_trunk_features(reference_face, valid_face, skeleton, dt=dt)
         side_ref_trunk = extract_trunk_features(reference_side, valid_side, skeleton, dt=dt)
+
+    # 改法4: anchor the fused twist range-of-motion to the wider per-view ROM.
+    if config.complete_cycle_rom_peak_weight > 0:
         complete_cycle_rom_peak = _rom_peak_loss(
             fused_trunk.angle,
             face_ref_trunk.angle,
@@ -446,6 +458,26 @@ def compute_self_supervised_losses(
     else:
         complete_cycle_rom_peak = fused.new_zeros(())
 
+    # 改法3: anchor the fused twist RATE to the per-view observed twist rate so the
+    # twist residual cannot over-rotate. Observation = each clean view's own trunk
+    # omega (computing twist per-view then constraining avoids the coordinate-
+    # averaging shrinkage, and bounds the magnitude to what the cameras saw).
+    if config.observed_twist_rate_weight > 0:
+        omega_face, valid_of = face_ref_trunk.omega, face_ref_trunk.omega_valid
+        omega_side, valid_os = side_ref_trunk.omega, side_ref_trunk.omega_valid
+        both = valid_of & valid_os
+        observed_omega = torch.where(
+            both,
+            0.5 * (omega_face + omega_side),
+            torch.where(valid_of, omega_face, omega_side),
+        )
+        rate_mask = fused_trunk.omega_valid & (valid_of | valid_os)
+        observed_twist_rate = _finite_masked_mean(
+            (fused_trunk.omega - observed_omega).square(), rate_mask
+        )
+    else:
+        observed_twist_rate = fused.new_zeros(())
+
     values = {
         "corruption_recovery": corruption_recovery,
         "high_consensus_identity": high_consensus_identity,
@@ -457,6 +489,7 @@ def compute_self_supervised_losses(
         "minimal_residual": minimal_residual,
         "complete_cycle_rom": complete_cycle_rom,
         "complete_cycle_rom_peak": complete_cycle_rom_peak,
+        "observed_twist_rate": observed_twist_rate,
     }
     total = fused.new_zeros(())
     for name, value in values.items():

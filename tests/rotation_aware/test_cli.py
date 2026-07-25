@@ -230,10 +230,25 @@ def test_training_schedule_rejects_invalid_ablation_or_epochs(
         )
 
 
-@pytest.mark.parametrize("ablation", ["A7", "A8"])
+def test_twist_ablation_loss_and_model_flags_are_correct() -> None:
+    from fuse.rotation_aware.cli import loss_config_for_ablation, TWIST_ABLATIONS
+
+    # A6 baseline untouched; A7 adds the ROM-peak anchor; A8 adds the twist model;
+    # A9 adds the observed twist-rate anchor (改法3).
+    assert loss_config_for_ablation("A6").complete_cycle_rom_peak_weight == 0.0
+    assert loss_config_for_ablation("A6").observed_twist_rate_weight == 0.0
+    assert loss_config_for_ablation("A7").complete_cycle_rom_peak_weight == 1.0
+    assert loss_config_for_ablation("A7").observed_twist_rate_weight == 0.0
+    assert loss_config_for_ablation("A9").complete_cycle_rom_peak_weight == 1.0
+    assert loss_config_for_ablation("A9").observed_twist_rate_weight == 1.0
+    assert TWIST_ABLATIONS == {"A8", "A9"}  # only these flip on the twist residual
+
+
+@pytest.mark.parametrize("ablation", ["A7", "A8", "A9"])
 def test_training_schedule_accepts_the_new_twist_ablations(ablation: str) -> None:
     resolved = _training_config_for_ablation(
-        {"training": {"epochs_by_ablation": {"A6": 100, "A7": 30, "A8": 30}}}, ablation
+        {"training": {"epochs_by_ablation": {"A6": 100, "A7": 30, "A8": 30, "A9": 30}}},
+        ablation,
     )
     assert resolved["epochs"] == 30
     assert resolved["ablation"] == ablation
