@@ -49,8 +49,15 @@ def _derivative(values: Tensor, valid: Tensor, dt: Tensor, *, circular: bool) ->
     if values.shape[1] < 2:
         return result, result_valid
     difference = circular_diff(values[:, 1:], values[:, :-1]) if circular else values[:, 1:] - values[:, :-1]
-    delta = difference / dt[:, 1:]
-    delta_valid = valid[:, 1:] & valid[:, :-1] & torch.isfinite(dt[:, 1:]) & (dt[:, 1:] > 0)
+    dt_slice = dt[:, 1:]
+    delta_valid = valid[:, 1:] & valid[:, :-1] & torch.isfinite(dt_slice) & (dt_slice > 0)
+    # Divide by a guaranteed-positive denominator so an invalid (dt<=0 / padded)
+    # frame never divides by zero. The `where` below already zeroes those frames'
+    # VALUES; the safe denominator also keeps the division's BACKWARD finite
+    # (grad * 1/dt would otherwise be 0 * inf = nan and poison every upstream
+    # gradient the moment anyone differentiates omega/alpha, e.g. 改法3 / A9).
+    safe_dt = torch.where(delta_valid, dt_slice, torch.ones_like(dt_slice))
+    delta = difference / safe_dt
     result[:, 1:] = torch.where(delta_valid, delta, torch.zeros_like(delta))
     result_valid[:, 1:] = delta_valid
     return result, result_valid

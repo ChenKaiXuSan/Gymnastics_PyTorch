@@ -65,3 +65,21 @@ def test_trunk_features_never_emit_nan_for_masked_roles():
     assert torch.isfinite(features.angle).all()
     assert torch.isfinite(features.omega).all()
     assert torch.isfinite(features.alpha).all()
+
+
+def test_trunk_omega_gradient_is_finite_when_dt_has_a_zero_padded_frame():
+    # Regression for the A9 (改法3) divergence: omega = d(angle)/dt divides by the
+    # per-frame interval, which is 0 at padded frames. The value was already zeroed
+    # for those frames, but the division's backward is grad * (1/dt) = 0 * inf = nan
+    # -- which poisoned every upstream gradient and diverged training to all-nan in
+    # ~1 epoch. Differentiating omega through a dt=0 frame must stay finite.
+    pose, valid = synthetic_mhr70_pose(theta_deg=15.0, frames=4)
+    pose = pose.clone().requires_grad_(True)
+    dt = torch.tensor([[1.0, 1.0, 0.0, 1.0]])  # frame 2 is padded: dt = 0
+
+    features = extract_trunk_features(pose, valid, SPEC, dt=dt)
+    # differentiate through omega (the derivative that divides by dt)
+    features.omega.sum().backward()
+
+    assert pose.grad is not None
+    assert torch.isfinite(pose.grad).all()
