@@ -7,6 +7,7 @@ import csv
 import fcntl
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess
@@ -733,8 +734,12 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
             f"loss={float(row['loss']):.6g} val_score={float(score):.6g}",
             flush=True,
         )
-        if score >= best:
-            best = score
+        # Save on improvement (finite scores behave exactly as before). If the
+        # validation score is non-finite (e.g. nan), still persist the latest
+        # weights so a completed run never ends up with no checkpoint at all.
+        if not math.isfinite(score) or score >= best:
+            if math.isfinite(score):
+                best = score
             save_checkpoint(
                 run / "checkpoints" / "best.pt",
                 model,

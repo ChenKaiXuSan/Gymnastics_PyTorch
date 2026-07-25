@@ -195,6 +195,28 @@ def test_so3_exact_agreement_has_finite_backward_gradient() -> None:
     assert torch.isfinite(fused.grad).all()
 
 
+def test_twist_overshoot_is_zero_within_envelope_and_positive_beyond_it() -> None:
+    # 改法3 is a one-sided bound. Within the wider per-view twist rate it must be
+    # exactly zero (so it never suppresses the twist / fights 改法4); beyond it, it
+    # penalises the excess and carries gradient.
+    from fuse.rotation_aware.losses import _twist_overshoot_loss
+
+    valid = torch.ones((1, 4), dtype=torch.bool)
+    omega_face = torch.tensor([[0.0, 0.3, -0.4, 0.5]])
+    omega_side = torch.tensor([[0.0, 0.2, -0.6, 0.1]])  # envelope = max|.| = [0,.3,.6,.5]
+
+    within = torch.tensor([[0.0, 0.25, -0.5, 0.4]])  # everywhere <= envelope
+    loss_within = _twist_overshoot_loss(within, valid, omega_face, valid, omega_side, valid)
+    assert loss_within.item() == pytest.approx(0.0, abs=1e-7)
+
+    over = torch.tensor([[0.0, 0.3, -1.0, 0.5]], requires_grad=True)  # frame2 |1.0|>0.6
+    loss_over = _twist_overshoot_loss(over, valid, omega_face, valid, omega_side, valid)
+    # only the excess (1.0-0.6)=0.4 on one of four frames contributes
+    assert loss_over.item() == pytest.approx((0.4**2) / 4, abs=1e-6)
+    loss_over.backward()
+    assert over.grad is not None and torch.isfinite(over.grad).all() and over.grad.abs().sum() > 0
+
+
 def test_rom_peak_anchors_to_the_wider_view_not_the_average() -> None:
     # face twists 1.0 rad, side 0.6 rad, fused only 0.5 -> the target must be the
     # larger view ROM (1.0), NOT the averaged pseudo-target, so the shrunk fused

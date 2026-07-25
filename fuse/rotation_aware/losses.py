@@ -32,8 +32,9 @@ class LossConfig:
     # coordinate-space averaging systematically shrinks the twist. Weight 0 keeps
     # A4/A5/A6 byte-identical; the new ablations turn it on.
     complete_cycle_rom_peak_weight: float = 0.0
-    # 改法3: anchor the fused trunk-twist rate to the per-view observed rate, so the
-    # twist residual cannot over-rotate. Default 0 keeps A4-A8 unchanged.
+    # 改法3: one-sided penalty on fused twist rate exceeding the wider per-view
+    # rate (observed envelope). Bounds over-rotation without suppressing the twist.
+    # Default 0 keeps A4-A8 unchanged.
     observed_twist_rate_weight: float = 0.0
     consensus_distance: float = 0.10
     quality_advantage_ratio: float = 1.5
@@ -238,6 +239,31 @@ def _rom_loss(prediction: Tensor, target: Tensor, valid: Tensor, complete: Tenso
     if not values:
         return prediction.new_zeros(())
     return torch.stack(values).mean()
+
+
+def _twist_overshoot_loss(
+    fused_omega: Tensor,
+    fused_valid: Tensor,
+    omega_face: Tensor,
+    valid_face: Tensor,
+    omega_side: Tensor,
+    valid_side: Tensor,
+) -> Tensor:
+    """改法3: penalise fused twist speed exceeding the wider per-view speed.
+
+    One-sided (hinge) bound: zero while the fused twist rate stays within the
+    observed envelope (the larger |omega| a calibrated view actually saw that
+    frame), positive only on over-rotation. This blocks the twist residual from
+    overshooting without suppressing twist up to the observed level, so it does
+    not fight the per-view-peak ROM anchor (改法4).
+    """
+    observed_envelope = torch.maximum(
+        torch.where(valid_face, omega_face.abs(), torch.zeros_like(omega_face)),
+        torch.where(valid_side, omega_side.abs(), torch.zeros_like(omega_side)),
+    )
+    rate_mask = fused_valid & (valid_face | valid_side)
+    overshoot = torch.relu(fused_omega.abs() - observed_envelope)
+    return _finite_masked_mean(overshoot.square(), rate_mask)
 
 
 def _rom_peak_loss(
@@ -458,22 +484,21 @@ def compute_self_supervised_losses(
     else:
         complete_cycle_rom_peak = fused.new_zeros(())
 
-    # 改法3: anchor the fused twist RATE to the per-view observed twist rate so the
-    # twist residual cannot over-rotate. Observation = each clean view's own trunk
-    # omega (computing twist per-view then constraining avoids the coordinate-
-    # averaging shrinkage, and bounds the magnitude to what the cameras saw).
+    # 改法3: one-sided anchor on the fused twist RATE. Penalise it only when it
+    # exceeds the wider per-view twist speed (the observed envelope = the larger
+    # |omega| a calibrated camera actually saw that frame). This blocks the twist
+    # residual from over-rotating (A8's failure) WITHOUT suppressing the twist up
+    # to the observed level, so it does not fight the per-view-peak ROM anchor
+    # (改法4). A plain equality anchor to the average rate would instead cancel the
+    # twist entirely.
     if config.observed_twist_rate_weight > 0:
-        omega_face, valid_of = face_ref_trunk.omega, face_ref_trunk.omega_valid
-        omega_side, valid_os = side_ref_trunk.omega, side_ref_trunk.omega_valid
-        both = valid_of & valid_os
-        observed_omega = torch.where(
-            both,
-            0.5 * (omega_face + omega_side),
-            torch.where(valid_of, omega_face, omega_side),
-        )
-        rate_mask = fused_trunk.omega_valid & (valid_of | valid_os)
-        observed_twist_rate = _finite_masked_mean(
-            (fused_trunk.omega - observed_omega).square(), rate_mask
+        observed_twist_rate = _twist_overshoot_loss(
+            fused_trunk.omega,
+            fused_trunk.omega_valid,
+            face_ref_trunk.omega,
+            face_ref_trunk.omega_valid,
+            side_ref_trunk.omega,
+            side_ref_trunk.omega_valid,
         )
     else:
         observed_twist_rate = fused.new_zeros(())
