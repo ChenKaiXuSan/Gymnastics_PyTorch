@@ -3,10 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from gymnastics.benchmarks.unity.evaluation import (
-    EvaluationBundle,
     angular_residual_deg,
     build_reference_sequence,
     evaluate_method_sequence,
