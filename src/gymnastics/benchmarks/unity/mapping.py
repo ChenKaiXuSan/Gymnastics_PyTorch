@@ -59,6 +59,10 @@ _DERIVED = {
     "LeftToes": (15, 16),
     "RightToes": (18, 19),
 }
+MHR70_EVALUATION_SOURCES = {
+    name: (_DIRECT[name],) if name in _DIRECT else _DERIVED[name]
+    for name in EVALUATION_JOINT_NAMES
+}
 
 
 def map_mhr70_to_unity(
