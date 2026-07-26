@@ -6,6 +6,7 @@ import numpy as np
 
 from gymnastics.benchmarks.unity.dataset import load_unity_benchmark
 from gymnastics.benchmarks.unity.sam3d import (
+    _read_rgb_image,
     load_sam3d_camera_cache,
     run_sam3d_inference,
 )
@@ -100,3 +101,17 @@ def test_detection_failure_is_explicit_and_keeps_frame_position(
     assert cached.sample_ids.tolist() == [0]
     assert not cached.valid_3d.any()
     assert cached.failures == {0: "no_person_detected"}
+
+
+def test_image_loader_converts_opencv_bgr_to_rgb(tmp_path: Path) -> None:
+    import cv2
+
+    path = tmp_path / "pixel.png"
+    cv2.imwrite(
+        str(path),
+        np.asarray([[[1, 2, 3]]], dtype=np.uint8),
+    )
+
+    image = _read_rgb_image(path)
+
+    assert image.tolist() == [[[3, 2, 1]]]

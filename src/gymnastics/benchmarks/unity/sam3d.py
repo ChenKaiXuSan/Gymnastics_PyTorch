@@ -44,6 +44,15 @@ def _default_estimator_factory(config_path: Path, device: str):
     return setup_sam_3d_body(config)
 
 
+def _read_rgb_image(path: Path) -> np.ndarray | None:
+    import cv2
+
+    image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    if image is None:
+        return None
+    return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+
 def _cache_path(output_root: Path, camera_id: str, sample_id: int) -> Path:
     return Path(output_root) / camera_id / f"{sample_id:08d}.npz"
 
@@ -159,14 +168,12 @@ def run_sam3d_inference(
 
     estimator = None
     if pending:
-        import cv2
-
         factory = estimator_factory or _default_estimator_factory
         estimator = factory(Path(config_path), device)
         for sample_id in pending:
             frame = by_id[sample_id]
             image_path = frame.image_paths[camera_id]
-            image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+            image = _read_rgb_image(image_path)
             if image is None:
                 failures[sample_id] = "image_read_failed"
                 continue
