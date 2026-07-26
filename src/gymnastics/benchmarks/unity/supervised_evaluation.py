@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -139,6 +140,7 @@ def aggregate_finetuned_results(
             "seeds": 3,
             "runs": 6,
             "ranking_group": "unity_supervised",
+            "training_supervision": "Unity GT used for training",
         }
         for metric in _metric_names(chunks):
             fold_values = {
@@ -393,3 +395,310 @@ def build_finetuned_bundle(
         static_diagnostics=static_diagnostics,
         provenance=MappingProxyType(dict(provenance)),
     )
+
+
+def _plain(value):
+    if isinstance(value, Mapping):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_plain(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, float) and not np.isfinite(value):
+        return None
+    return value
+
+
+def _atomic_csv(path: Path, rows: Sequence[Mapping[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    fields: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in fields:
+                fields.append(key)
+    with temporary.open("w", newline="", encoding="utf-8") as handle:
+        if fields:
+            writer = csv.DictWriter(handle, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(_plain(rows))
+    temporary.replace(path)
+
+
+def _atomic_json(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(_plain(payload), indent=2, sort_keys=True, allow_nan=False),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def _markdown_table(
+    rows: Sequence[Mapping[str, object]],
+    columns: Sequence[str],
+) -> list[str]:
+    if not rows:
+        return ["_No results._"]
+    lines = [
+        "| " + " | ".join(columns) + " |",
+        "|" + "|".join("---" for _ in columns) + "|",
+    ]
+    for row in rows:
+        values = []
+        for column in columns:
+            value = row.get(column, "")
+            values.append(f"{value:.3f}" if isinstance(value, float) else str(value))
+        lines.append("| " + " | ".join(values) + " |")
+    return lines
+
+
+def _baseline_rows(
+    baseline_results: Mapping[str, object],
+    name: str,
+) -> tuple[Mapping[str, object], ...]:
+    rows = baseline_results.get(name, ())
+    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+        raise ValueError(f"baseline {name} must be a sequence")
+    return tuple(
+        row for row in rows if isinstance(row, Mapping)
+    )
+
+
+def write_finetuned_report(
+    bundle: FineTunedEvaluationBundle,
+    output_root: Path,
+    *,
+    baseline_results: Mapping[str, object],
+) -> Path:
+    """Publish strict supervised and zero-shot rankings without leakage mixing."""
+    output_root = Path(output_root)
+    evaluation_root = output_root / "evaluation"
+    report_root = output_root / "report"
+    figures_root = report_root / "figures"
+    figures_root.mkdir(parents=True, exist_ok=True)
+    for name in (
+        "run_results",
+        "by_fold",
+        "by_ablation",
+        "by_joint",
+        "by_visibility",
+    ):
+        _atomic_csv(
+            evaluation_root / f"{name}.csv",
+            bundle.tables[name],
+        )
+    _atomic_csv(
+        evaluation_root / "static_diagnostics.csv",
+        bundle.tables["static_diagnostics"],
+    )
+    per_frame = {
+        (
+            f"{result.ablation}__{result.fold}__seed{result.seed}"
+            f"__{result.split_kind}"
+        ): result.evaluation.errors_m
+        for result in bundle.run_results
+    }
+    np.savez_compressed(
+        evaluation_root / "per_frame_errors.npz", **per_frame
+    )
+
+    forbidden = {
+        "triangulation_oracle2d",
+        "sim3_face_stable_joint_weight",
+    }
+    baseline_valid = tuple(
+        row
+        for row in _baseline_rows(baseline_results, "valid_ranking")
+        if str(row.get("method", "")) not in forbidden
+        and str(row.get("ranking_group", "valid")) == "valid"
+    )
+    zero_shot = tuple(
+        row
+        for row in baseline_valid
+        if str(row.get("method", "")).startswith("A")
+    )
+    valid_nonlearned = tuple(
+        row
+        for row in baseline_valid
+        if not str(row.get("method", "")).startswith("A")
+    )
+    diagnostics = _baseline_rows(baseline_results, "diagnostics")
+    machine = {
+        "supervised_ranking": bundle.supervised_ranking,
+        "zero_shot_ranking": zero_shot,
+        "valid_nonlearned_ranking": valid_nonlearned,
+        "diagnostics": diagnostics,
+        "failures": bundle.failures,
+        "tables": bundle.tables,
+        "provenance": bundle.provenance,
+    }
+    _atomic_json(report_root / "results.json", machine)
+
+    zero_by_method = {
+        str(row["method"]): row for row in zero_shot
+    }
+    valid_by_method = {
+        str(row["method"]): row for row in valid_nonlearned
+    }
+    conclusions: list[str] = []
+    if bundle.supervised_ranking:
+        best = bundle.supervised_ranking[0]
+        ablation = str(best["ablation"])
+        fine = float(best["macro_mpjpe_mm"])
+        conclusions.append(
+            f"- Best direction-held-out fine-tuned model: `{ablation}` at "
+            f"{fine:.3f} mm macro MPJPE."
+        )
+        matching = zero_by_method.get(ablation)
+        if matching is not None:
+            zero = float(matching["mpjpe_mm"])
+            change = fine - zero
+            percentage = change / zero * 100.0
+            direction = "improvement" if change < 0 else "degradation"
+            conclusions.append(
+                f"- Versus matching zero-shot `{ablation}` ({zero:.3f} mm): "
+                f"{abs(change):.3f} mm / {abs(percentage):.2f}% {direction}."
+            )
+        direct = valid_by_method.get("avg_world_face_ref")
+        if direct is not None:
+            direct_value = float(direct["mpjpe_mm"])
+            relation = "beats" if fine < direct_value else "does not beat"
+            conclusions.append(
+                f"- It {relation} the best direct-fusion reference "
+                f"({direct_value:.3f} mm)."
+            )
+        triangulation = valid_by_method.get("triangulation_sam3d2d")
+        if triangulation is not None:
+            triangulation_value = float(triangulation["mpjpe_mm"])
+            relation = "beats" if fine < triangulation_value else "does not approach"
+            conclusions.append(
+                f"- It {relation} SAM3D-2D triangulation "
+                f"({triangulation_value:.3f} mm)."
+            )
+        fold_rows = [
+            row
+            for row in bundle.tables["by_fold"]
+            if row["ablation"] == ablation
+        ]
+        if len(fold_rows) == 2:
+            conclusions.append(
+                "- Direction means: "
+                + ", ".join(
+                    f"{row['fold']}={float(row['mean_mpjpe_mm']):.3f} mm"
+                    for row in fold_rows
+                )
+                + "."
+            )
+        static = next(
+            (
+                row
+                for row in bundle.static_diagnostics
+                if row["ablation"] == ablation
+            ),
+            None,
+        )
+        if static is not None:
+            conclusions.append(
+                "- Static OOD: "
+                f"{float(static['mean_mpjpe_mm']):.3f} ± "
+                f"{float(static['std_mpjpe_mm']):.3f} mm across runs."
+            )
+
+    try:
+        import matplotlib.pyplot as plt
+
+        methods = [
+            str(row["ablation"]) for row in bundle.supervised_ranking
+        ]
+        if methods:
+            supervised_values = [
+                float(row["macro_mpjpe_mm"])
+                for row in bundle.supervised_ranking
+            ]
+            zero_values = [
+                float(zero_by_method[method]["mpjpe_mm"])
+                if method in zero_by_method
+                else np.nan
+                for method in methods
+            ]
+            positions = np.arange(len(methods))
+            figure, axis = plt.subplots(figsize=(9, 5))
+            axis.bar(
+                positions - 0.2,
+                zero_values,
+                width=0.4,
+                label="Zero-shot",
+            )
+            axis.bar(
+                positions + 0.2,
+                supervised_values,
+                width=0.4,
+                label="Unity-supervised",
+            )
+            axis.set_xticks(positions, methods)
+            axis.set_ylabel("MPJPE (mm)")
+            axis.legend()
+            figure.tight_layout()
+            figure.savefig(
+                figures_root / "zero_shot_vs_supervised_mpjpe.png",
+                dpi=160,
+            )
+            plt.close(figure)
+    except ImportError:
+        pass
+
+    lines = [
+        "# Unity-Supervised Training",
+        "",
+        "Unity GT used for training; ranking evidence comes only from the "
+        "held-out motion direction.",
+        "",
+        "## Direction-Held-Out Results",
+        "",
+        *conclusions,
+        "",
+        *_markdown_table(
+            bundle.supervised_ranking,
+            (
+                "ablation",
+                "macro_mpjpe_mm",
+                "seed_std_mpjpe_mm",
+                "macro_angle_mae_deg",
+            ),
+        ),
+        "",
+        "## Zero-Shot vs Fine-Tuned",
+        "",
+        *_markdown_table(
+            zero_shot,
+            ("method", "mpjpe_mm", "angle_mae_deg"),
+        ),
+        "",
+        "## Static OOD Diagnostic",
+        "",
+        *_markdown_table(
+            bundle.static_diagnostics,
+            ("ablation", "mean_mpjpe_mm", "std_mpjpe_mm"),
+        ),
+        "",
+        "## Triangulation Comparison",
+        "",
+        "Triangulation remains an independent non-learned comparison and is "
+        "never mixed into the supervised ranking.",
+        "",
+        "## Interpretation Boundary",
+        "",
+        "This Unity benchmark contains one avatar in one rendered environment. "
+        "It does not establish population-level generalization or statistical "
+        "significance.",
+        "",
+    ]
+    report_path = report_root / "unity_supervised_finetune_report.md"
+    temporary = report_path.with_suffix(report_path.suffix + ".tmp")
+    temporary.write_text("\n".join(lines), encoding="utf-8")
+    temporary.replace(report_path)
+    return report_path

@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from gymnastics.benchmarks.unity.supervised_evaluation import (
+    FineTunedRunEvaluation,
     aggregate_finetuned_results,
+    build_finetuned_bundle,
     evaluate_finetuned_sequence,
+    write_finetuned_report,
 )
 
 
@@ -118,3 +124,128 @@ def test_aggregation_macro_averages_folds_after_seed_means() -> None:
 def test_aggregation_rejects_missing_seed() -> None:
     with pytest.raises(ValueError, match="incomplete 2x3 matrix"):
         aggregate_finetuned_results(_complete_rows()[:-1])
+
+
+def test_report_separates_supervised_zero_shot_and_diagnostics(
+    tmp_path: Path,
+) -> None:
+    rng = np.random.default_rng(31)
+    target = rng.normal(size=(4, 16, 3)).astype(np.float32)
+    visibility = {
+        "cam0": np.ones((4, 16), dtype=bool),
+        "cam1": np.ones((4, 16), dtype=bool),
+    }
+    results = []
+    for fold in ("left_to_right", "right_to_left"):
+        for seed in (0, 1, 2):
+            candidate = target.copy()
+            candidate[:, 3, 0] += 0.08 + seed * 0.005
+            continuous = evaluate_finetuned_sequence(
+                candidate,
+                target,
+                visibility=visibility,
+                actual_angles_deg=np.zeros((4,), dtype=np.float32),
+                fold=fold,
+                ablation="A4",
+                seed=seed,
+            )
+            static = evaluate_finetuned_sequence(
+                candidate + 0.01,
+                target,
+                visibility=visibility,
+                actual_angles_deg=np.zeros((4,), dtype=np.float32),
+                fold=fold,
+                ablation="A4",
+                seed=seed,
+            )
+            results.extend(
+                (
+                    FineTunedRunEvaluation(
+                        "A4", fold, seed, "heldout_continuous", continuous
+                    ),
+                    FineTunedRunEvaluation(
+                        "A4", fold, seed, "static_ood", static
+                    ),
+                )
+            )
+    bundle = build_finetuned_bundle(
+        results,
+        failures=(),
+        provenance={"protocol": "direction-held-out"},
+    )
+    baseline = {
+        "valid_ranking": [
+            {
+                "method": "triangulation_sam3d2d",
+                "mpjpe_mm": 30.259,
+                "ranking_group": "valid",
+            },
+            {
+                "method": "avg_world_face_ref",
+                "mpjpe_mm": 166.537,
+                "ranking_group": "valid",
+            },
+            {
+                "method": "A4",
+                "mpjpe_mm": 180.0,
+                "ranking_group": "valid",
+            },
+        ],
+        "diagnostics": [
+            {
+                "method": "triangulation_oracle2d",
+                "mpjpe_mm": 0.0002,
+                "ranking_group": "diagnostic",
+            },
+            {
+                "method": "sim3_face_stable_joint_weight",
+                "mpjpe_mm": 175.0,
+                "ranking_group": "diagnostic",
+            },
+        ],
+    }
+
+    report = write_finetuned_report(
+        bundle,
+        tmp_path,
+        baseline_results=baseline,
+    )
+
+    for relative in (
+        "evaluation/run_results.csv",
+        "evaluation/by_fold.csv",
+        "evaluation/by_ablation.csv",
+        "evaluation/by_joint.csv",
+        "evaluation/by_visibility.csv",
+        "report/results.json",
+        "report/unity_supervised_finetune_report.md",
+        "report/figures/zero_shot_vs_supervised_mpjpe.png",
+    ):
+        assert (tmp_path / relative).is_file()
+    text = report.read_text(encoding="utf-8")
+    for heading in (
+        "Unity-Supervised Training",
+        "Direction-Held-Out Results",
+        "Zero-Shot vs Fine-Tuned",
+        "Static OOD Diagnostic",
+        "Triangulation Comparison",
+        "Interpretation Boundary",
+    ):
+        assert heading in text
+    machine = json.loads(
+        (tmp_path / "report/results.json").read_text(encoding="utf-8")
+    )
+    forbidden = {
+        "triangulation_oracle2d",
+        "sim3_face_stable_joint_weight",
+    }
+    assert not forbidden & {
+        row["method"] for row in machine["zero_shot_ranking"]
+    }
+    assert not forbidden & {
+        row["ablation"] for row in machine["supervised_ranking"]
+    }
+    assert all(
+        row["training_supervision"] == "Unity GT used for training"
+        for row in machine["supervised_ranking"]
+    )
