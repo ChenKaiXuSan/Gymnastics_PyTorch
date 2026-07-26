@@ -132,3 +132,6 @@ logs
 camera_calibration/input_video
 ckpt/
 .worktrees/
+paper/
+local/
+.ruff_cache/

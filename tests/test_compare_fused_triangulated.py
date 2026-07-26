@@ -1,6 +1,6 @@
 import numpy as np
 
-from analysis.compare_fused_triangulated import (
+from gymnastics.analysis.compare_fused_triangulated import (
     align_sequences,
     build_fused_pair_index,
     compute_joint_errors,

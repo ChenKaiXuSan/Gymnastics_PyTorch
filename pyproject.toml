@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gymnastics-motion"
+version = "0.1.0"
+description = "Multi-view gymnastics motion analysis with SAM3D-Body"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Kaixu Chen", email = "chenkaixusan@gmail.com" },
+]
+dependencies = [
+  "hydra-core",
+  "numpy",
+  "opencv-python",
+  "openpyxl",
+  "pandas",
+  "PyYAML",
+  "scipy",
+  "tqdm",
+]
+
+[project.optional-dependencies]
+analysis = [
+  "matplotlib",
+  "plotly",
+  "seaborn",
+]
+training = [
+  "av",
+  "captum",
+  "grad-cam",
+  "imbalanced-learn",
+  "pytorch-lightning",
+  "rich",
+  "scikit-learn",
+  "tensorboard",
+  "torch",
+  "torchvision",
+  "transformers",
+]
+test = [
+  "pytest>=8",
+]
+
+[project.scripts]
+gymnastics = "gymnastics.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+addopts = "-ra --strict-markers --import-mode=importlib"
+cache_dir = "local/cache/pytest"
+norecursedirs = [
+  ".git",
+  ".worktrees",
+  "build",
+  "dist",
+  "legacy",
+  "local",
+  "paper",
+  "third_party",
+]
+markers = [
+  "optional: requires optional heavyweight dependencies",
+]

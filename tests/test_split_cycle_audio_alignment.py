@@ -1,6 +1,6 @@
 import numpy as np
 
-from split_cycle import main as split_main
+from gymnastics.alignment import main as split_main
 
 
 def test_audio_envelope_offset_uses_side_minus_face_frame_convention():

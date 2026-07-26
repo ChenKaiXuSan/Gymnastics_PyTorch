@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from triangulation.estimate_extrinsics import (
+from gymnastics.triangulation.estimate_extrinsics import (
     chordal_mean,
     cluster_rigs,
     consensus_per_cluster,

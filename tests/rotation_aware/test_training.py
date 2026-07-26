@@ -10,14 +10,14 @@ import pytest
 import torch
 from torch.utils.data import DataLoader
 
-import fuse.rotation_aware.training as training_module
-from fuse.rotation_aware.config import RoleSpec, SkeletonSpec
-from fuse.rotation_aware.dataset import collate_pose_pair_windows
-from fuse.rotation_aware.losses import LossConfig
-from fuse.rotation_aware.model import RotationAwareFusionModel
-from fuse.rotation_aware.prefetch import ThroughputConfig, ordered_prefetch, pin_tensor_batch
-from fuse.rotation_aware.profiling import StageProfiler
-from fuse.rotation_aware.training import TrainingTrace, _corrupt_batch, _feature_bundle, _forward_window, _fused_bone_cv, _prepare_window, _tensor_batch, load_checkpoint, prepare_validation_batches, save_checkpoint, train_one_epoch, train_one_epoch_reference, validate
+import gymnastics.fusion.rotation_aware.training as training_module
+from gymnastics.fusion.rotation_aware.config import RoleSpec, SkeletonSpec
+from gymnastics.fusion.rotation_aware.dataset import collate_pose_pair_windows
+from gymnastics.fusion.rotation_aware.losses import LossConfig
+from gymnastics.fusion.rotation_aware.model import RotationAwareFusionModel
+from gymnastics.fusion.rotation_aware.prefetch import ThroughputConfig, ordered_prefetch, pin_tensor_batch
+from gymnastics.fusion.rotation_aware.profiling import StageProfiler
+from gymnastics.fusion.rotation_aware.training import TrainingTrace, _corrupt_batch, _feature_bundle, _forward_window, _fused_bone_cv, _prepare_window, _tensor_batch, load_checkpoint, prepare_validation_batches, save_checkpoint, train_one_epoch, train_one_epoch_reference, validate
 
 
 def test_validation_defaults_to_scalar_forward() -> None:
@@ -144,7 +144,7 @@ def test_ordered_prefetch_propagates_worker_exceptions() -> None:
 
 
 def test_prefetched_preparation_matches_direct_corruption_for_stable_epochs() -> None:
-    from fuse.rotation_aware.corruptions import CorruptionConfig
+    from gymnastics.fusion.rotation_aware.corruptions import CorruptionConfig
 
     spec = _spec()
     batches = list(_loader(count=8, batch_size=2))
@@ -322,7 +322,7 @@ def test_cpu_tiny_overfit_is_finite_and_reduces_loss() -> None:
         minimal_residual_weight=0.0,
         complete_cycle_rom_weight=0.0,
     )
-    from fuse.rotation_aware.corruptions import CorruptionConfig
+    from gymnastics.fusion.rotation_aware.corruptions import CorruptionConfig
 
     corruption = CorruptionConfig(enabled_families=("spike_noise",), spike_probability=1.0, spike_scale=0.02)
     initial = validate(model, _loader(), spec, loss_config=config, corruption_config=corruption, seed=9)["losses"]["corruption_recovery"]
@@ -783,7 +783,7 @@ def test_validation_score_and_checkpoint_metadata_exclude_external_ground_truth(
         skeleton=spec,
         provenance=_checkpoint_provenance(),
         training_config={"batch_size": 4},
-        corruption_config=__import__("fuse.rotation_aware.corruptions", fromlist=["CorruptionConfig"]).CorruptionConfig(),
+        corruption_config=__import__("gymnastics.fusion.rotation_aware.corruptions", fromlist=["CorruptionConfig"]).CorruptionConfig(),
         score=metrics_a["score"],
     )
     loaded = load_checkpoint(path, model, optimizer)
@@ -952,7 +952,7 @@ def test_checkpoint_rejects_missing_reproducibility_provenance(tmp_path: Path) -
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     import pytest
-    from fuse.rotation_aware.corruptions import CorruptionConfig
+    from gymnastics.fusion.rotation_aware.corruptions import CorruptionConfig
 
     with pytest.raises(ValueError, match="split_hash"):
         save_checkpoint(
@@ -988,7 +988,7 @@ def test_corruption_is_stable_per_window_when_batch_order_changes() -> None:
 
 
 def test_target_quality_is_measured_on_unmodified_reference_windows() -> None:
-    from fuse.rotation_aware.corruptions import CorruptionConfig
+    from gymnastics.fusion.rotation_aware.corruptions import CorruptionConfig
 
     spec = _spec()
     batch = next(iter(_loader()))

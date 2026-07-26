@@ -1,6 +1,6 @@
 import numpy as np
 
-from split_cycle.load import load_sam3d_body_sequence
+from gymnastics.alignment.load import load_sam3d_body_sequence
 
 
 def _write_sam3d_frame(base, frame_idx, keypoint_value):

@@ -1,6 +1,6 @@
 import torch
 
-from fuse.rotation_aware.trunk import (
+from gymnastics.fusion.rotation_aware.trunk import (
     axial_rotation_angle,
     axial_rotation_angle_from_points,
     extract_trunk_features,

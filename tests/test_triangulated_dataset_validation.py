@@ -80,7 +80,7 @@ def _write_dataset_summaries(output_root, person_ids):
 
 
 def test_collect_person_summaries_reads_all_people_in_numeric_order(tmp_path):
-    from triangulation.sam3d_from_split_cycle import collect_person_summaries
+    from gymnastics.triangulation.sam3d_from_split_cycle import collect_person_summaries
 
     _write_json(tmp_path / "person_10" / "summary.json", {"person_id": "10"})
     _write_json(tmp_path / "person_2" / "summary.json", {"person_id": "2"})
@@ -92,7 +92,7 @@ def test_collect_person_summaries_reads_all_people_in_numeric_order(tmp_path):
 
 
 def test_validate_dataset_accepts_complete_data_and_excludes_person_119(tmp_path):
-    from triangulation.tools.validate_sam3d_triangulated import validate_dataset
+    from gymnastics.analysis.reports.validate_sam3d_triangulated import validate_dataset
 
     split_root = tmp_path / "split"
     output_root = tmp_path / "triangulated"
@@ -125,7 +125,7 @@ def test_validate_dataset_accepts_complete_data_and_excludes_person_119(tmp_path
 
 
 def test_validate_dataset_reports_sequence_and_frame_integrity_errors(tmp_path):
-    from triangulation.tools.validate_sam3d_triangulated import validate_dataset
+    from gymnastics.analysis.reports.validate_sam3d_triangulated import validate_dataset
 
     split_root = tmp_path / "split"
     output_root = tmp_path / "triangulated"

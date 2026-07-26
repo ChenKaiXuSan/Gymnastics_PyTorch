@@ -1,0 +1,1 @@
+"""Deterministic fusion comparison matrix."""

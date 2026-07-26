@@ -27,27 +27,27 @@ The current active pipeline is:
 
 ```text
 /home/data/xchen/gymnastics/raw/person
-  -> SAM3Dbody
+  -> gymnastics sam3d
   -> /home/data/xchen/gymnastics/sam3d_body_results/person
-  -> split_cycle
-  -> triangulation/sam3d_from_split_cycle.py
+  -> gymnastics align
+  -> gymnastics triangulate
   -> /home/data/xchen/gymnastics/sam3d_triangulated/person
-  -> fuse
-  -> project/train and analysis
+  -> gymnastics fuse deterministic
+  -> gymnastics classify and gymnastics analyze
 ```
 
 Important details:
 
-- `SAM3Dbody/` runs SAM3D-Body inference on raw `face` and `side` videos.
-- `split_cycle/` estimates face/side temporal alignment and segments each
+- `gymnastics.sam3d` runs SAM3D-Body inference on raw `face` and `side` videos.
+- `gymnastics.alignment` estimates face/side temporal alignment and segments each
   person's motion into cycles.
-- `triangulation/sam3d_from_split_cycle.py` uses split-cycle frame records and
+- `gymnastics.triangulation` uses split-cycle frame records and
   SAM3D 2D keypoints to triangulate 3D joints.
-- `fuse/` runs the face/side 3D keypoint fusion experiment matrix and evaluates
+- `gymnastics.fusion` runs the face/side 3D keypoint fusion experiment matrix and evaluates
   each method against triangulated pseudo-GT.
-- `project/train/` trains classification models from prepared motion data and
+- `gymnastics.classification` trains classification models from prepared motion data and
   precomputed fold/index mappings.
-- `analysis/` contains comparison, metrics, reporting, and visualization tools.
+- `gymnastics.analysis` contains comparison, metrics, reporting, and visualization tools.
 
 ## Key Entry Points
 
@@ -55,19 +55,19 @@ Use `conda run -n gymnastic ...` for these commands.
 
 ```bash
 # Run SAM3D-Body on raw face/side videos.
-python -m SAM3Dbody.main
+gymnastics sam3d
 
 # Segment aligned motion into cycles.
-python -m split_cycle.main
+gymnastics align
 
 # Triangulate SAM3D face/side 2D keypoints into pseudo-GT 3D joints.
-python -m triangulation.sam3d_from_split_cycle
+gymnastics triangulate
 
 # Run the fusion experiment matrix.
-python -m fuse
+gymnastics fuse deterministic
 
 # Train/evaluate classification models.
-python -m project.train.train
+gymnastics classify
 ```
 
 Focused verification commands:
@@ -81,16 +81,17 @@ python -m pytest tests/test_sam3d_triangulation.py tests/test_compare_fused_tria
 
 | Module | Current Role |
 |---|---|
-| `SAM3Dbody/` | SAM3D-Body inference and keypoint extraction from raw videos. |
-| `split_cycle/` | Face/side time alignment, audio/keypoint offset selection, cycle segmentation, and split-cycle videos. |
-| `triangulation/` | 3D triangulation from SAM3D 2D keypoints, camera helpers, visualizations, and triangulated-result reports. |
-| `fuse/` | Multi-view 3D keypoint fusion experiments and MPJPE evaluation against triangulated pseudo-GT. |
-| `project/train/` | ST-GCN/TCN/Mamba-style classifier training and evaluation for posture, relax, twist, and total labels. |
-| `project/cross_validation/` | Person-level fold and camera-pair index generation. |
-| `analysis/` | Label analysis, metric comparison, plotting, and result inspection. |
-| `camera_calibration/` | Camera calibration utilities and calibration visualization outputs. |
+| `src/gymnastics/sam3d/` | SAM3D-Body inference and keypoint extraction from raw videos. |
+| `src/gymnastics/alignment/` | Face/side time alignment, audio/keypoint offset selection, cycle segmentation, and split-cycle videos. |
+| `src/gymnastics/triangulation/` | 3D triangulation from SAM3D 2D keypoints, camera helpers, and visualizations. |
+| `src/gymnastics/fusion/` | Deterministic and rotation-aware multi-view fusion. |
+| `src/gymnastics/classification/` | Person-level splits and ST-GCN/TCN/Mamba-style classification. |
+| `src/gymnastics/analysis/` | Label analysis, metric comparison, plotting, reports, and result inspection. |
+| `src/gymnastics/calibration/` | Camera calibration utilities. |
+| `src/gymnastics/common/` | Shared paths and canonical MHR70 metadata. |
 | `legacy/prepare_dataset/` | Old DPT/RAFT/YOLO/Detectron2 preprocessing path, kept for reference. |
-| `videopose3d/` | Support/legacy temporal 3D pose code, not the active data preparation path. |
+| `third_party/` | Pinned upstream SAM3 and SAM-3D-Body repositories. |
+| `local/` | Ignored checkpoints, videos, run outputs, and caches. |
 
 ## Current Fuse Direction
 
@@ -103,14 +104,14 @@ avg_body_current
 Current fuse behavior:
 
 - Discover persons from `/home/data/xchen/gymnastics/sam3d_body_results/person`.
-- Require split-cycle alignment records from `logs/split_cycle/person_<id>/alignment_record_<id>.json`.
+- Require split-cycle alignment records from `local/runs/split_cycle/person_<id>/alignment_record_<id>.json`.
 - Use `offset_side_to_face` from split-cycle; do not fall back to a newly
   estimated keypoint-DTW offset.
 - Use face as the reference view.
 - Align side to face with Sim3 estimated from stable joints.
 - Average face and aligned-side 3D keypoints.
 - Smooth the fused 3D keypoints over time.
-- Save compact outputs under `logs/fuse_experiments/<method>/person_<id>/fused_sequence.npz`.
+- Save compact outputs under `local/runs/fuse_experiments/<method>/person_<id>/fused_sequence.npz`.
 - Evaluate against `/home/data/xchen/gymnastics/sam3d_triangulated/person`.
 
 ## Gymnastics Dataset Inventory
@@ -127,20 +128,20 @@ The active gymnastics dataset root is:
 |---|---|---:|---|
 | Raw two-view videos | `/home/data/xchen/gymnastics/raw/person` | 137 persons | Each person has `IDxx_face.MOV` and `IDxx_side.MOV`. |
 | SAM3D-Body results | `/home/data/xchen/gymnastics/sam3d_body_results/person` | 137 persons | Each person has complete `face/*.npz` and `side/*.npz` SAM3D outputs. |
-| Split-cycle alignment | `logs/split_cycle` | 137 persons | Active alignment records used by fuse and triangulation. |
+| Split-cycle alignment | `local/runs/split_cycle` | 137 persons | Active alignment records used by fuse and triangulation. |
 | Triangulated pseudo-GT | `/home/data/xchen/gymnastics/sam3d_triangulated/person` | 137 persons | Evaluation reference for fuse; currently 928 cycle sequences. |
-| Fuse experiments | `logs/fuse_experiments` | 137 persons x 9 methods | Contains compact fused 3D keypoints and metrics; `metrics_by_person.csv` has no NaN. |
-| Rotation-aware runs | `logs/fuse_rotation_aware` | 137 persons, 928 cycles | A4/A5/A6 checkpoints, inference, and A0-A6 evaluation. |
+| Fuse experiments | `local/runs/fuse_experiments` | 137 persons x 9 methods | Contains compact fused 3D keypoints and metrics; `metrics_by_person.csv` has no NaN. |
+| Rotation-aware runs | `local/runs/fuse_rotation_aware` | 137 persons, 928 cycles | A4/A5/A6 checkpoints, inference, and A0-A6 evaluation. |
 
 Current key counts:
 
 ```text
 raw/person:                  137 persons, 2 videos per person
 sam3d_body_results/person:   137 persons, face/side complete
-logs/split_cycle:            137 persons, alignment_record complete
+local/runs/split_cycle:            137 persons, alignment_record complete
 sam3d_triangulated/person:   137 persons, 928 cycles
-logs/fuse_experiments:       137 persons x 9 methods, 1233 fused sequences
-logs/fuse_rotation_aware:    137 persons, 928 cycles per run, A0-A6 evaluated
+local/runs/fuse_experiments:       137 persons x 9 methods, 1233 fused sequences
+local/runs/fuse_rotation_aware:    137 persons, 928 cycles per run, A0-A6 evaluated
 ```
 
 The 137 persons are 80 elderly participants and 57 students.
@@ -158,7 +159,7 @@ raw face/side videos
 Fuse should use the split-cycle alignment offset from:
 
 ```text
-logs/split_cycle/person_<id>/alignment_record_<id>.json
+local/runs/split_cycle/person_<id>/alignment_record_<id>.json
 ```
 
 The current recommended fuse method is:
@@ -187,9 +188,9 @@ biased and it is not a valid recommendation.
 | Label analysis | `/home/data/xchen/gymnastics/label_analysis_output` | Label analysis outputs. |
 | 5-class label analysis | `/home/data/xchen/gymnastics/5_classes_label_analysis_output` | Five-class label analysis outputs. |
 
-The fold files are regenerated by `python -m project.cross_validation.main_5_classes`.
-They read alignment records from `logs/split_cycle` and fused frame maps from
-`logs/fuse_experiments/<method>/person_<id>/fused_sequence.npz`.
+The fold files are regenerated by `python -m gymnastics.classification.splits.main_5_classes`.
+They read alignment records from `local/runs/split_cycle` and fused frame maps from
+`local/runs/fuse_experiments/<method>/person_<id>/fused_sequence.npz`.
 
 ### Historical Or Secondary Data
 
@@ -197,13 +198,13 @@ They read alignment records from `logs/split_cycle` and fused frame maps from
 |---|---:|---|
 | `/home/data/xchen/gymnastics/run_data` | 323G | Older run directory with previous SAM3D/Mediapipe-style outputs. |
 | `/home/data/xchen/gymnastics/bak` | 140G | Backup data/results; flagged for deletion. |
-| `logs/train` | 8.5G | Training logs and outputs. |
-| `logs/total_5_class` | 25G | Five-class experiment outputs. |
-| `logs/calibration_vis` | 977M | Camera calibration parameters and visualizations. |
+| `local/runs/train` | 8.5G | Training logs and outputs. |
+| `local/runs/total_5_class` | 25G | Five-class experiment outputs. |
+| `local/runs/calibration_vis` | 977M | Camera calibration parameters and visualizations. |
 
 ## Rotation-Aware Paper Mainline
 
-The deterministic `python -m fuse` experiment matrix remains the comparison
+The deterministic `gymnastics fuse deterministic` experiment matrix remains the comparison
 suite. The paper mainline is the isolated, self-supervised method:
 
 ```text
@@ -218,18 +219,18 @@ selection, or training losses.
 Run the mainline with:
 
 ```bash
-conda run -n gymnastic python -m fuse.rotation_aware prepare --config configs/fuse/rotation_aware.yaml
-conda run -n gymnastic python -m fuse.rotation_aware train --config configs/fuse/rotation_aware.yaml --run-id paper_a6 --ablation A6
-conda run -n gymnastic python -m fuse.rotation_aware infer --config configs/fuse/rotation_aware.yaml --run-id paper_a6
-conda run -n gymnastic python -m fuse.rotation_aware evaluate --config configs/fuse/rotation_aware.yaml --run-id paper_a6
+conda run -n gymnastic gymnastics fuse rotation-aware prepare --config configs/fusion/rotation_aware.yaml
+conda run -n gymnastic gymnastics fuse rotation-aware train --config configs/fusion/rotation_aware.yaml --run-id paper_a6 --ablation A6
+conda run -n gymnastic gymnastics fuse rotation-aware infer --config configs/fusion/rotation_aware.yaml --run-id paper_a6
+conda run -n gymnastic gymnastics fuse rotation-aware evaluate --config configs/fusion/rotation_aware.yaml --run-id paper_a6
 ```
 
 Train A4, A5, and A6 under separate run IDs, then combine them with repeated
 `--run-id` options:
 
 ```bash
-conda run -n gymnastic python -m fuse.rotation_aware evaluate --config configs/fuse/rotation_aware.yaml --run-id paper_a4 --run-id paper_a5 --run-id paper_a6
+conda run -n gymnastic gymnastics fuse rotation-aware evaluate --config configs/fusion/rotation_aware.yaml --run-id paper_a4 --run-id paper_a5 --run-id paper_a6
 ```
 
-New artifacts are isolated under `logs/fuse_rotation_aware/{cache,runs,inference,evaluation}`.
-Do not write rotation-aware training outputs into `logs/fuse_experiments`.
+New artifacts are isolated under `local/runs/fuse_rotation_aware/{cache,runs,inference,evaluation}`.
+Do not write rotation-aware training outputs into `local/runs/fuse_experiments`.

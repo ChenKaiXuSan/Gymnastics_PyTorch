@@ -10,13 +10,13 @@
 ## 结论
 
 三角化伪真值的绝对尺度不可信，逐人尺度也不一致。根因是**双相机外参从未标定**，
-而是由 `configs/sam3d_triangulation.yaml` 里写死的名义几何合成出来的。
+而是由 `configs/triangulation/sam3d_triangulation.yaml` 里写死的名义几何合成出来的。
 
 ## 证据
 
 ### 1. 外参是合成的，不是标定的
 
-`configs/sam3d_triangulation.yaml` 中：
+`configs/triangulation/sam3d_triangulation.yaml` 中：
 
 ```yaml
 camera_position:
@@ -31,7 +31,7 @@ view_camera: {face: 3, side: 1}
 构造外参：相机放在半径 `r`、高度 `z` 的圆周上，朝向 `T`。face（yaw 0°）与
 side（yaw −90°）被假定为**恰好相隔 90°**，基线 `3.5 * sqrt(2) ≈ 4.95`。
 
-标定文件（`logs/calibration_vis/IMG_*/calibration_parameters.npz`）里只有
+标定文件（`local/runs/calibration_vis/IMG_*/calibration_parameters.npz`）里只有
 **内参**：`camera_matrix`、`dist_coeffs`，以及每张棋盘图各自的 `rvecs`/`tvecs`。
 四段标定视频是各相机**独立**拍摄的（帧号互不对应，`square_size = 25.0` mm），
 没有双相机同时看到同一棋盘的画面，因此**现有数据无法做立体外参标定**。

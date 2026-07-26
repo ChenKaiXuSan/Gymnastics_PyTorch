@@ -2,11 +2,11 @@ from pathlib import Path
 
 import torch
 
-from fuse.rotation_aware.config import SkeletonSpec, load_skeleton_spec
-from fuse.rotation_aware.geometry import build_pelvis_frame, build_thorax_frame, canonicalize_pose, restore_pose
+from gymnastics.fusion.rotation_aware.config import SkeletonSpec, load_skeleton_spec
+from gymnastics.fusion.rotation_aware.geometry import build_pelvis_frame, build_thorax_frame, canonicalize_pose, restore_pose
 
 
-SPEC = load_skeleton_spec(Path("configs/fuse/skeleton_mhr70.yaml"))
+SPEC = load_skeleton_spec(Path("configs/fusion/skeleton_mhr70.yaml"))
 
 
 def synthetic_mhr70_pose(*, theta_deg: float = 0.0, batch: int = 1, frames: int = 3):

@@ -1,0 +1,65 @@
+# hydra config
+hydra:
+  run:
+    dir: ${log_path} # the log path, used for log and checkpoint
+  sweep:
+    dir: local/runs/
+    subdir: train/${experiment}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweeper:
+    params:
+      model.class_task: "[posture,relax,twist,total],[posture,relax,twist],[total],[relax],[posture],[twist]"
+
+loss:
+  lr: 0.001
+  weight_decay: 0.0001
+
+data:
+  root_path: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}
+
+  cross_validation:
+    # 生成 index mapping 的配置（用于 project/cross_validation/main_5_classes.py）
+    # 流水线已覆盖 137 人，但 annotation 只标注了其中 45 人，因此折文件只包含这 45 人。
+    num_persons: 137
+    num_cameras: 2
+    strategies: [by_person]
+    n_splits: 3
+
+  raw:
+    video_path: ${data.root_path}/raw/person # 暂时不使用kpt
+    sam_3d_body_results_path: ${data.root_path}/sam3d_body_results/person # 没有标签的训练数据
+    split_cycle: local/runs/split_cycle # 活动的 split cycle 结果（相对仓库根目录）
+    fused_kpt_path: local/runs/fuse_experiments/avg_body_current # 融合后的关键点（推荐方法，相对仓库根目录）
+
+  annotation_path: ${data.root_path}/高齢者体回旋20260513.xlsx
+
+  index_mapping: ${data.root_path}/index_mapping # precomputed index mapping directory
+  # index_mapping_file: camera_pairs_by_action.json # precomputed index mapping json file name
+  index_mapping_path: ${data.index_mapping}/camera_pairs_by_person_folds # precomputed index mapping json file path
+
+  img_size: 224
+  load_frames: false # whether to load video frames
+  load_2d_kpt: false # whether to load 2d keypoints
+  load_3d_kpt: true
+
+  num_workers: 32
+  batch_size: 32
+
+model:
+  backbone: st_gcn # st_gcn, tcn, body_part_mamba
+  model_class_num: 3
+  model_total_class_num: 3 # score number of one class haead, used for multi-task learning
+
+  temporal_kernel_size: 17
+
+  dropout: 0.5 # dropout rate for st-gcn
+  use_all_joints: true # whether to use all 70 joints or filtered 20 joints
+  class_task: [posture, relax, twist, total] # the classification tasks, used for multi-task learning
+
+train:
+  max_epochs: 50
+
+  gpu: 0 # choices=[0, 1], help='the gpu number whicht to train'
+  fold: 0 # the fold number for cross validation
+
+experiment: ${model.backbone}_${model.class_task} # the experiment name, used for log path
+log_path: local/runs/train/${experiment}/${now:%Y-%m-%d}/${now:%H-%M-%S}/

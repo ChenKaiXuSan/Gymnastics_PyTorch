@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from triangulation.sam3d_from_split_cycle import triangulate_keypoints
+from gymnastics.triangulation.sam3d_from_split_cycle import triangulate_keypoints
 
 
 def _project(points_3d, K, R, t, dist=None):

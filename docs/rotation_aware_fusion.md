@@ -6,8 +6,8 @@
 self-supervised face/side SAM3D-Body 3D-keypoint fusion. It consumes only the
 two SAM3D 3D keypoint streams and produces complete 70-joint sequences.
 
-The existing `python -m fuse` command, its nine methods, and
-`logs/fuse_experiments` remain deterministic comparison experiments. The
+The existing `gymnastics fuse deterministic` command, its nine methods, and
+`local/runs/fuse_experiments` remain deterministic comparison experiments. The
 established comparison baseline is `avg_body_current`: on the regenerated
 triangulated pseudo-ground-truth it is the best leakage-free deterministic
 method (mean person MPJPE 64.05 mm, better than every other leakage-free method
@@ -20,27 +20,27 @@ GT it is then evaluated against, so it is excluded as a biased baseline. The
 rotation-aware route never overwrites or trains inside that directory.
 
 Time alignment is strict: the adapter reads only
-`logs/split_cycle/person_<id>/alignment_record_<id>.json` and its
+`local/runs/split_cycle/person_<id>/alignment_record_<id>.json` and its
 `offset_side_to_face`. A missing record or offset is an error; no keypoint
 DTW or other fallback alignment is performed.
 
 Training, synthetic corruption targets, validation score, and checkpoint
 selection use no triangulated data. Triangulated pseudo-GT is imported only by
-`fuse/rotation_aware/evaluation.py` for the external post-training
+`src/gymnastics/fusion/rotation_aware/evaluation.py` for the external post-training
 evaluation layer. It is not an input, pseudo-target, fusion weight, or model
 selection criterion.
 
 ## Commands
 
 All commands use the `gymnastic` environment. The default config is
-`configs/fuse/rotation_aware.yaml`; pass `--config` to use a copied,
+`configs/fusion/rotation_aware.yaml`; pass `--config` to use a copied,
 machine-specific YAML.
 
 ```bash
-conda run -n gymnastic python -m fuse.rotation_aware prepare --config configs/fuse/rotation_aware.yaml
-conda run -n gymnastic python -m fuse.rotation_aware train --config configs/fuse/rotation_aware.yaml --run-id paper_a6 --ablation A6
-conda run -n gymnastic python -m fuse.rotation_aware infer --config configs/fuse/rotation_aware.yaml --run-id paper_a6
-conda run -n gymnastic python -m fuse.rotation_aware evaluate --config configs/fuse/rotation_aware.yaml --run-id paper_a6
+conda run -n gymnastic gymnastics fuse rotation-aware prepare --config configs/fusion/rotation_aware.yaml
+conda run -n gymnastic gymnastics fuse rotation-aware train --config configs/fusion/rotation_aware.yaml --run-id paper_a6 --ablation A6
+conda run -n gymnastic gymnastics fuse rotation-aware infer --config configs/fusion/rotation_aware.yaml --run-id paper_a6
+conda run -n gymnastic gymnastics fuse rotation-aware evaluate --config configs/fusion/rotation_aware.yaml --run-id paper_a6
 ```
 
 `prepare` may be scoped with `--person <id>`; it builds compact cache files
@@ -51,35 +51,35 @@ from split-cycle trials. `train` and `infer` require an explicit
 
 ## Batch-64 Throughput Protocol
 
-`configs/fuse/rotation_aware_batch64.yaml` defines a new FP32 batch-64
+`configs/fusion/rotation_aware_batch64.yaml` defines a new FP32 batch-64
 protocol. It is not directly comparable to historical batch-32 runs: A4 and
 A5 train for 200 epochs, while A6 trains for 100 epochs. All three use a
 learning rate of `0.001` and retain the existing sample ordering, loss
 definitions, optimizer semantics, and validation/checkpoint-selection rules.
 Its training, inference, and evaluation artifacts are isolated below
-`logs/fuse_rotation_aware/batch64`, while it reads the prepared cache at
-`logs/fuse_rotation_aware/cache`.
+`local/runs/fuse_rotation_aware/batch64`, while it reads the prepared cache at
+`local/runs/fuse_rotation_aware/cache`.
 
 Batch-64 run IDs must include their ablation, batch size, and resolved epoch
 count. Use a fresh ID for every training attempt; the command rejects a
 non-empty batch-64 run directory rather than overwriting it.
 
 ```bash
-conda run -n gymnastic python -m fuse.rotation_aware prepare --config configs/fuse/rotation_aware_batch64.yaml
-conda run -n gymnastic python -m fuse.rotation_aware train --config configs/fuse/rotation_aware_batch64.yaml --run-id paper_a4_b64_e200 --ablation A4
-conda run -n gymnastic python -m fuse.rotation_aware train --config configs/fuse/rotation_aware_batch64.yaml --run-id paper_a5_b64_e200 --ablation A5
-conda run -n gymnastic python -m fuse.rotation_aware train --config configs/fuse/rotation_aware_batch64.yaml --run-id paper_a6_b64_e100 --ablation A6
-conda run -n gymnastic python -m fuse.rotation_aware infer --config configs/fuse/rotation_aware_batch64.yaml --run-id paper_a4_b64_e200
-conda run -n gymnastic python -m fuse.rotation_aware infer --config configs/fuse/rotation_aware_batch64.yaml --run-id paper_a5_b64_e200
-conda run -n gymnastic python -m fuse.rotation_aware infer --config configs/fuse/rotation_aware_batch64.yaml --run-id paper_a6_b64_e100
-conda run -n gymnastic python -m fuse.rotation_aware evaluate --config configs/fuse/rotation_aware_batch64.yaml --run-id paper_a4_b64_e200 --run-id paper_a5_b64_e200 --run-id paper_a6_b64_e100
+conda run -n gymnastic gymnastics fuse rotation-aware prepare --config configs/fusion/rotation_aware_batch64.yaml
+conda run -n gymnastic gymnastics fuse rotation-aware train --config configs/fusion/rotation_aware_batch64.yaml --run-id paper_a4_b64_e200 --ablation A4
+conda run -n gymnastic gymnastics fuse rotation-aware train --config configs/fusion/rotation_aware_batch64.yaml --run-id paper_a5_b64_e200 --ablation A5
+conda run -n gymnastic gymnastics fuse rotation-aware train --config configs/fusion/rotation_aware_batch64.yaml --run-id paper_a6_b64_e100 --ablation A6
+conda run -n gymnastic gymnastics fuse rotation-aware infer --config configs/fusion/rotation_aware_batch64.yaml --run-id paper_a4_b64_e200
+conda run -n gymnastic gymnastics fuse rotation-aware infer --config configs/fusion/rotation_aware_batch64.yaml --run-id paper_a5_b64_e200
+conda run -n gymnastic gymnastics fuse rotation-aware infer --config configs/fusion/rotation_aware_batch64.yaml --run-id paper_a6_b64_e100
+conda run -n gymnastic gymnastics fuse rotation-aware evaluate --config configs/fusion/rotation_aware_batch64.yaml --run-id paper_a4_b64_e200 --run-id paper_a5_b64_e200 --run-id paper_a6_b64_e100
 ```
 
 Benchmark an already prepared cache without writing a training run:
 
 ```bash
 conda run --no-capture-output -n gymnastic python analysis/benchmark_rotation_aware_training.py \
-  --config configs/fuse/rotation_aware_batch64.yaml \
+  --config configs/fusion/rotation_aware_batch64.yaml \
   --ablation A6 --device cuda:0 --warmup-epochs 1 --measured-epochs 3 \
   --output /tmp/rotation_aware_a6_batch64_benchmark.json
 ```
@@ -192,8 +192,8 @@ A0-A3 are emitted alongside every learned inference run. A4-A9 are separate
 trained runs, so evaluate them together by repeating `--run-id`:
 
 ```bash
-conda run -n gymnastic python -m fuse.rotation_aware evaluate \
-  --config configs/fuse/rotation_aware.yaml \
+conda run -n gymnastic gymnastics fuse rotation-aware evaluate \
+  --config configs/fusion/rotation_aware.yaml \
   --run-id paper_a4 --run-id paper_a5 --run-id paper_a6
 ```
 
@@ -233,7 +233,7 @@ measurable are in [twist_fusion_results.md](twist_fusion_results.md).
 ## Output Layout
 
 ```text
-logs/fuse_rotation_aware/
+local/runs/fuse_rotation_aware/
   cache/                         compact split-cycle trial inputs
   batch64/
     runs/<run_id>/               training-only artifacts and checkpoints

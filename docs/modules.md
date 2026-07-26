@@ -1,110 +1,40 @@
 # Module Map
 
-This project is now organized around a SAM3D-Body-first data preparation flow.
+All active code belongs to the `gymnastics` package under `src/`.
 
-## Active Pipeline Modules
+| Package | Responsibility | Primary command |
+|---|---|---|
+| `gymnastics.sam3d` | Discover paired videos and orchestrate SAM3D-Body inference. | `gymnastics sam3d` |
+| `gymnastics.alignment` | Align face/side timelines and segment movement cycles. | `gymnastics align` |
+| `gymnastics.triangulation` | Estimate camera extrinsics and reconstruct the 3D pseudo-reference. | `gymnastics triangulate` |
+| `gymnastics.fusion.deterministic` | Run and evaluate the nine deterministic fusion methods. | `gymnastics fuse deterministic` |
+| `gymnastics.fusion.rotation_aware` | Train, infer, and evaluate the self-supervised paper method. | `gymnastics fuse rotation-aware` |
+| `gymnastics.classification` | Generate person-level splits and train/evaluate motion classifiers. | `gymnastics classify` |
+| `gymnastics.analysis` | Compute metrics, compare methods, create reports, and visualize results. | `gymnastics analyze` |
+| `gymnastics.calibration` | Calibrate cameras from local image/video inputs. | `gymnastics calibrate` |
+| `gymnastics.common` | Canonical project paths, geometry helpers, and MHR70 metadata. | Imported by other domains |
 
-### `SAM3Dbody/`
+## Boundaries
 
-Runs SAM3D-Body inference on raw multi-view videos. The active entry point is:
+- Domain packages can depend on `gymnastics.common`.
+- Analysis may read outputs from every pipeline stage but does not participate
+  in training or inference.
+- Fusion training cannot import triangulated pseudo-reference data. Only its
+  evaluation layer may read that data.
+- Project-specific SAM3D adapters may import the pinned third-party checkout;
+  upstream source must not be copied into `src/gymnastics`.
+- Historical preprocessing remains in `legacy/prepare_dataset/` and is excluded
+  from installation and default tests.
+- Runtime files belong below `local/`, never inside an importable package.
 
-```bash
-python -m SAM3Dbody.main
-```
+## Supporting directories
 
-Input: `/home/data/xchen/gymnastics/raw/person`
-
-Output: `/home/data/xchen/gymnastics/sam3d_body_results/person`
-
-Configuration: `configs/sam3d_body.yaml`
-
-### `fuse/`
-
-Runs the default fusion experiment matrix for face and side view SAM3D-Body
-results. The matrix rebuilds temporal alignment, writes fused 3D keypoints, and
-exports metrics.
-
-Entry point:
-
-```bash
-python -m fuse
-```
-
-### `split_cycle/`
-
-Segments fused motion sequences into individual action cycles.
-
-Entry point:
-
-```bash
-python -m split_cycle.main
-```
-
-### `triangulation/sam3d_from_split_cycle.py`
-
-Uses `split_cycle/person_<id>/alignment_record_<id>.json` to align face and side
-SAM3D-Body frame indices, then triangulates `pred_keypoints_2d` from:
-
-```text
-sam3d_body_results/person/<id>/face/*.npz
-sam3d_body_results/person/<id>/side/*.npz
-```
-
-Output:
-
-```text
-sam3d_triangulated/person/person_<id>/cycle_<idx>/
-```
-
-Configuration: `configs/sam3d_triangulation.yaml`
-
-Central guide: `triangulation/README.md`
-
-Report tooling: `triangulation/tools/generate_results_report.py`
-
-### `project/train/`
-
-Contains dataloaders, models, trainers, and evaluation logic for classification
-tasks.
-
-Entry point:
-
-```bash
-python -m project.train.train
-```
-
-Configuration: `configs/train.yaml`
-
-### `analysis/`
-
-Contains analysis, metrics, comparison, and visualization scripts/notebooks.
-
-## Support Modules
-
-### `triangulation/`
-
-Support path for 3D pose triangulation from multi-view 2D keypoints.
-
-Configuration: `configs/triangulation.yaml`
-
-See `triangulation/README.md` for the active SAM3D triangulation workflow,
-output structure, result reports, related consumers, and focused tests.
-
-### `camera_calibration/`
-
-Camera calibration utilities and scripts.
-
-### `videopose3d/`
-
-VideoPose3D code and utilities. This is currently a support/legacy-style module
-rather than the primary data preparation path.
-
-## Legacy Modules
-
-### `legacy/prepare_dataset/`
-
-Previous preprocessing pipeline based on DPT depth, RAFT optical flow, YOLOv11,
-and Detectron2. It is kept for reference and reuse but is no longer part of the
-active SAM3D-Body-only preparation flow.
-
-Configuration: `configs/legacy/prepare_dataset.yaml`
+| Directory | Purpose |
+|---|---|
+| `configs/` | Domain-aligned YAML configuration. |
+| `tests/` | Automated verification of active code. |
+| `notebooks/` | Exploratory work that is not imported by production code. |
+| `scripts/` | Monitoring, bootstrap, and other operational commands. |
+| `third_party/` | Pinned upstream Git submodules. |
+| `paper/neurocomputing/` | Local manuscript sources and generated paper assets. |
+| `local/` | Ignored checkpoints, videos, runs, caches, and migration backups. |

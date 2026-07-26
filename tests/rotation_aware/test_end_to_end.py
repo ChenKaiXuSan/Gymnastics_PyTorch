@@ -13,9 +13,9 @@ import pytest
 import torch
 import yaml
 
-from fuse.metadata.mhr70 import mhr_names
-import fuse.rotation_aware.cli as cli
-from fuse.rotation_aware.cli import _training_config_for_ablation, load_config, main
+from gymnastics.common.skeletons.mhr70 import mhr_names
+import gymnastics.fusion.rotation_aware.cli as cli
+from gymnastics.fusion.rotation_aware.cli import _training_config_for_ablation, load_config, main
 
 
 def _pose(frame: int, side: bool) -> np.ndarray:
@@ -84,7 +84,7 @@ def test_end_to_end_overlap_inference_exports_person_metrics(tmp_path: Path) -> 
                 f"  sam3d_root: {sam3d}",
                 f"  split_cycle_root: {split_root}",
                 f"  output_root: {output}",
-                "  skeleton: configs/fuse/skeleton_mhr70.yaml",
+                "  skeleton: configs/fusion/skeleton_mhr70.yaml",
                 f"  fold_json: {fold}",
                 f"  old_fuse_root: {old_fuse_root}",
                 "window:",
@@ -167,7 +167,7 @@ def test_end_to_end_a8_twist_matrix_trains_infers_and_evaluates(tmp_path: Path) 
                 f"  sam3d_root: {sam3d}",
                 f"  split_cycle_root: {split_root}",
                 f"  output_root: {output}",
-                "  skeleton: configs/fuse/skeleton_mhr70.yaml",
+                "  skeleton: configs/fusion/skeleton_mhr70.yaml",
                 f"  fold_json: {fold}",
                 f"  old_fuse_root: {old_fuse_root}",
                 "window:",
@@ -231,9 +231,9 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     output = tmp_path / "outputs"
     old_fuse_root = tmp_path / "legacy_fuse_outputs"
     old_fuse_root.mkdir()
-    production_config = load_config("configs/fuse/rotation_aware_batch64.yaml")
-    assert production_config["paths"]["output_root"] == "logs/fuse_rotation_aware/batch64"
-    assert production_config["data"]["cache_dir"] == "logs/fuse_rotation_aware/cache"
+    production_config = load_config("configs/fusion/rotation_aware_batch64.yaml")
+    assert production_config["paths"]["output_root"] == "local/runs/fuse_rotation_aware/batch64"
+    assert production_config["data"]["cache_dir"] == "local/runs/fuse_rotation_aware/cache"
     assert production_config["training"]["protocol"] == {
         "run_id_token_template": "{ablation_lower}_b{batch_size}_e{epochs}"
     }
@@ -302,7 +302,7 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     tiny_config["training"]["device"] = "cuda:0"
     tiny_config["performance"]["profile_stages"] = True
     config.write_text(yaml.safe_dump(tiny_config, sort_keys=False), encoding="utf-8")
-    benchmark = importlib.import_module("analysis.benchmark_rotation_aware_training")
+    benchmark = importlib.import_module("gymnastics.analysis.benchmark_rotation_aware_training")
     fallback_workload = benchmark._build_workload(tiny_config, "A4")
     assert fallback_workload.uses_training_validation
     assert fallback_workload.validation_loader is fallback_workload.train_loader
@@ -509,13 +509,13 @@ def test_batch64_schedule_override_records_resolved_checkpoint_settings(
 
 
 def test_benchmark_rejects_single_measured_epoch(tmp_path: Path) -> None:
-    benchmark = importlib.import_module("analysis.benchmark_rotation_aware_training")
+    benchmark = importlib.import_module("gymnastics.analysis.benchmark_rotation_aware_training")
 
     with pytest.raises(ValueError, match="at least two"):
         benchmark.main(
             [
                 "--config",
-                "configs/fuse/rotation_aware_batch64.yaml",
+                "configs/fusion/rotation_aware_batch64.yaml",
                 "--ablation",
                 "A6",
                 "--device",
@@ -531,7 +531,7 @@ def test_benchmark_rejects_single_measured_epoch(tmp_path: Path) -> None:
 def test_benchmark_releases_probe_memory_once_before_propagating_probe_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    benchmark = importlib.import_module("analysis.benchmark_rotation_aware_training")
+    benchmark = importlib.import_module("gymnastics.analysis.benchmark_rotation_aware_training")
     events: list[str] = []
 
     def failing_probe(*args, **kwargs):
@@ -551,7 +551,7 @@ def test_benchmark_releases_probe_memory_once_before_propagating_probe_failure(
     args = benchmark.make_parser().parse_args(
         [
             "--config",
-            "configs/fuse/rotation_aware_batch64.yaml",
+            "configs/fusion/rotation_aware_batch64.yaml",
             "--ablation",
             "A4",
             "--device",
@@ -570,7 +570,7 @@ def test_benchmark_releases_probe_memory_once_before_propagating_probe_failure(
 
 
 def test_benchmark_rejects_nested_non_finite_report_values() -> None:
-    benchmark = importlib.import_module("analysis.benchmark_rotation_aware_training")
+    benchmark = importlib.import_module("gymnastics.analysis.benchmark_rotation_aware_training")
 
     with pytest.raises(FloatingPointError, match="report.epochs.0.loss"):
         benchmark._require_finite(
@@ -579,7 +579,7 @@ def test_benchmark_rejects_nested_non_finite_report_values() -> None:
 
 
 def test_benchmark_validation_history_rejects_scores_straddling_prior_best() -> None:
-    benchmark = importlib.import_module("analysis.benchmark_rotation_aware_training")
+    benchmark = importlib.import_module("gymnastics.analysis.benchmark_rotation_aware_training")
     reference = {
         "losses": {"total": 1.0},
         "components": {"bone_cv": 0.5},
@@ -675,7 +675,7 @@ def _training_probe_payload() -> dict[str, object]:
 def test_training_equivalence_comparator_rejects_divergence(
     divergence: str, failed_gate: str
 ) -> None:
-    benchmark = importlib.import_module("analysis.benchmark_rotation_aware_training")
+    benchmark = importlib.import_module("gymnastics.analysis.benchmark_rotation_aware_training")
     reference = _training_probe_payload()
     optimized = deepcopy(reference)
     if divergence == "order":

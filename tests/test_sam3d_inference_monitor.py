@@ -91,7 +91,7 @@ def test_scan_resets_offset_when_log_is_truncated(tmp_path):
 
 def test_process_is_active_requires_main_and_run_match():
     commands = [
-        "python -m SAM3Dbody.main infer.workers_per_gpu=2",
+        "gymnastics sam3d infer.workers_per_gpu=2",
         "python scripts/monitor_sam3d_inference.py",
     ]
 
@@ -379,7 +379,7 @@ def test_poll_once_retries_fatal_log_when_delivery_fails(tmp_path):
         ]
     )
     state = monitor.MonitorState.new(now=100.0)
-    active = ["python -m SAM3Dbody.main infer.workers_per_gpu=2"]
+    active = ["gymnastics sam3d infer.workers_per_gpu=2"]
 
     exit_code = monitor.poll_once(args, state, lambda _: False, 120.0, active)
 
@@ -407,7 +407,7 @@ def test_poll_once_reports_stall_and_recovery(tmp_path):
         ]
     )
     state = monitor.MonitorState.new(now=0.0)
-    active = ["python -m SAM3Dbody.main infer.workers_per_gpu=2"]
+    active = ["gymnastics sam3d infer.workers_per_gpu=2"]
     sent = []
 
     def sender(notification):
@@ -432,11 +432,11 @@ def test_list_process_commands_uses_ps_runner():
 
     def runner(command, **kwargs):
         calls.append((command, kwargs))
-        return SimpleNamespace(stdout="python -m SAM3Dbody.main\n")
+        return SimpleNamespace(stdout="gymnastics sam3d\n")
 
     commands = monitor.list_process_commands(runner=runner)
 
-    assert commands == ["python -m SAM3Dbody.main"]
+    assert commands == ["gymnastics sam3d"]
     assert calls[0][0] == ["ps", "-eo", "args="]
     assert calls[0][1]["check"] is True
 

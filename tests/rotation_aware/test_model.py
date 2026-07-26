@@ -5,21 +5,21 @@ from pathlib import Path
 import pytest
 import torch
 
-import fuse.rotation_aware.model as rotation_model
-from fuse.rotation_aware.config import RoleSpec, SkeletonSpec, load_skeleton_spec
-from fuse.rotation_aware.features import (
+import gymnastics.fusion.rotation_aware.model as rotation_model
+from gymnastics.fusion.rotation_aware.config import RoleSpec, SkeletonSpec, load_skeleton_spec
+from gymnastics.fusion.rotation_aware.features import (
     DisagreementFeatures,
     FeatureBundle,
     compute_disagreement_features,
     compute_quality_features,
     extract_pose_features,
 )
-from fuse.rotation_aware.model import RotationAwareFusionModel
-from fuse.rotation_aware.trunk import extract_trunk_features
+from gymnastics.fusion.rotation_aware.model import RotationAwareFusionModel
+from gymnastics.fusion.rotation_aware.trunk import extract_trunk_features
 from tests.rotation_aware.test_geometry import synthetic_mhr70_pose
 
 
-SPEC = load_skeleton_spec(Path("configs/fuse/skeleton_mhr70.yaml"))
+SPEC = load_skeleton_spec(Path("configs/fusion/skeleton_mhr70.yaml"))
 
 
 def _feature_bundle(points: torch.Tensor, valid: torch.Tensor, spec: SkeletonSpec = SPEC) -> FeatureBundle:
@@ -141,8 +141,8 @@ def _rebuild_inputs(
 
 
 def test_apply_axial_twist_shifts_trunk_twist_by_commanded_angle_and_is_identity_at_zero() -> None:
-    from fuse.rotation_aware.geometry import apply_axial_twist
-    from fuse.rotation_aware.trunk import axial_rotation_angle_from_points, circular_diff
+    from gymnastics.fusion.rotation_aware.geometry import apply_axial_twist
+    from gymnastics.fusion.rotation_aware.trunk import axial_rotation_angle_from_points, circular_diff
 
     points, valid = synthetic_mhr70_pose(theta_deg=20.0, frames=4)
     angle0, valid0 = axial_rotation_angle_from_points(points, valid, SPEC)

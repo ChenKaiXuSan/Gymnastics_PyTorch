@@ -4,12 +4,12 @@ from pathlib import Path
 import pytest
 import torch
 
-from fuse.rotation_aware.corruptions import (
+from gymnastics.fusion.rotation_aware.corruptions import (
     CorruptionConfig,
     apply_corruptions,
     write_corruption_manifest,
 )
-from fuse.rotation_aware.config import RoleSpec, SkeletonSpec, load_skeleton_spec
+from gymnastics.fusion.rotation_aware.config import RoleSpec, SkeletonSpec, load_skeleton_spec
 
 
 def _inputs():
@@ -184,7 +184,7 @@ def test_thorax_rotation_uses_joint_role_fallback_from_skeleton():
 
 
 def test_thorax_rotation_moves_only_named_upper_body_about_local_y() -> None:
-    skeleton = load_skeleton_spec(Path("configs/fuse/skeleton_mhr70.yaml"))
+    skeleton = load_skeleton_spec(Path("configs/fusion/skeleton_mhr70.yaml"))
     joints = len(skeleton.joint_names)
     face = torch.arange(2 * joints * 3, dtype=torch.float32).reshape(2, joints, 3) + 1
     valid = torch.ones((2, joints), dtype=torch.bool)

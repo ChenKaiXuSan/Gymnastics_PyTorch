@@ -1,0 +1,46 @@
+# hydra config
+hydra:
+  run:
+    dir: ${paths.log_path}
+  job:
+    chdir: false
+
+# Path
+data_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}
+
+paths:
+  video_path: ${data_root}/raw/person
+  log_path: local/runs/sam3d
+  result_output_path: ${data_root}/sam3d_body_results/person
+
+# Model
+model:
+  root_path: ${oc.env:GYMNASTICS_CHECKPOINT_ROOT,local/checkpoints/models}/sam-3d-body-dinov3
+  checkpoint_path: ${model.root_path}/model.ckpt
+  mhr_path: ${model.root_path}/assets/mhr_model.pt
+
+  # detector_name: yolov8n
+  # segmentor_name: sam_vit_b
+  fov_name: moge2
+
+visualize:
+  save_focal_length: false
+  save_mesh_ply: false
+  save_mesh_overlay: true
+  save_bbox_image: true
+  save_3d_mesh: false
+  save_3d_keypoints: true
+  save_together: true
+
+infer:
+  conf_thres: 50.0
+  keep_frames: true
+  num_inference_steps: 4
+  gpu: [0, 1] # 指定使用的 GPU 列表
+  workers_per_gpu: 1 # 每个 GPU 使用的工作线程数,3090 建议 2
+  person_list: [-1] # 指定需要处理的人物 ID 列表，-1 表示处理所有人物
+  rotate_frames: false # 是否在推理前旋转输入帧
+  rotate_code: ROTATE_90_CLOCKWISE # rotate_frames=true 时使用的 cv2 旋转方式
+
+dataset:
+  recursive: true

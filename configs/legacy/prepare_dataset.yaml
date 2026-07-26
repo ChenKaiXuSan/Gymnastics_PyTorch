@@ -45,4 +45,4 @@ detectron2:
   cfg: "COCO-Keypoints/keypoint_rcnn_R_50_FPN_3x.yaml"
   score_thresh: 0.7
 
-logs: "/workspace/code/logs"
+logs: "local/runs/legacy/prepare_dataset"

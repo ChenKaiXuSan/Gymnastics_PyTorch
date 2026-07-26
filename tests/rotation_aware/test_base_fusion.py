@@ -1,6 +1,6 @@
 import torch
 
-from fuse.rotation_aware.base_fusion import arithmetic_fusion, quality_weighted_fusion
+from gymnastics.fusion.rotation_aware.base_fusion import arithmetic_fusion, quality_weighted_fusion
 
 
 def test_base_fusion_falls_back_to_only_valid_view():

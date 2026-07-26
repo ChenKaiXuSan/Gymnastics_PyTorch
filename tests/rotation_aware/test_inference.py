@@ -4,20 +4,20 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from fuse.metadata.mhr70 import mhr_names
-from fuse.rotation_aware import inference
-from fuse.rotation_aware.config import load_skeleton_spec
-from fuse.rotation_aware.corruptions import CorruptionConfig
-from fuse.rotation_aware.inference import (
+from gymnastics.common.skeletons.mhr70 import mhr_names
+from gymnastics.fusion.rotation_aware import inference
+from gymnastics.fusion.rotation_aware.config import load_skeleton_spec
+from gymnastics.fusion.rotation_aware.corruptions import CorruptionConfig
+from gymnastics.fusion.rotation_aware.inference import (
     canonicalize_trial,
     overlap_taper,
     run_inference,
 )
-from fuse.rotation_aware.model import RotationAwareFusionModel
-from fuse.rotation_aware.schema import PosePairTrial, valid_from_points
+from gymnastics.fusion.rotation_aware.model import RotationAwareFusionModel
+from gymnastics.fusion.rotation_aware.schema import PosePairTrial, valid_from_points
 
 
-SPEC = load_skeleton_spec(Path("configs/fuse/skeleton_mhr70.yaml"))
+SPEC = load_skeleton_spec(Path("configs/fusion/skeleton_mhr70.yaml"))
 
 
 def _trial(frames: int = 130) -> PosePairTrial:

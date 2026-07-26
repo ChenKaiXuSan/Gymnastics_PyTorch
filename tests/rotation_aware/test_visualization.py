@@ -2,9 +2,9 @@ from pathlib import Path
 
 import numpy as np
 
-from fuse.metadata.mhr70 import mhr_names
-from fuse.rotation_aware.config import load_skeleton_spec
-from fuse.rotation_aware.visualization import visualize_saved_sequence
+from gymnastics.common.skeletons.mhr70 import mhr_names
+from gymnastics.fusion.rotation_aware.config import load_skeleton_spec
+from gymnastics.fusion.rotation_aware.visualization import visualize_saved_sequence
 
 
 def test_visualization_writes_curves_without_mutating_saved_arrays(
@@ -30,7 +30,7 @@ def test_visualization_writes_curves_without_mutating_saved_arrays(
     outputs = visualize_saved_sequence(
         source,
         tmp_path / "figures",
-        skeleton=load_skeleton_spec("configs/fuse/skeleton_mhr70.yaml"),
+        skeleton=load_skeleton_spec("configs/fusion/skeleton_mhr70.yaml"),
         animation=True,
     )
 

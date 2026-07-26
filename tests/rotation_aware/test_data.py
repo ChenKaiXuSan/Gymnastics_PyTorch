@@ -6,10 +6,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from fuse.metadata.mhr70 import mhr_names
-from fuse.rotation_aware import data
-from fuse.rotation_aware.config import RoleSpec, SkeletonSpec, load_skeleton_spec
-from fuse.rotation_aware.schema import PosePairTrial, valid_from_points
+from gymnastics.common.skeletons.mhr70 import mhr_names
+from gymnastics.fusion.rotation_aware import data
+from gymnastics.fusion.rotation_aware.config import RoleSpec, SkeletonSpec, load_skeleton_spec
+from gymnastics.fusion.rotation_aware.schema import PosePairTrial, valid_from_points
 
 
 def fake_sam3d_loader(_root, _person_id, view):
@@ -49,7 +49,7 @@ def _cache_source() -> dict[str, object]:
 
 @pytest.fixture
 def spec():
-    return load_skeleton_spec("configs/fuse/skeleton_mhr70.yaml")
+    return load_skeleton_spec("configs/fusion/skeleton_mhr70.yaml")
 
 
 def test_load_skeleton_spec_resolves_mhr70_virtual_roles(spec):

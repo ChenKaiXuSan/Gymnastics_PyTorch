@@ -3,9 +3,9 @@ from pathlib import Path
 
 import numpy as np
 
-from fuse.metadata.mhr70 import mhr_names
-from fuse.rotation_aware.config import load_skeleton_spec
-from fuse.rotation_aware.evaluation import (
+from gymnastics.common.skeletons.mhr70 import mhr_names
+from gymnastics.fusion.rotation_aware.config import load_skeleton_spec
+from gymnastics.fusion.rotation_aware.evaluation import (
     MethodSequence,
     _circular_rom,
     _derivative,
@@ -18,7 +18,7 @@ from fuse.rotation_aware.evaluation import (
 from tests.rotation_aware.test_geometry import synthetic_mhr70_pose
 
 
-SPEC = load_skeleton_spec(Path("configs/fuse/skeleton_mhr70.yaml"))
+SPEC = load_skeleton_spec(Path("configs/fusion/skeleton_mhr70.yaml"))
 
 
 def _sequence(offset: float = 0.0) -> MethodSequence:
@@ -142,9 +142,11 @@ def test_missing_triangulated_cycle_is_not_prepopulated_as_nan_reference(
 
 
 def test_external_evaluation_imports_are_isolated() -> None:
-    source = Path("fuse/rotation_aware/evaluation.py").read_text(encoding="utf-8")
+    source = Path("src/gymnastics/fusion/rotation_aware/evaluation.py").read_text(encoding="utf-8")
     for path in ("inference.py", "training.py", "cli.py"):
-        assert "triangulation" not in Path("fuse/rotation_aware", path).read_text(
+        assert "triangulation" not in Path(
+            "src/gymnastics/fusion/rotation_aware", path
+        ).read_text(
             encoding="utf-8"
         )
     assert "triangulation" in source

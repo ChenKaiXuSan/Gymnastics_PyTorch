@@ -161,7 +161,7 @@ def scan_new_fatal_errors(run_log: Path, offset: int) -> tuple[list[str], int]:
 
 def process_is_active(commands: Sequence[str], process_match: str) -> bool:
     return any(
-        "python -m SAM3Dbody.main" in command and process_match in command
+        "gymnastics sam3d" in command and process_match in command
         for command in commands
     )
 

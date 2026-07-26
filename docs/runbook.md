@@ -37,14 +37,14 @@ conda run -n gymnastic ...
 ls /home/data/xchen/gymnastics/raw/person/46/ID46_face.MOV /home/data/xchen/gymnastics/raw/person/46/ID46_side.MOV
 ```
 
-两个文件都应存在。当前 `SAM3Dbody.main` 会检查 `face` 和 `side` 是否齐全，缺少任一视角时会跳过该人物。
+两个文件都应存在。当前 `gymnastics sam3d` 会检查 `face` 和 `side` 是否齐全，缺少任一视角时会跳过该人物。
 
 ### 2. 运行 SAM3D-Body
 
 为 person `46` 的两个视角生成逐帧关键点：
 
 ```bash
-conda run -n gymnastic python -m SAM3Dbody.main infer.person_list=[46] infer.gpu=[0] infer.workers_per_gpu=1
+conda run -n gymnastic gymnastics sam3d infer.person_list=[46] infer.gpu=[0] infer.workers_per_gpu=1
 ```
 
 可通过 `infer.gpu=[0]` 选择 GPU。默认配置 `infer.person_list=[-1]` 表示处理全部人物。
@@ -54,9 +54,9 @@ conda run -n gymnastic python -m SAM3Dbody.main infer.person_list=[46] infer.gpu
 ```text
 /home/data/xchen/gymnastics/sam3d_body_results/person/46/face/*_sam3d_body.npz
 /home/data/xchen/gymnastics/sam3d_body_results/person/46/side/*_sam3d_body.npz
-/home/data/xchen/gymnastics/sam3d_body_results/logs/46/face/visualization/
-/home/data/xchen/gymnastics/sam3d_body_results/logs/46/side/visualization/
-/home/data/xchen/gymnastics/sam3d_body_results/logs/person_logs/46.log
+local/runs/sam3d/46/face/visualization/
+local/runs/sam3d/46/side/visualization/
+local/runs/sam3d/person_logs/46.log
 ```
 
 分别统计两个视角的逐帧结果：
@@ -73,22 +73,22 @@ find /home/data/xchen/gymnastics/sam3d_body_results/person/46/side -type f -name
 对齐 person `46` 的 face/side 时间轴并切分动作周期：
 
 ```bash
-conda run -n gymnastic python -m split_cycle.main --person 46 --threads 1
+conda run -n gymnastic gymnastics align --person 46 --threads 1
 ```
 
 主要输出：
 
 ```text
-logs/split_cycle/person_46/alignment_record_46.json
-logs/split_cycle/person_46/theta_unwrap.png
-logs/split_cycle/person_46/face/cycle_*.mp4
-logs/split_cycle/person_46/side/cycle_*.mp4
+local/runs/split_cycle/person_46/alignment_record_46.json
+local/runs/split_cycle/person_46/theta_unwrap.png
+local/runs/split_cycle/person_46/face/cycle_*.mp4
+local/runs/split_cycle/person_46/side/cycle_*.mp4
 ```
 
 检查对齐记录：
 
 ```bash
-sed -n '1,220p' logs/split_cycle/person_46/alignment_record_46.json
+sed -n '1,220p' local/runs/split_cycle/person_46/alignment_record_46.json
 ```
 
 后续三角化和融合都使用该记录。关键字段 `offset_side_to_face` 表示侧面序列相对于正面序列的帧偏移；融合不会改用新估算的关键点 DTW 偏移。
@@ -99,34 +99,34 @@ sed -n '1,220p' logs/split_cycle/person_46/alignment_record_46.json
 
 - 两个视角的 SAM3D 2D 关键点。
 - `alignment_record_46.json` 中的周期帧记录和时间偏移。
-- `configs/sam3d_triangulation.yaml` 指向的 face/side 相机标定文件（内参）。
-- `logs/analysis/extrinsics/estimated_extrinsics.json` 中的逐人外参。
+- `configs/triangulation/sam3d_triangulation.yaml` 指向的 face/side 相机标定文件（内参）。
+- `local/runs/analysis/extrinsics/estimated_extrinsics.json` 中的逐人外参。
 
 内参来自棋盘格标定，外参必须先从数据中估计出来。相机在不同拍摄场次之间被重新摆放过，
-`configs/sam3d_triangulation.yaml` 里的 `camera_position` 合成布局对所有人共用一套位姿，
+`configs/triangulation/sam3d_triangulation.yaml` 里的 `camera_position` 合成布局对所有人共用一套位姿，
 留出帧重投影误差中位约 21 px、最差 57 px；逐人估计后降到约 6 px。若外参文件不存在，
 三角化会直接报错：
 
 ```bash
-conda run -n gymnastic python -m triangulation.estimate_extrinsics
+conda run -n gymnastic gymnastics triangulate estimate-extrinsics
 ```
 
 对比新旧外参对三角化质量的影响（重投影、与单目 3D 的形状误差、骨长稳定性）：
 
 ```bash
-conda run -n gymnastic python triangulation/tools/compare_extrinsics.py
+conda run -n gymnastic python -m gymnastics.analysis.reports.compare_extrinsics
 ```
 
 可以先处理一个周期的两个帧，确认加载和标定流程可用：
 
 ```bash
-conda run -n gymnastic python -m triangulation.sam3d_from_split_cycle --person 46 --max-cycles 1 --max-frames 2
+conda run -n gymnastic gymnastics triangulate --person 46 --max-cycles 1 --max-frames 2
 ```
 
 冒烟检查只生成部分结果，不能作为最终数据。确认无误后必须运行完整命令：
 
 ```bash
-conda run -n gymnastic python -m triangulation.sam3d_from_split_cycle --person 46
+conda run -n gymnastic gymnastics triangulate --person 46
 ```
 
 主要输出：
@@ -162,50 +162,50 @@ side_reprojection_error_mean_px
 以 face 为参考，用推荐方法处理 person `46`：
 
 ```bash
-conda run -n gymnastic python -m fuse --person 46 --methods avg_body_current
+conda run -n gymnastic gymnastics fuse deterministic --person 46 --methods avg_body_current
 ```
 
 主要输出：
 
 ```text
-logs/fuse_experiments/avg_body_current/person_46/fused_sequence.npz
-logs/fuse_experiments/avg_body_current/person_46/config.json
-logs/fuse_experiments/metrics_by_person.csv
-logs/fuse_experiments/metrics_by_joint.csv
+local/runs/fuse_experiments/avg_body_current/person_46/fused_sequence.npz
+local/runs/fuse_experiments/avg_body_current/person_46/config.json
+local/runs/fuse_experiments/metrics_by_person.csv
+local/runs/fuse_experiments/metrics_by_joint.csv
 ```
 
 检查人物级指标：
 
 ```bash
-sed -n '1,40p' logs/fuse_experiments/metrics_by_person.csv
+sed -n '1,40p' local/runs/fuse_experiments/metrics_by_person.csv
 ```
 
-融合必须找到 `logs/split_cycle/person_46/alignment_record_46.json`。如果缺少三角化周期，程序仍可保存 `fused_sequence.npz`，但不会产生该人物的有效伪真值评估指标。
+融合必须找到 `local/runs/split_cycle/person_46/alignment_record_46.json`。如果缺少三角化周期，程序仍可保存 `fused_sequence.npz`，但不会产生该人物的有效伪真值评估指标。
 
 ### 6. 生成或检查分析结果
 
 完成正式三角化后，刷新三角化质量报告：
 
 ```bash
-conda run -n gymnastic python triangulation/tools/generate_results_report.py
+conda run -n gymnastic python -m gymnastics.analysis.reports.generate_results_report
 ```
 
 报告输出：
 
 ```text
-logs/analysis/triangulated_results/triangulated_results_report.md
-logs/analysis/triangulated_results/triangulated_person_summary.csv
-logs/analysis/triangulated_results/triangulated_cycle_details.csv
+local/runs/analysis/triangulated_results/triangulated_results_report.md
+local/runs/analysis/triangulated_results/triangulated_person_summary.csv
+local/runs/analysis/triangulated_results/triangulated_cycle_details.csv
 ```
 
-融合评估的 MPJPE、median、p95 和最大误差位于 `logs/fuse_experiments/metrics_by_person.csv` 和 `metrics_by_joint.csv`。
+融合评估的 MPJPE、median、p95 和最大误差位于 `local/runs/fuse_experiments/metrics_by_person.csv` 和 `metrics_by_joint.csv`。
 
 ### 7. 可选：分类训练
 
 需要进行动作分类实验时运行：
 
 ```bash
-conda run -n gymnastic python -m project.train.train
+conda run -n gymnastic gymnastics classify
 ```
 
 分类训练使用已准备的动作数据、标签和人员级折叠映射。它不是生成三角化或融合 3D 关键点的必要步骤。
@@ -217,16 +217,16 @@ conda run -n gymnastic python -m project.train.train
 按顺序执行：
 
 ```bash
-conda run -n gymnastic python -m SAM3Dbody.main
-conda run -n gymnastic python -m split_cycle.main
-conda run -n gymnastic python -m triangulation.sam3d_from_split_cycle
-conda run -n gymnastic python -m fuse --methods avg_body_current
+conda run -n gymnastic gymnastics sam3d
+conda run -n gymnastic gymnastics align
+conda run -n gymnastic gymnastics triangulate
+conda run -n gymnastic gymnastics fuse deterministic --methods avg_body_current
 ```
 
 如需运行全部九种融合方法的实验矩阵，使用：
 
 ```bash
-conda run -n gymnastic python -m fuse
+conda run -n gymnastic gymnastics fuse deterministic
 ```
 
 完整实验矩阵的耗时和存储开销高于只运行推荐方法。
@@ -237,20 +237,20 @@ SAM3D-Body 和三角化配置读取 `GYMNASTICS_DATA_ROOT`：
 
 ```bash
 export GYMNASTICS_DATA_ROOT=/path/to/gymnastics
-conda run -n gymnastic python -m SAM3Dbody.main
-conda run -n gymnastic python -m triangulation.sam3d_from_split_cycle
+conda run -n gymnastic gymnastics sam3d
+conda run -n gymnastic gymnastics triangulate
 ```
 
 `split_cycle` 不读取该环境变量，需要显式指定 raw 和 SAM3D 结果目录：
 
 ```bash
-conda run -n gymnastic python -m split_cycle.main --raw-root /path/to/gymnastics/raw --kpt-root /path/to/gymnastics/sam3d_body_results --log-root logs/split_cycle
+conda run -n gymnastic gymnastics align --raw-root /path/to/gymnastics/raw --kpt-root /path/to/gymnastics/sam3d_body_results --log-root local/runs/split_cycle
 ```
 
 `fuse` 也需要显式指定 SAM3D、三角化和切分记录目录：
 
 ```bash
-conda run -n gymnastic python -m fuse --sam3d-root /path/to/gymnastics/sam3d_body_results --triangulated-root /path/to/gymnastics/sam3d_triangulated/person --split-root logs/split_cycle --methods avg_body_current
+conda run -n gymnastic gymnastics fuse deterministic --sam3d-root /path/to/gymnastics/sam3d_body_results --triangulated-root /path/to/gymnastics/sam3d_triangulated/person --split-root local/runs/split_cycle --methods avg_body_current
 ```
 
 如果同时自定义 `--log-root`，后续三角化配置中的 `paths.split_cycle_root` 和融合命令的 `--split-root` 必须指向同一目录。
@@ -260,10 +260,10 @@ conda run -n gymnastic python -m fuse --sam3d-root /path/to/gymnastics/sam3d_bod
 | 现象 | 检查内容 |
 |---|---|
 | SAM3D-Body 跳过人物 | 检查 `raw/person/<id>/` 下是否同时存在文件名包含 `face` 和 `side` 的视频。 |
-| SAM3D-Body 运行后没有 `.npz` | 查看 `sam3d_body_results/logs/person_logs/<id>.log`，并检查 GPU、模型 checkpoint 和输入视频。 |
+| SAM3D-Body 运行后没有 `.npz` | 查看 `local/runs/sam3d/person_logs/<id>.log`，并检查 GPU、模型 checkpoint 和输入视频。 |
 | `split_cycle` 找不到人物 | 检查 `sam3d_body_results/person/<id>/face` 和 `side` 是否存在逐帧结果。 |
-| 三角化跳过人物 | 检查 `logs/split_cycle/person_<id>/alignment_record_<id>.json`。 |
-| 三角化无法加载相机 | 检查 `configs/sam3d_triangulation.yaml` 中 face/side 标定文件是否存在。 |
+| 三角化跳过人物 | 检查 `local/runs/split_cycle/person_<id>/alignment_record_<id>.json`。 |
+| 三角化无法加载相机 | 检查 `configs/triangulation/sam3d_triangulation.yaml` 中 face/side 标定文件是否存在。 |
 | 三角化结果只有少量帧 | 确认是否只运行了 `--max-cycles 1 --max-frames 2`；正式使用前重新运行完整命令。 |
 | 融合报对齐记录缺失 | 先运行 `split_cycle`，并确认 `--split-root` 指向正确目录。 |
 | 融合指标为空 | 检查对应人物是否存在三角化 `cycle_*` 目录，以及周期帧是否能与融合序列匹配。 |
@@ -273,4 +273,4 @@ conda run -n gymnastic python -m fuse --sam3d-root /path/to/gymnastics/sam3d_bod
 
 旧的 DPT、RAFT、YOLO 和 Detectron2 数据准备代码位于 `legacy/prepare_dataset/`，配置位于 `configs/legacy/prepare_dataset.yaml`。它们仅供参考，不属于当前活动流程。
 
-更多三角化细节见[三角化说明](../triangulation/README.md)。
+更多三角化细节见[三角化说明](triangulation.md)。
