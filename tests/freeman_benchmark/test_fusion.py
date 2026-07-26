@@ -12,6 +12,7 @@ from gymnastics.benchmarks.freeman.fusion import (
     build_rotation_aware_trial,
     fuse_deterministic,
     fuse_rotation_aware,
+    load_method_prediction,
     save_method_prediction,
 )
 from gymnastics.benchmarks.freeman.schema import PosePairInput, ViewPrediction
@@ -133,6 +134,11 @@ def test_saves_compact_method_prediction_atomically(
         assert data["valid"].shape == (6, 70)
         assert "reference_3d_consumed" in str(data["metadata"].item())
     assert not path.with_suffix(".npz.tmp").exists()
+
+    loaded = load_method_prediction(path)
+    assert loaded.method == prediction.method
+    assert loaded.metadata == prediction.metadata
+    np.testing.assert_array_equal(loaded.points, prediction.points)
 
 
 def test_builds_exact_zero_offset_mhr70_trial(pose_pair: PosePairInput) -> None:

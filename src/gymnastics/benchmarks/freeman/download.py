@@ -7,6 +7,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 from pathlib import Path
 from pathlib import PurePosixPath
 import re
@@ -57,11 +58,15 @@ def load_config(path: Path) -> dict[str, Any]:
     frame_stride = int(dataset.get("frame_stride", 0))
     if frame_stride < 1:
         raise ValueError("dataset.frame_stride must be positive")
+    reference_scale_to_m = float(dataset.get("reference_scale_to_m", 0))
+    if not math.isfinite(reference_scale_to_m) or reference_scale_to_m <= 0:
+        raise ValueError("dataset.reference_scale_to_m must be positive and finite")
     config["dataset"] = {
         **dict(dataset),
         "fps_subsets": list(fps_values),
         "subjects": list(subjects),
         "frame_stride": frame_stride,
+        "reference_scale_to_m": reference_scale_to_m,
     }
     return config
 

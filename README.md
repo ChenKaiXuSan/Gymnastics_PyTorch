@@ -97,6 +97,23 @@ local/
 
 These files remain on the workstation and are not tracked by Git.
 
+### FreeMan zero-shot benchmark
+
+FreeMan is a gated Hugging Face dataset of approximately 829 GB compressed.
+The benchmark uses all 40 subjects, selects synchronized near-orthogonal camera
+pairs, and evaluates the gymnastics-trained fusion models zero-shot against
+FreeMan's markerless multi-view 3D reference. That reference is not independent
+marker-based motion capture.
+
+```bash
+conda run -n gymnastic gymnastics benchmark freeman inspect
+conda run -n gymnastic gymnastics benchmark freeman download
+conda run -n gymnastic gymnastics benchmark freeman run
+```
+
+Downloaded archives, extracted subject workspaces, predictions, and reports all
+remain under ignored `local/` paths.
+
 ## Repository boundaries
 
 - `src/gymnastics/`: active project-owned Python code.

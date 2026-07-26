@@ -222,6 +222,38 @@ def save_method_prediction(
     return target
 
 
+def load_method_prediction(path: Path) -> MethodPrediction:
+    """Load one compact fused prediction and validate its immutable contract."""
+    prediction_path = Path(path).resolve()
+    with np.load(prediction_path, allow_pickle=False) as data:
+        required = {
+            "method",
+            "session_id",
+            "subject_id",
+            "fps",
+            "points",
+            "valid",
+            "frame_ids",
+            "metadata",
+        }
+        missing = required - set(data.files)
+        if missing:
+            raise ValueError(f"fused cache missing arrays: {sorted(missing)}")
+        metadata = json.loads(str(data["metadata"].item()))
+        if not isinstance(metadata, dict):
+            raise ValueError("fused cache metadata must be a mapping")
+        return MethodPrediction(
+            method=str(data["method"].item()),
+            session_id=str(data["session_id"].item()),
+            subject_id=int(data["subject_id"].item()),
+            fps=float(data["fps"].item()),
+            points=np.asarray(data["points"]),
+            valid=np.asarray(data["valid"]),
+            frame_ids=np.asarray(data["frame_ids"]),
+            metadata=metadata,
+        )
+
+
 def build_rotation_aware_trial(pair: PosePairInput) -> PosePairTrial:
     """Build the existing MHR70 trial contract with native zero offset."""
     if not np.array_equal(pair.view_a.frame_ids, pair.view_b.frame_ids):

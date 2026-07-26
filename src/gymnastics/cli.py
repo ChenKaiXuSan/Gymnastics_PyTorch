@@ -37,6 +37,11 @@ _COMMANDS = {
     "classify": ("gymnastics.classification.train", "init_params", False),
     "analyze": ("gymnastics.analysis.main", "main", False),
     "calibrate": ("gymnastics.calibration.main", "main", False),
+    "benchmark:freeman": (
+        "gymnastics.benchmarks.freeman.cli",
+        "main",
+        True,
+    ),
 }
 
 
@@ -87,10 +92,24 @@ def _parser() -> argparse.ArgumentParser:
         help="run the self-supervised paper method",
         add_help=False,
     )
+    benchmark = commands.add_parser(
+        "benchmark",
+        help="run external zero-shot benchmarks",
+    )
+    benchmark_commands = benchmark.add_subparsers(dest="benchmark_command")
+    benchmark_commands.add_parser(
+        "freeman",
+        help="run the full-release FreeMan benchmark",
+        add_help=False,
+    )
     return parser
 
 
 def _target_key(args: argparse.Namespace) -> str | None:
+    if args.command == "benchmark":
+        if args.benchmark_command is None:
+            return None
+        return f"benchmark:{args.benchmark_command}"
     if args.command == "triangulate":
         mode = args.triangulation_command or "run"
         return f"triangulate:{mode}"
