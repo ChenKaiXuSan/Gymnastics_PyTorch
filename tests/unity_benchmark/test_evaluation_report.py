@@ -124,7 +124,10 @@ def test_evaluation_reports_millimetres_and_report_separates_diagnostics(
     assert (tmp_path / "evaluation/metrics_summary.csv").is_file()
     assert (tmp_path / "report/results.json").is_file()
     text = report.read_text(encoding="utf-8")
+    assert "Executive Conclusions" in text
     assert "Valid Method Ranking" in text
+    assert "Selected Per-Sequence Results" in text
+    assert "Visibility Breakdown" in text
     assert "Diagnostic Methods" in text
 
 

@@ -334,6 +334,30 @@ def _git_commit() -> str:
     return result.stdout.strip() if result.returncode == 0 else "unknown"
 
 
+def _sam3d_inference_coverage(output_root: Path) -> Mapping[str, object]:
+    coverage: dict[str, object] = {}
+    for camera_id in ("cam0", "cam1"):
+        camera_root = output_root / "sam3d" / camera_id
+        summary_path = camera_root / "summary.json"
+        summary = (
+            json.loads(summary_path.read_text(encoding="utf-8"))
+            if summary_path.is_file()
+            else {}
+        )
+        proposal_sources: dict[str, int] = {}
+        for path in camera_root.glob("*.npz"):
+            with np.load(path, allow_pickle=False) as payload:
+                metadata = json.loads(str(payload["metadata"].item()))
+            source = str(metadata.get("proposal_source", "person_detector"))
+            proposal_sources[source] = proposal_sources.get(source, 0) + 1
+        coverage[camera_id] = {
+            "completed": int(summary.get("completed", 0)),
+            "failed": len(summary.get("failed", [])),
+            "proposal_sources": proposal_sources,
+        }
+    return coverage
+
+
 def _evaluate(config: Mapping[str, object]) -> int:
     dataset_root, output_root = _paths(config)
     benchmark = load_unity_benchmark(dataset_root)
@@ -372,6 +396,7 @@ def _evaluate(config: Mapping[str, object]) -> int:
         "angle_offset_deg": offset,
         "expected_samples": len(benchmark.frames),
         "expected_sequences": len(groups),
+        "sam3d_inference": _sam3d_inference_coverage(output_root),
     }
     bundle = summarize_results(
         results, failures=failures, provenance=provenance
