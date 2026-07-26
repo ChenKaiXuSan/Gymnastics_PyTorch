@@ -105,10 +105,11 @@ def test_reference_uses_only_optimized_keypoints(freeman_fixture) -> None:
         fps_values=(30,),
     )[0]
 
-    reference = load_session_reference(session)
+    reference = load_session_reference(session, reference_scale_to_m=0.001)
 
     expected = np.arange(3 * 17 * 3, dtype=np.float32).reshape(3, 17, 3)
-    np.testing.assert_array_equal(reference.points_m, expected)
+    np.testing.assert_allclose(reference.points_m, expected * 0.001)
+    assert reference.reference_scale_to_m == 0.001
     assert reference.joint_names == FREEMAN_COCO17_NAMES
     assert not reference.points_m.flags.writeable
 

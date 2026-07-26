@@ -197,6 +197,12 @@ class ReferenceSequence:
     """FreeMan optimized markerless multi-view 3D reference sequence."""
 
     session_id: str
+    subject_id: int
+    fps: int
+    split: str
+    scenario: str | None
+    action: str | None
+    reference_scale_to_m: float
     points_m: np.ndarray
     valid: np.ndarray
     frame_ids: np.ndarray
@@ -212,6 +218,15 @@ class ReferenceSequence:
             raise ValueError("reference masks and frame IDs must match points")
         if len(self.joint_names) != points.shape[1]:
             raise ValueError("reference joint names must match point count")
+        if (
+            self.subject_id < 1
+            or self.subject_id > 40
+            or self.fps not in {30, 60}
+            or not self.split
+            or not np.isfinite(self.reference_scale_to_m)
+            or self.reference_scale_to_m <= 0
+        ):
+            raise ValueError("reference subject, FPS, split, and unit scale are required")
         object.__setattr__(self, "points_m", _readonly_array(points))
         object.__setattr__(self, "valid", _readonly_array(valid))
         object.__setattr__(self, "frame_ids", _readonly_array(frame_ids))

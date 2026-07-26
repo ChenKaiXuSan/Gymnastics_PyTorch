@@ -253,8 +253,15 @@ def load_subject_sessions(
     return tuple(sorted(sessions, key=lambda item: (item.fps, item.session_id)))
 
 
-def load_session_reference(session: FreeManSession) -> ReferenceSequence:
+def load_session_reference(
+    session: FreeManSession,
+    *,
+    reference_scale_to_m: float,
+) -> ReferenceSequence:
     """Load only the optimized FreeMan markerless 3D reference field."""
+    scale = float(reference_scale_to_m)
+    if not np.isfinite(scale) or scale <= 0:
+        raise ValueError("reference_scale_to_m must be positive and finite")
     payload = _load_object_mapping(session.keypoints3d_path)
     if "keypoints3d_optim" not in payload:
         raise ValueError(
@@ -263,11 +270,17 @@ def load_session_reference(session: FreeManSession) -> ReferenceSequence:
     all_points = np.asarray(payload["keypoints3d_optim"], dtype=np.float32)
     if all_points.ndim != 3 or all_points.shape[1:] != (17, 3):
         raise ValueError("FreeMan keypoints3d_optim must have shape [F,17,3]")
-    points = all_points[session.frame_ids]
+    points = all_points[session.frame_ids] * scale
     valid = np.isfinite(points).all(axis=-1)
     safe_points = np.where(valid[..., None], points, 0)
     return ReferenceSequence(
         session_id=session.session_id,
+        subject_id=session.subject_id,
+        fps=session.fps,
+        split=session.split,
+        scenario=session.scenario,
+        action=session.action,
+        reference_scale_to_m=scale,
         points_m=safe_points,
         valid=valid,
         frame_ids=session.frame_ids,

@@ -14,6 +14,9 @@ download:
 
 dataset:
   fps_subsets: [30, 60]
+  # Protocol-declared conversion into metres. The inspect stage records this
+  # value so evaluation never guesses or silently changes coordinate units.
+  reference_scale_to_m: 1.0
   subjects:
     - 1
     - 2
