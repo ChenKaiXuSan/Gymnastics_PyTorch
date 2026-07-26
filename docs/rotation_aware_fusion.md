@@ -184,9 +184,12 @@ The evaluation registry uses these labels:
 | A4 | learned spatial objectives |
 | A5 | A4 plus rotation and adaptive temporal objectives |
 | A6 | `rotation_aware_self_supervised`, including complete-cycle ROM preservation |
+| A7 | A6 plus 改法4: per-view-peak ROM anchor (twist-fusion) |
+| A8 | A7 plus 改法2: opt-in rotation-parameterised trunk-twist residual |
+| A9 | A8 plus 改法3: per-view observed twist-rate anchor |
 
-A0-A3 are emitted alongside every learned inference run. A4, A5, and A6 are
-separate trained runs, so evaluate them together by repeating `--run-id`:
+A0-A3 are emitted alongside every learned inference run. A4-A9 are separate
+trained runs, so evaluate them together by repeating `--run-id`:
 
 ```bash
 conda run -n gymnastic python -m fuse.rotation_aware evaluate \
@@ -198,6 +201,34 @@ This creates one combined evaluation directory named
 `evaluation/paper_a4+paper_a5+paper_a6/`. The evaluator can also read old
 comparison outputs from the configured `old_fuse_root` without writing to
 them.
+
+### Trunk-twist ablations (A7-A9)
+
+A7-A9 are an additive ladder over A6 that targets trunk axial rotation
+(体干回旋 / twist), which coordinate-space averaging tends to shrink. They are
+opt-in: A6 behaviour is unchanged unless the corresponding loss weight or the
+twist residual is enabled. Scored on 137 persons, similarity-aligned, against
+the regenerated triangulated GT:
+
+| metric | A6 | A7 (改法4) | A8 (改法2) | A9 (改法3) |
+| --- | ---: | ---: | ---: | ---: |
+| MPJPE (mm) | 65.7 | 66.3 | 97.9 | 99.0 |
+| ROM retention | 1.00 | 1.054 | 1.121 | 1.010 |
+| peak angular-velocity retention (1.0=ideal) | 1.00 | 1.087 | 1.911 | 2.352 |
+| joint jerk (lower=smoother) | 5480 | 4397 | 7150 | 5822 |
+
+- **A7 (改法4) is the recommended twist improvement and the main line.** Anchoring
+  the ROM target to the wider per-view range recovers +5.4% ROM retention (p=7e-7)
+  and −20% jerk (p=3e-24) at negligible MPJPE cost. Its value is on the twist axis,
+  not MPJPE — evaluate/report this on trunk-twist fidelity, not per-frame position.
+- **A8 (改法2) and A9 (改法3) are negative controls, not shipped.** A free twist
+  residual (A8) over-rotates (MPJPE +49%, peak ω 1.91×); constraining its rate to
+  the per-view observed envelope (A9) fails to help — the envelope is noisier and
+  higher than the triangulated truth, so it grants headroom rather than removing it
+  (peak ω retention worsens to 2.35 and MPJPE stays high).
+
+Full analysis, paired statistics, and the training-stability fix that made A9
+measurable are in [twist_fusion_results.md](twist_fusion_results.md).
 
 ## Output Layout
 
