@@ -2,8 +2,16 @@
 
 Goal: fuse the trunk axial rotation (体回旋 / twist) better than the baseline
 rotation-aware network. Additive ablation ladder over A6 (paper baseline),
-trained identically (all137, e100, seed 0, batch 32), scored against the
+trained identically (all137, seed 0, batch 32, e100), scored against the
 regenerated triangulated GT with per-sequence similarity alignment.
+
+> **A9 caveat:** the A9 run was torn down at **epoch 85/100** when the launching
+> session ended. Its val_score had plateaued flat (~0.716) for the last ~25
+> epochs, so best.pt (the max-val_score checkpoint, ~epoch 83) is converged and
+> the numbers below are stable. The remaining 15 epochs would only extend the
+> plateau; the effect sizes vs A7 (49% worse MPJPE, 2.35× overshoot) are far too
+> large for that to change the conclusion. A clean 100-epoch rerun is available
+> if an exact-protocol number is needed for publication.
 
 | ablation | what it adds | trunk-twist idea |
 |---|---|---|
@@ -16,18 +24,29 @@ regenerated triangulated GT with per-sequence similarity alignment.
 
 | metric | A6 | A7 (+改法4) | A8 (+改法2) | A9 (+改法3) |
 |---|---:|---:|---:|---:|
-| **MPJPE (mm)** | 65.7 | 66.3 | 97.9 | — |
-| **ROM retention** | 1.000 | **1.054** | 1.121 | — |
-| **peak angular-velocity retention** | 1.000 | 1.087 | **1.911** | — |
-| bone-length CV (lower=stiffer) | 0.0202 | 0.0203 | 0.0247 | — |
-| rigidity | 0.0161 | 0.0163 | 0.0196 | — |
-| joint jerk (lower=smoother) | 5480 | **4397** | 7150 | — |
+| **MPJPE (mm)** | **65.7** | 66.3 | 97.9 | 99.0 |
+| **ROM retention** | 1.000 | **1.054** | 1.121 | 1.010 |
+| **peak angular-velocity retention** (1.0=ideal) | **1.000** | 1.087 | 1.911 | 2.352 |
+| bone-length CV (lower=stiffer) | **0.0202** | 0.0203 | 0.0247 | 0.0248 |
+| rigidity | **0.0161** | 0.0163 | 0.0196 | 0.0197 |
+| joint jerk (lower=smoother) | 5480 | **4397** | 7150 | 5822 |
 
 Paired Wilcoxon (vs A6, 137 persons):
 - A7: ROM retention +5.4% (p=7e-7, higher on 81% of people); jerk −20% (p=3e-24,
   lower on 100%); MPJPE +0.6 mm (negligible).
 - A8: MPJPE +32 mm / +49% (p=3e-24); peak angular velocity +91% (p=2e-21);
   ROM retention +12% but rigidity and jerk both degrade.
+
+Paired Wilcoxon, **A9 vs A7** (137 persons) — the head-to-head that matters:
+- MPJPE **+33 mm / +49%** (p=3e-24, worse on 100% of people).
+- peak angular-velocity retention **+116%** (1.09 → 2.35, p=1e-15, worse on 82%).
+- ROM retention **−4.1%** (1.054 → 1.010, p=0.04) — A9 lost A7's ROM gain, back to baseline.
+- joint jerk **+32%**, bone-CV/rigidity **+21–22%** (all p<1e-23) — rougher and less rigid.
+
+Paired Wilcoxon, **A9 vs A8** (did 改法3 tame A8's overshoot? No):
+- peak angular-velocity retention **+23%** (1.91 → 2.35, p=8e-19) — the overshoot got
+  **worse**, not better; the one thing 改法3 was meant to fix.
+- ROM retention −9.8% (p=1e-18); joint jerk −18.6% (p=3e-24, the only improvement).
 
 ## Findings
 
@@ -50,31 +69,51 @@ Paired Wilcoxon (vs A6, 137 persons):
    route should be evaluated and reported on trunk-twist fidelity, not per-frame
    position error.
 
-## A9 (改法3) status — did NOT produce a usable model
+4. **改法3 (A9) does not work — a clean negative result.** With the twist-rate
+   anchor added on top of A8, A9 does **not** beat A7 on any axis, and it does not
+   even achieve its own purpose (taming A8's overshoot): peak angular-velocity
+   retention rose from A8's 1.91 to **2.35** (further from the ideal 1.0), while
+   ROM fell back to baseline (1.01) and MPJPE stayed high (99 mm). So A9 is the
+   worst of both worlds — it keeps A8's position error and rigidity cost but throws
+   away the ROM gain, and makes the twist dynamics *faster/jerkier*, not slower.
 
-A9 trained 100 epochs but is currently unusable, for two compounding reasons:
+   The likely reason is baked into the anchor's definition: 改法3 bounds the fused
+   twist rate to the **per-view observed |ω| envelope**, but a single monocular
+   view's angular velocity is noisy and peaks *higher* than the triangulated truth
+   (per-view peak_ω ≈ 30 rad/s). So the "bound" sits above the real rate — it
+   grants headroom rather than removing it, and the free twist residual + the
+   peak-ROM push (改法4/改法2) spend that headroom overshooting. A rate anchor
+   would need a *tighter, denoised* target (e.g. the cross-view-consistent rate),
+   not the wider per-view envelope, and even then A8 already shows the twist
+   residual itself is the source of the MPJPE/rigidity damage.
 
-- **The observed twist-rate loss was ≈0 for every training epoch** (only the
-  epoch-0 warmup was non-zero). As implemented, the ω-anchor's valid-frame mask
-  almost never engages, so 改法3 barely participated in training. It needs its
-  masking/weighting reworked before a retrain is worthwhile.
-- **No checkpoint was saved.** best.pt is written only when `val_score >= best`
-  (best starts at −∞), and A9's `val_score` was `nan` every epoch (A7's was a
-  normal ~0.77). `nan >= −∞` is always False, so best.pt was never written and
-  the trained weights were lost (there is no periodic/last checkpoint). The nan
-  originates in validation scoring under the A9 loss path; worth making the
-  checkpoint logic tolerate a nan score (e.g. save the last epoch as a fallback)
-  regardless.
+## A9 (改法3) — training-stability bug, found and fixed
 
-Next step for A9: fix the ω-anchor masking so 改法3 actually engages, guard the
-checkpoint against a nan validation score, then retrain. Until then A9's effect
-is unmeasured.
+The first A9 attempts produced `nan` val_scores and no usable model. Root-caused
+to a latent gradient bug, now fixed (commits on `feat/twist-fusion`):
+
+- In `trunk.py::_derivative`, ω = dθ/dt divides by the per-frame interval, which is
+  **0 at padded / run-boundary frames**. The value was already zeroed, but the
+  division's backward is `grad · (1/dt) = 0 · inf = nan`. A0–A8 never differentiate
+  ω, so they never hit it; **A9 is the first ablation that backprops through the
+  twist rate**, so it detonated the bug — every weight went `nan` in ~1 epoch while
+  the nan-masked loss still *looked* healthy (~428). Fix: divide by a
+  guaranteed-positive denominator (no forward-value change for any ablation; only
+  the gradient becomes finite). Regression tests at both the trunk and loss level.
+- Checkpointing now also persists weights when val_score is non-finite, so a run
+  can never again finish with no checkpoint.
+
+After the fix A9 trained cleanly (finite val_score ~0.716, loss 4193 → 3744,
+inference nan-free on all 928 cycles). The negative result above is therefore
+real, not an artifact of the earlier instability.
 
 ## Recommendation
 
 - Ship **A7 (改法4)** as the twist-fidelity improvement: clean, significant,
-  no downside.
-- Treat **A8 (改法2)** as evidence that the twist residual needs a magnitude
-  anchor — do not use it standalone.
-- **改法3** is the right idea (bound the twist to observations) but its current
-  implementation does not engage; rework before spending another training run.
+  no downside. It remains the best of the ladder.
+- Treat **A8 (改法2)** as evidence that a free twist residual over-rotates and
+  costs MPJPE/rigidity — do not use it standalone.
+- **Drop 改法3 in its current form.** Bounding to the per-view rate envelope does
+  not constrain the twist (the envelope is looser than the truth). If the twist
+  residual is pursued further, the constraint has to come from a denoised,
+  cross-view-consistent rate/ROM target, not a single view's peak.
