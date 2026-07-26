@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
-from typing import Sequence
-from typing import Mapping
+from types import MappingProxyType
+from typing import Mapping, Sequence
 
 import numpy as np
+import torch
 
 from gymnastics.common.skeletons.mhr70 import mhr_names
 from gymnastics.fusion.deterministic.experiment_matrix import (
@@ -23,6 +26,11 @@ from gymnastics.fusion.deterministic.experiment_matrix import (
     sim3_align_to_reference,
     smooth_sequence,
 )
+from gymnastics.fusion.rotation_aware.config import SkeletonSpec, load_skeleton_spec
+from gymnastics.fusion.rotation_aware.inference import run_inference
+from gymnastics.fusion.rotation_aware.model import RotationAwareFusionModel
+from gymnastics.fusion.rotation_aware.schema import PosePairTrial
+from gymnastics.fusion.rotation_aware.training import load_checkpoint
 
 from .dataset import group_evaluation_sequences
 from .mapping import (
@@ -32,6 +40,91 @@ from .mapping import (
 )
 from .sam3d import load_sam3d_camera_cache
 from .schema import MethodSequence, UnityBenchmark
+
+
+@dataclass(frozen=True)
+class LoadedRotationAware:
+    model: RotationAwareFusionModel
+    skeleton: SkeletonSpec
+    ablation: str
+    hidden_channels: int
+    checkpoint_path: Path
+    checkpoint_sha256: str
+    provenance: Mapping[str, object]
+
+
+def build_pose_pair_trial(
+    sequence_id: str,
+    sample_ids: np.ndarray,
+    cam0: np.ndarray,
+    cam1: np.ndarray,
+    valid_cam0: np.ndarray,
+    valid_cam1: np.ndarray,
+    *,
+    fps: float,
+) -> PosePairTrial:
+    frame_ids = np.asarray(sample_ids, dtype=np.int32)
+    return PosePairTrial(
+        face=np.asarray(cam0, dtype=np.float32),
+        side=np.asarray(cam1, dtype=np.float32),
+        valid_face=np.asarray(valid_cam0, dtype=bool),
+        valid_side=np.asarray(valid_cam1, dtype=bool),
+        timestamps=np.arange(len(frame_ids), dtype=np.float64) / float(fps),
+        face_map=frame_ids,
+        side_map=frame_ids,
+        joint_names=tuple(mhr_names),
+        person_id="unity",
+        trial_id=sequence_id,
+        fps=float(fps),
+        source_metadata={
+            "dataset": "unity_benchmark",
+            "camera_reference": "cam0",
+            "offset_cam1_to_cam0": 0,
+        },
+    )
+
+
+def load_rotation_aware_model(
+    checkpoint: str | Path,
+    skeleton_path: str | Path,
+    device: str,
+) -> LoadedRotationAware:
+    checkpoint_path = Path(checkpoint)
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(f"missing rotation-aware checkpoint: {checkpoint_path}")
+    raw = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    if not isinstance(raw, Mapping):
+        raise ValueError("rotation-aware checkpoint must be a mapping")
+    training = raw.get("training_config")
+    if not isinstance(training, Mapping):
+        raise ValueError("rotation-aware checkpoint has no training_config")
+    ablation = str(training.get("ablation", ""))
+    if not ablation:
+        raise ValueError("rotation-aware checkpoint has no ablation")
+    hidden_channels = int(training.get("hidden_channels", 128))
+    skeleton = load_skeleton_spec(Path(skeleton_path))
+    model = RotationAwareFusionModel(
+        skeleton,
+        hidden_channels=hidden_channels,
+        twist_residual=ablation in {"A8", "A9"},
+    )
+    payload = load_checkpoint(
+        checkpoint_path, model, map_location=torch.device(device)
+    )
+    model.to(device).eval()
+    provenance = payload.get("provenance")
+    if not isinstance(provenance, Mapping):
+        raise ValueError("rotation-aware checkpoint has no provenance")
+    digest = hashlib.sha256(checkpoint_path.read_bytes()).hexdigest()
+    return LoadedRotationAware(
+        model=model,
+        skeleton=skeleton,
+        ablation=ablation,
+        hidden_channels=hidden_channels,
+        checkpoint_path=checkpoint_path,
+        checkpoint_sha256=digest,
+        provenance=MappingProxyType(dict(provenance)),
+    )
 
 
 def fuse_deterministic_sequence(
@@ -224,6 +317,106 @@ def run_deterministic_fusion(
                 Path(output_root)
                 / "deterministic"
                 / method
+                / f"{sequence_id}.npz",
+                sequence,
+            )
+            outputs.append(sequence)
+    return tuple(outputs)
+
+
+def run_rotation_aware_fusion(
+    benchmark: UnityBenchmark,
+    cache_root: Path,
+    output_root: Path,
+    checkpoints: Mapping[str, str | Path],
+    *,
+    skeleton_path: str | Path,
+    fps: float,
+    device: str = "cpu",
+) -> tuple[MethodSequence, ...]:
+    if device != "cpu":
+        raise ValueError(
+            "the existing rotation-aware inference path currently requires device='cpu'"
+        )
+    groups = group_evaluation_sequences(benchmark)
+    loaded_models = {
+        str(ablation): load_rotation_aware_model(
+            checkpoint, skeleton_path, device
+        )
+        for ablation, checkpoint in checkpoints.items()
+    }
+    for requested, loaded in loaded_models.items():
+        if requested != loaded.ablation:
+            raise ValueError(
+                f"checkpoint {loaded.checkpoint_path} is {loaded.ablation}, "
+                f"not requested {requested}"
+            )
+
+    outputs: list[MethodSequence] = []
+    for sequence_id, frames in groups.items():
+        sample_ids = np.asarray([frame.sample_id for frame in frames], dtype=np.int32)
+        face = load_sam3d_camera_cache(cache_root, "cam0", sample_ids)
+        side = load_sam3d_camera_cache(cache_root, "cam1", sample_ids)
+        trial = build_pose_pair_trial(
+            sequence_id,
+            sample_ids,
+            face.points_3d,
+            side.points_3d,
+            face.valid_3d,
+            side.valid_3d,
+            fps=fps,
+        )
+        for ablation, loaded in loaded_models.items():
+            provenance = {
+                **dict(loaded.provenance),
+                "checkpoint_path": str(loaded.checkpoint_path),
+                "checkpoint_sha256": loaded.checkpoint_sha256,
+                "ablation": ablation,
+                "model_config": {"hidden_channels": loaded.hidden_channels},
+            }
+            with torch.inference_mode():
+                result = run_inference(
+                    loaded.model,
+                    trial,
+                    loaded.skeleton,
+                    output_root=Path(output_root)
+                    / "rotation_aware"
+                    / "_runtime"
+                    / ablation,
+                    run_id=f"unity_{ablation.lower()}",
+                    window_length=128,
+                    stride=64,
+                    provenance=provenance,
+                    resolved_config={
+                        "benchmark": "unity",
+                        "training_source": "real_gymnastics",
+                        "unity_training": False,
+                    },
+                )
+            with np.load(result.sequence_path, allow_pickle=False) as data:
+                points = np.asarray(data["kpts_world"], dtype=np.float32)
+                valid = np.asarray(data["joint_valid"], dtype=bool)
+            metadata = {
+                "ranking_group": "valid",
+                "training_source": "real_gymnastics",
+                "unity_training": False,
+                "checkpoint_path": str(loaded.checkpoint_path),
+                "checkpoint_sha256": loaded.checkpoint_sha256,
+                "ablation": ablation,
+            }
+            sequence = MethodSequence(
+                method=ablation,
+                sequence_id=sequence_id,
+                sample_ids=sample_ids,
+                points=points,
+                valid=valid,
+                joint_names=tuple(mhr_names),
+                metadata=metadata,
+            )
+            _save_sequence(
+                Path(output_root)
+                / "rotation_aware"
+                / ablation
                 / f"{sequence_id}.npz",
                 sequence,
             )
