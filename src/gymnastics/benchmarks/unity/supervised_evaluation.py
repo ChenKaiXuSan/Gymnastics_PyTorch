@@ -468,6 +468,59 @@ def _baseline_rows(
     )
 
 
+def _protocol_matched_zero_shot(
+    rows: Sequence[Mapping[str, object]],
+    baseline_results: Mapping[str, object],
+) -> tuple[Mapping[str, object], ...]:
+    tables = baseline_results.get("tables", {})
+    by_sequence = (
+        tables.get("by_sequence", ())
+        if isinstance(tables, Mapping)
+        else ()
+    )
+    sequence_rows = (
+        tuple(row for row in by_sequence if isinstance(row, Mapping))
+        if isinstance(by_sequence, Sequence)
+        and not isinstance(by_sequence, (str, bytes))
+        else ()
+    )
+    continuous_ids = {
+        "continuous_left_060_r00",
+        "continuous_right_060_r00",
+    }
+    output: list[Mapping[str, object]] = []
+    for row in rows:
+        method = str(row["method"])
+        matching = [
+            item
+            for item in sequence_rows
+            if str(item.get("method", "")) == method
+            and str(item.get("sequence_id", "")) in continuous_ids
+        ]
+        normalized = dict(row)
+        if {
+            str(item["sequence_id"]) for item in matching
+        } == continuous_ids and len(matching) == 2:
+            for metric in (
+                "mpjpe_mm",
+                "median_mm",
+                "p95_mm",
+                "angle_mae_deg",
+                "angle_rmse_deg",
+            ):
+                if all(metric in item for item in matching):
+                    normalized[metric] = float(
+                        np.mean([float(item[metric]) for item in matching])
+                    )
+            normalized["comparison_scope"] = "continuous_direction_macro"
+        else:
+            normalized["comparison_scope"] = "benchmark_overall_fallback"
+        output.append(MappingProxyType(normalized))
+    return tuple(
+        sorted(output, key=lambda item: float(item["mpjpe_mm"]))
+    )
+
+
 def write_finetuned_report(
     bundle: FineTunedEvaluationBundle,
     output_root: Path,
@@ -516,10 +569,13 @@ def write_finetuned_report(
         if str(row.get("method", "")) not in forbidden
         and str(row.get("ranking_group", "valid")) == "valid"
     )
-    zero_shot = tuple(
-        row
-        for row in baseline_valid
-        if str(row.get("method", "")).startswith("A")
+    zero_shot = _protocol_matched_zero_shot(
+        tuple(
+            row
+            for row in baseline_valid
+            if str(row.get("method", "")).startswith("A")
+        ),
+        baseline_results,
     )
     valid_nonlearned = tuple(
         row

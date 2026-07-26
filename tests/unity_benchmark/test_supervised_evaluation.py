@@ -203,6 +203,20 @@ def test_report_separates_supervised_zero_shot_and_diagnostics(
                 "ranking_group": "diagnostic",
             },
         ],
+        "tables": {
+            "by_sequence": [
+                {
+                    "method": "A4",
+                    "sequence_id": "continuous_left_060_r00",
+                    "mpjpe_mm": 160.0,
+                },
+                {
+                    "method": "A4",
+                    "sequence_id": "continuous_right_060_r00",
+                    "mpjpe_mm": 180.0,
+                },
+            ]
+        },
     }
 
     report = write_finetuned_report(
@@ -248,4 +262,9 @@ def test_report_separates_supervised_zero_shot_and_diagnostics(
     assert all(
         row["training_supervision"] == "Unity GT used for training"
         for row in machine["supervised_ranking"]
+    )
+    assert machine["zero_shot_ranking"][0]["mpjpe_mm"] == pytest.approx(170.0)
+    assert (
+        machine["zero_shot_ranking"][0]["comparison_scope"]
+        == "continuous_direction_macro"
     )
