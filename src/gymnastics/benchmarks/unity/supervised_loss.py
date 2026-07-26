@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
+from typing import Mapping
 
 import torch
+from torch.nn import functional as F
+
+from gymnastics.fusion.rotation_aware.model import FusionOutput
 
 from .mapping import EVALUATION_JOINT_NAMES, MHR70_EVALUATION_SOURCES
 
@@ -46,6 +51,33 @@ class DifferentiableSim3:
     scale: torch.Tensor
     rotation: torch.Tensor
     translation: torch.Tensor
+
+
+@dataclass(frozen=True)
+class UnitySupervisedLossConfig:
+    unity_3d_weight: float = 1.0
+    self_supervised_weight: float = 0.1
+    smooth_l1_beta_m: float = 0.02
+
+    def __post_init__(self) -> None:
+        values = (
+            self.unity_3d_weight,
+            self.self_supervised_weight,
+            self.smooth_l1_beta_m,
+        )
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("Unity supervised loss weights must be finite")
+        if self.unity_3d_weight < 0 or self.self_supervised_weight < 0:
+            raise ValueError("Unity supervised loss weights must be non-negative")
+        if self.smooth_l1_beta_m <= 0:
+            raise ValueError("smooth_l1_beta_m must be positive")
+
+
+@dataclass(frozen=True)
+class UnitySupervisedLoss:
+    unity_3d: torch.Tensor
+    self_supervised: torch.Tensor
+    total: torch.Tensor
 
 
 def masked_window_sim3(
@@ -147,3 +179,51 @@ def apply_torch_sim3(
         transform.scale[:, None, None, None] * rotated
         + transform.translation[:, None, None, :]
     )
+
+
+def compute_unity_supervised_loss(
+    output: FusionOutput,
+    batch: Mapping[str, object],
+    config: UnitySupervisedLossConfig,
+    *,
+    self_supervised: torch.Tensor,
+) -> UnitySupervisedLoss:
+    """Combine masked Unity16 supervision with the existing objective."""
+    target = batch["gt_unity16_m"]
+    target_valid = batch["gt_valid"]
+    padding = batch["padding_mask"]
+    if not all(
+        isinstance(value, torch.Tensor)
+        for value in (target, target_valid, padding)
+    ):
+        raise TypeError("Unity target, validity, and padding must be tensors")
+    mapped, mapped_valid = torch_map_mhr70_to_unity16(
+        output.fused_kpts, output.valid
+    )
+    if target.shape != mapped.shape:
+        raise ValueError("Unity target shape must match mapped model output")
+    if target_valid.shape != mapped_valid.shape:
+        raise ValueError("Unity target validity must match mapped output")
+    if padding.shape != mapped.shape[:2]:
+        raise ValueError("padding_mask must have shape [B,T]")
+    common = mapped_valid & target_valid.bool() & padding.bool()[:, :, None]
+    target_finite = torch.isfinite(target).all(dim=-1)
+    if torch.any(common & ~target_finite):
+        raise FloatingPointError("Unity supervised target is non-finite")
+    transform = masked_window_sim3(mapped, target, common)
+    aligned = apply_torch_sim3(mapped, transform)
+    safe_target = torch.where(common[..., None], target, torch.zeros_like(target))
+    point_loss = F.smooth_l1_loss(
+        aligned,
+        safe_target,
+        beta=config.smooth_l1_beta_m,
+        reduction="none",
+    ).sum(dim=-1)
+    unity_3d = point_loss[common].mean()
+    total = (
+        config.unity_3d_weight * unity_3d
+        + config.self_supervised_weight * self_supervised
+    )
+    if not torch.isfinite(total):
+        raise FloatingPointError("Unity supervised loss is non-finite")
+    return UnitySupervisedLoss(unity_3d, self_supervised, total)
