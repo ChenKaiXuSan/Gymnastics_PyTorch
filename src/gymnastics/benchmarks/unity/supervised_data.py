@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import hashlib
 from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
@@ -59,6 +60,28 @@ def _readonly(value: np.ndarray, *, dtype) -> np.ndarray:
     array = np.array(value, dtype=dtype, copy=True)
     array.setflags(write=False)
     return array
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sam3d_cache_identity(
+    root: Path,
+    sample_ids: np.ndarray,
+) -> str:
+    digest = hashlib.sha256()
+    for camera_id in ("cam0", "cam1"):
+        for sample_id in sample_ids:
+            path = Path(root) / camera_id / f"{int(sample_id):08d}.npz"
+            digest.update(camera_id.encode("ascii"))
+            digest.update(str(int(sample_id)).encode("ascii"))
+            digest.update(_sha256_file(path).encode("ascii"))
+    return digest.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -197,6 +220,18 @@ def build_supervised_sequence(
         cam1.valid_3d,
         fps=fps,
     )
+    source_metadata = {
+        **dict(raw_trial.source_metadata),
+        "unity_root": str(benchmark.root),
+        "unity_manifest_sha256": _sha256_file(
+            benchmark.root / "manifest.jsonl"
+        ),
+        "sam3d_root": str(Path(sam3d_root).resolve()),
+        "sam3d_cache_identity": _sam3d_cache_identity(
+            Path(sam3d_root), sample_ids
+        ),
+    }
+    raw_trial = replace(raw_trial, source_metadata=source_metadata)
     canonical_trial = canonicalize_trial(
         raw_trial, load_skeleton_spec(Path(skeleton_path))
     )
