@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
@@ -20,6 +22,8 @@ from gymnastics.fusion.deterministic.experiment_matrix import (
     sim3_align_to_reference,
     smooth_sequence,
 )
+from gymnastics.common.skeletons.mhr70 import MHR70_NAMES
+from gymnastics.fusion.rotation_aware.schema import PosePairTrial
 
 from .schema import MethodPrediction, PosePairInput
 
@@ -34,6 +38,20 @@ METHOD_CLASSIFICATION = MappingProxyType(
         for method in ALL_METHODS
     }
 )
+
+
+@dataclass(frozen=True)
+class RotationRuntime:
+    """Loaded zero-shot rotation-aware model and immutable provenance."""
+
+    model: Any
+    skeleton: Any
+    provenance: Mapping[str, Any]
+    resolved_config: Mapping[str, Any]
+
+
+RuntimeLoader = Callable[[Path, Mapping[str, Any]], RotationRuntime]
+InferenceRunner = Callable[..., Any]
 
 
 def _prepared_views(pair: PosePairInput) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -202,3 +220,235 @@ def save_method_prediction(
         )
     temporary.replace(target)
     return target
+
+
+def build_rotation_aware_trial(pair: PosePairInput) -> PosePairTrial:
+    """Build the existing MHR70 trial contract with native zero offset."""
+    if not np.array_equal(pair.view_a.frame_ids, pair.view_b.frame_ids):
+        raise ValueError("rotation-aware fusion requires exact synchronized frame IDs")
+    face = np.where(
+        pair.view_a.valid3d[..., None],
+        pair.view_a.points3d,
+        0,
+    )
+    side = np.where(
+        pair.view_b.valid3d[..., None],
+        pair.view_b.points3d,
+        0,
+    )
+    frame_ids = np.array(pair.view_a.frame_ids, dtype=np.int32, copy=True)
+    return PosePairTrial(
+        face=face,
+        side=side,
+        valid_face=pair.view_a.valid3d,
+        valid_side=pair.view_b.valid3d,
+        timestamps=frame_ids.astype(np.float64) / float(pair.fps),
+        face_map=frame_ids,
+        side_map=frame_ids,
+        joint_names=tuple(MHR70_NAMES),
+        person_id=f"{pair.subject_id:02d}",
+        trial_id=pair.session_id,
+        fps=float(pair.fps),
+        source_metadata={
+            "dataset": "FreeMan",
+            "session_id": pair.session_id,
+            "subject_id": pair.subject_id,
+            "temporal_alignment": "native_zero_offset",
+            "reference_view": pair.view_a.view_id,
+            "zero_shot": True,
+            "reference_3d_consumed": False,
+        },
+    )
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _resolved_project_path(path: str | Path) -> Path:
+    from gymnastics.common.paths import PROJECT_ROOT
+
+    value = Path(path)
+    if not value.is_absolute():
+        value = PROJECT_ROOT / value
+    return value.resolve()
+
+
+def _default_runtime_loader(
+    checkpoint: Path,
+    benchmark_config: Mapping[str, Any],
+) -> RotationRuntime:
+    import torch
+
+    from gymnastics.fusion.rotation_aware.cli import (
+        TWIST_ABLATIONS,
+        load_config as load_rotation_config,
+    )
+    from gymnastics.fusion.rotation_aware.config import load_skeleton_spec
+    from gymnastics.fusion.rotation_aware.model import RotationAwareFusionModel
+    from gymnastics.fusion.rotation_aware.training import load_checkpoint
+
+    rotation_settings = benchmark_config.get("rotation_aware", {})
+    rotation_config_path = _resolved_project_path(
+        rotation_settings.get(
+            "config",
+            "configs/fusion/rotation_aware.yaml",
+        )
+    )
+    resolved = load_rotation_config(rotation_config_path)
+    paths = resolved.get("paths", {})
+    if not isinstance(paths, Mapping) or "skeleton" not in paths:
+        raise ValueError("rotation-aware config requires paths.skeleton")
+    skeleton = load_skeleton_spec(_resolved_project_path(paths["skeleton"]))
+    raw = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    if not isinstance(raw, Mapping):
+        raise ValueError("rotation-aware checkpoint payload must be a mapping")
+    skeleton_metadata = raw.get("skeleton")
+    if not isinstance(skeleton_metadata, Mapping) or tuple(
+        skeleton_metadata.get("joint_names", ())
+    ) != tuple(MHR70_NAMES):
+        raise ValueError("rotation-aware checkpoint skeleton is not exact MHR70")
+    training = raw.get("training_config")
+    if not isinstance(training, Mapping) or not training:
+        raise ValueError("rotation-aware checkpoint requires training_config")
+    provenance = raw.get("provenance")
+    if not isinstance(provenance, Mapping):
+        raise ValueError("rotation-aware checkpoint requires provenance")
+    ablation = str(training.get("ablation", "A6"))
+    model = RotationAwareFusionModel(
+        skeleton,
+        hidden_channels=int(training.get("hidden_channels", 128)),
+        twist_residual=ablation in TWIST_ABLATIONS,
+    )
+    payload = load_checkpoint(checkpoint, model)
+    loaded_provenance = payload.get("provenance", {})
+    return RotationRuntime(
+        model=model,
+        skeleton=skeleton,
+        provenance={
+            **dict(loaded_provenance),
+            "training_config": dict(training),
+            "ablation": ablation,
+            "checkpoint_path": str(checkpoint),
+            "checkpoint_sha256": _file_sha256(checkpoint),
+        },
+        resolved_config=resolved,
+    )
+
+
+def _validate_zero_shot_runtime(runtime: RotationRuntime) -> None:
+    joint_names = tuple(getattr(runtime.skeleton, "joint_names", ()))
+    if joint_names != tuple(MHR70_NAMES):
+        raise ValueError("rotation-aware runtime skeleton is not exact MHR70")
+
+    def contains_freeman_training(value: Any, key_path: tuple[str, ...] = ()) -> bool:
+        if isinstance(value, Mapping):
+            return any(
+                contains_freeman_training(
+                    child,
+                    (*key_path, str(key).lower()),
+                )
+                for key, child in value.items()
+            )
+        if isinstance(value, (list, tuple)):
+            return any(contains_freeman_training(child, key_path) for child in value)
+        relevant = any(
+            token in key
+            for key in key_path
+            for token in ("train", "dataset", "data_root", "cache_manifest")
+        )
+        return relevant and isinstance(value, str) and "freeman" in value.lower()
+
+    if contains_freeman_training(runtime.provenance):
+        raise ValueError("rotation-aware checkpoint has FreeMan training provenance")
+
+
+def fuse_rotation_aware(
+    pair: PosePairInput,
+    checkpoint: Path,
+    run_id: str,
+    config: Mapping[str, Any],
+    *,
+    runtime_loader: RuntimeLoader | None = None,
+    inference_runner: InferenceRunner | None = None,
+) -> MethodPrediction:
+    """Run an existing gymnastics checkpoint on one FreeMan pair zero-shot."""
+    if not run_id:
+        raise ValueError("rotation-aware run_id is required")
+    checkpoint_path = Path(checkpoint).resolve()
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(checkpoint_path)
+    trial = build_rotation_aware_trial(pair)
+    loader = runtime_loader or _default_runtime_loader
+    runtime = loader(checkpoint_path, config)
+    _validate_zero_shot_runtime(runtime)
+    if inference_runner is None:
+        from gymnastics.fusion.rotation_aware.inference import run_inference
+
+        inference_runner = run_inference
+    window = runtime.resolved_config.get("window", {})
+    if not isinstance(window, Mapping):
+        raise ValueError("rotation-aware resolved config requires window mapping")
+    output_root = (
+        Path(config["paths"]["output_root"]).resolve()
+        / "fusion"
+        / "rotation_aware"
+        / run_id
+        / "native"
+    )
+    result = inference_runner(
+        runtime.model,
+        trial,
+        runtime.skeleton,
+        output_root=output_root,
+        run_id=run_id,
+        window_length=int(window.get("length", 128)),
+        stride=int(window.get("eval_stride", 64)),
+        provenance=dict(runtime.provenance),
+        resolved_config=dict(runtime.resolved_config),
+    )
+    sequence_path = Path(result.sequence_path).resolve()
+    with np.load(sequence_path, allow_pickle=False) as data:
+        points = np.asarray(data["kpts_world"], dtype=np.float32)
+        valid = np.asarray(data["joint_valid"], dtype=bool)
+        frame_ids = (
+            np.asarray(data["face_map"], dtype=np.int64)
+            if "face_map" in data
+            else np.array(pair.view_a.frame_ids, copy=True)
+        )
+    if points.shape != pair.view_a.points3d.shape or valid.shape != points.shape[:2]:
+        raise ValueError("rotation-aware output does not match MHR70 pair shape")
+    if not np.array_equal(frame_ids, pair.view_a.frame_ids):
+        raise ValueError("rotation-aware output changed native frame identity")
+    valid &= np.isfinite(points).all(axis=-1)
+    points = np.where(valid[..., None], points, 0)
+    provenance = dict(runtime.provenance)
+    return MethodPrediction(
+        method=f"rotation_aware:{run_id}",
+        session_id=pair.session_id,
+        subject_id=pair.subject_id,
+        fps=pair.fps,
+        points=points,
+        valid=valid,
+        frame_ids=frame_ids,
+        metadata={
+            "dataset": "FreeMan",
+            "method": f"rotation_aware:{run_id}",
+            "classification": "VALID",
+            "excluded_from_ranking": False,
+            "zero_shot": True,
+            "reference_3d_consumed": False,
+            "training_source": "private_gymnastics",
+            "run_id": run_id,
+            "ablation": provenance.get("ablation"),
+            "checkpoint_path": provenance.get("checkpoint_path", str(checkpoint_path)),
+            "checkpoint_sha256": provenance.get(
+                "checkpoint_sha256",
+                _file_sha256(checkpoint_path),
+            ),
+        },
+    )
