@@ -1,0 +1,79 @@
+repository:
+  repo_id: wjwow/FreeMan
+  revision: main
+
+paths:
+  archive_root: local/datasets/freeman/archives
+  manifest_root: local/datasets/freeman/manifests
+  work_root: local/datasets/freeman/work
+  output_root: local/runs/freeman_benchmark
+
+download:
+  reserve_bytes: 107374182400
+  verify_sha256: true
+
+dataset:
+  fps_subsets: [30, 60]
+  subjects:
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    - 24
+    - 25
+    - 26
+    - 27
+    - 28
+    - 29
+    - 30
+    - 31
+    - 32
+    - 33
+    - 34
+    - 35
+    - 36
+    - 37
+    - 38
+    - 39
+    - 40
+  frame_stride: 1
+
+pairing:
+  target_angle_deg: 90.0
+  world_up_axis: [0.0, 0.0, 1.0]
+  minimum_axis_norm: 1.0e-8
+
+sam3d:
+  config: configs/sam3d/sam3d_body.yaml
+  device: 0
+  checkpoint_id: sam3d-body
+
+rotation_aware:
+  config: configs/fusion/rotation_aware.yaml
+  run_ids: [paper_a4, paper_a5, paper_a6]
+
+evaluation:
+  pck_thresholds_mm: [50, 100, 150]
+  auc_max_threshold_mm: 150
+  minimum_subject_coverage: 0.95
+  bootstrap_samples: 10000
+  random_seed: 20260726
