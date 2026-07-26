@@ -3,9 +3,9 @@ repository:
   revision: main
 
 paths:
-  archive_root: local/datasets/freeman/archives
-  manifest_root: local/datasets/freeman/manifests
-  work_root: local/datasets/freeman/work
+  archive_root: /home/workspace/kaixu/datasets/FreeMan/archives
+  manifest_root: /home/workspace/kaixu/datasets/FreeMan/manifests
+  work_root: /home/workspace/kaixu/datasets/FreeMan/work
   output_root: local/runs/freeman_benchmark
 
 download:
