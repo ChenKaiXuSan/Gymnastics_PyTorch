@@ -11,6 +11,10 @@ from gymnastics.benchmarks.freeman.evaluation import (
     paired_method_tests,
 )
 from gymnastics.benchmarks.freeman.mapping import FREEMAN_COCO17_NAMES
+from gymnastics.benchmarks.freeman.report import (
+    ReportContext,
+    write_report,
+)
 from gymnastics.benchmarks.freeman.schema import MethodPrediction, ReferenceSequence
 from gymnastics.common.skeletons.mhr70 import MHR70_INDEX
 
@@ -191,3 +195,154 @@ def test_paired_tests_match_subjects_and_apply_holm_correction() -> None:
     assert candidate["mean_difference_mm"] == pytest.approx(-20.0)
     assert candidate["holm_p_value"] >= candidate["p_value"]
     assert candidate["status"] == "measured"
+
+
+def _report_tables():
+    rows = []
+    for subject in range(1, 41):
+        rows.extend(
+            [
+                _session_metric(
+                    subject=subject,
+                    session=f"session_{subject:02d}",
+                    method="view_a",
+                    mpjpe=100.0 + subject,
+                ),
+                _session_metric(
+                    subject=subject,
+                    session=f"session_{subject:02d}",
+                    method="candidate",
+                    mpjpe=80.0 + subject,
+                ),
+                _session_metric(
+                    subject=subject,
+                    session=f"session_{subject:02d}",
+                    method="sim3_face_stable_joint_weight",
+                    mpjpe=70.0 + subject,
+                    classification="GT_LEAKY_DIAGNOSTIC",
+                ),
+            ]
+        )
+    return aggregate_metrics(rows)
+
+
+def _report_context() -> ReportContext:
+    return ReportContext(
+        resolved_config={
+            "repository": {"repo_id": "wjwow/FreeMan", "revision": "main"},
+            "dataset": {
+                "subjects": list(range(1, 41)),
+                "fps_subsets": [30, 60],
+                "reference_scale_to_m": 1.0,
+            },
+            "evaluation": {"minimum_subject_coverage": 0.95},
+        },
+        dataset_manifest={
+            "processed_subjects": list(range(1, 41)),
+            "processed_sessions": 40,
+            "fps_session_counts": {"30": 40, "60": 0},
+        },
+        download_manifest={"inventory_sha256": "inventory-hash"},
+        camera_pairs=pd.DataFrame(
+            [
+                {
+                    "subject_id": subject,
+                    "session_id": f"session_{subject:02d}",
+                    "fps": 30,
+                    "view_a": "c01",
+                    "view_b": "c05",
+                    "separation_deg": 89.5,
+                    "target_error_deg": 0.5,
+                }
+                for subject in range(1, 41)
+            ]
+        ),
+        checkpoint_metadata={
+            "sam3d": {"checkpoint_id": "sam3d-body"},
+            "rotation_aware": {"paper_a6": {"sha256": "checkpoint-hash"}},
+        },
+        code_commit="0123456789abcdef",
+    )
+
+
+def test_report_writes_machine_readable_outputs_and_separates_diagnostics(
+    tmp_path,
+) -> None:
+    outputs = write_report(
+        _report_tables(),
+        _report_context(),
+        tmp_path,
+    )
+
+    expected_csvs = {
+        "metrics_by_session",
+        "metrics_by_subject",
+        "metrics_by_method",
+        "metrics_by_joint",
+        "metrics_by_split",
+        "metrics_by_scenario",
+        "paired_statistics",
+        "failures",
+        "camera_pairs",
+    }
+    assert set(outputs.csv_paths) == expected_csvs
+    assert all(path.is_file() for path in outputs.csv_paths.values())
+    assert outputs.results_json.is_file()
+    text = outputs.markdown.read_text(encoding="utf-8")
+    assert "public markerless multi-view reference" in text
+    assert "independent marker-based motion capture" in text
+    assert "sim3_face_stable_joint_weight" in text
+    assert "excluded from valid ranking" in text
+    assert "all 40 subjects" in text
+    assert "Complete: yes" in text
+
+    raw_json = outputs.results_json.read_text(encoding="utf-8")
+    assert "NaN" not in raw_json
+    payload = __import__("json").loads(raw_json)
+    classifications = payload["method_classification"]
+    assert classifications["candidate"] == "VALID"
+    assert (
+        classifications["sim3_face_stable_joint_weight"]
+        == "GT_LEAKY_DIAGNOSTIC"
+    )
+
+
+def test_report_refuses_complete_label_below_subject_coverage(tmp_path) -> None:
+    context = _report_context()
+    incomplete = ReportContext(
+        resolved_config=context.resolved_config,
+        dataset_manifest={
+            **context.dataset_manifest,
+            "processed_subjects": list(range(1, 21)),
+        },
+        download_manifest=context.download_manifest,
+        camera_pairs=context.camera_pairs.iloc[:20],
+        checkpoint_metadata=context.checkpoint_metadata,
+        code_commit=context.code_commit,
+    )
+
+    outputs = write_report(_report_tables(), incomplete, tmp_path)
+
+    text = outputs.markdown.read_text(encoding="utf-8")
+    assert "Complete: no" in text
+    assert "all 40 subjects" not in text
+
+
+def test_report_requires_evaluated_subjects_not_only_manifest_claim(tmp_path) -> None:
+    rows = [
+        _session_metric(
+            subject=subject,
+            session=f"session_{subject:02d}",
+            method="candidate",
+            mpjpe=80.0 + subject,
+        )
+        for subject in range(1, 21)
+    ]
+
+    outputs = write_report(
+        aggregate_metrics(rows),
+        _report_context(),
+        tmp_path,
+    )
+
+    assert "Complete: no" in outputs.markdown.read_text(encoding="utf-8")
