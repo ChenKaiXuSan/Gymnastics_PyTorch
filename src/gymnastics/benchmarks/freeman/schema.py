@@ -334,3 +334,71 @@ class InferenceArtifact:
         if self.frames < 1 or self.valid_frames < 0 or self.valid_frames > self.frames:
             raise ValueError("invalid inference artifact frame counts")
         object.__setattr__(self, "path", Path(self.path).resolve())
+
+
+@dataclass(frozen=True)
+class PosePairInput:
+    """Exact synchronized pair passed to fusion without reference 3D."""
+
+    session_id: str
+    subject_id: int
+    fps: float
+    view_a: ViewPrediction
+    view_b: ViewPrediction
+
+    def __post_init__(self) -> None:
+        if (
+            not self.session_id
+            or self.subject_id < 1
+            or self.subject_id > 40
+            or not np.isfinite(self.fps)
+            or self.fps <= 0
+        ):
+            raise ValueError("pose pair requires session, subject, and positive FPS")
+        for view in (self.view_a, self.view_b):
+            if (
+                view.session_id != self.session_id
+                or view.subject_id != self.subject_id
+                or not np.isclose(view.fps, self.fps)
+            ):
+                raise ValueError("pose pair view identity does not match pair identity")
+        if self.view_a.view_id == self.view_b.view_id:
+            raise ValueError("pose pair requires two distinct views")
+
+
+@dataclass(frozen=True)
+class MethodPrediction:
+    """One fused or single-view prediction ready for evaluation."""
+
+    method: str
+    session_id: str
+    subject_id: int
+    fps: float
+    points: np.ndarray
+    valid: np.ndarray
+    frame_ids: np.ndarray
+    metadata: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        points = np.asarray(self.points, dtype=np.float32)
+        valid = np.asarray(self.valid, dtype=bool)
+        frame_ids = np.asarray(self.frame_ids, dtype=np.int64)
+        if not self.method or not self.session_id:
+            raise ValueError("method and session IDs are required")
+        if points.ndim != 3 or points.shape[1:] != (70, 3):
+            raise ValueError("method points must have shape [T,70,3]")
+        if valid.shape != points.shape[:2] or frame_ids.shape != (points.shape[0],):
+            raise ValueError("method validity and frame IDs must match points")
+        if (
+            len(frame_ids) == 0
+            or (len(frame_ids) > 1 and not np.all(np.diff(frame_ids) > 0))
+            or not np.isfinite(self.fps)
+            or self.fps <= 0
+        ):
+            raise ValueError("method prediction requires increasing frames and positive FPS")
+        if not isinstance(self.metadata, Mapping):
+            raise ValueError("method metadata must be a mapping")
+        object.__setattr__(self, "points", _readonly_array(points))
+        object.__setattr__(self, "valid", _readonly_array(valid))
+        object.__setattr__(self, "frame_ids", _readonly_array(frame_ids))
+        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
