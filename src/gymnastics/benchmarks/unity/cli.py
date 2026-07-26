@@ -112,6 +112,10 @@ def _inspect(args: argparse.Namespace, config: Mapping[str, object]) -> int:
 def _infer(args: argparse.Namespace, config: Mapping[str, object]) -> int:
     dataset_root, output_root = _paths(config)
     benchmark = load_unity_benchmark(dataset_root)
+    inference = config.get("inference", {})
+    if not isinstance(inference, Mapping):
+        raise ValueError("Unity benchmark config inference must be a mapping")
+    fallback_bbox = inference.get("fallback_bbox_xyxy")
     summary = run_sam3d_inference(
         benchmark,
         args.camera,
@@ -120,6 +124,7 @@ def _infer(args: argparse.Namespace, config: Mapping[str, object]) -> int:
         args.device,
         force=args.force,
         sample_ids=args.sample_id,
+        fallback_bbox_xyxy=fallback_bbox,
     )
     print(
         f"{summary.camera_id}: expected={summary.expected} "

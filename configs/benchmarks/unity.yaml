@@ -15,6 +15,11 @@ checkpoints:
 data:
   fps: 60.0
 
+inference:
+  # Fixed single-person render ROI; used only when the generic person detector
+  # fails. It is independent of Unity keypoints and prevents GT leakage.
+  fallback_bbox_xyxy: [620.0, 280.0, 1300.0, 930.0]
+
 evaluation:
   alignment: similarity
   camera_reference: cam0

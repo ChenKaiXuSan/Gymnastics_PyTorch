@@ -86,6 +86,7 @@ def _atomic_pose(
     output: Mapping[str, object],
     config_path: Path,
     device: str,
+    proposal_source: str,
 ) -> None:
     points_3d = np.asarray(output["pred_keypoints_3d"], dtype=np.float32)
     points_2d = np.asarray(output["pred_keypoints_2d"], dtype=np.float32)
@@ -102,6 +103,7 @@ def _atomic_pose(
         "source_image": str(image_path),
         "sam3d_config": str(config_path),
         "device": device,
+        "proposal_source": proposal_source,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -130,6 +132,7 @@ def run_sam3d_inference(
     force: bool = False,
     sample_ids: Sequence[int] | None = None,
     estimator_factory: Callable[[Path, str], object] | None = None,
+    fallback_bbox_xyxy: Sequence[float] | None = None,
 ) -> InferenceSummary:
     if camera_id not in benchmark.cameras:
         raise ValueError(f"unknown Unity camera: {camera_id}")
@@ -163,8 +166,25 @@ def run_sam3d_inference(
         cache = _cache_path(output_root, camera_id, sample_id)
         if cache.is_file() and not force:
             reused += 1
-        elif sample_id not in failures or force:
+        elif (
+            sample_id not in failures
+            or force
+            or fallback_bbox_xyxy is not None
+        ):
             pending.append(sample_id)
+
+    fallback_bbox = None
+    if fallback_bbox_xyxy is not None:
+        fallback_bbox = np.asarray(fallback_bbox_xyxy, dtype=np.float32)
+        if (
+            fallback_bbox.shape != (4,)
+            or not np.isfinite(fallback_bbox).all()
+            or fallback_bbox[2] <= fallback_bbox[0]
+            or fallback_bbox[3] <= fallback_bbox[1]
+        ):
+            raise ValueError(
+                "fallback_bbox_xyxy must contain finite x1,y1,x2,y2 coordinates"
+            )
 
     estimator = None
     if pending:
@@ -179,6 +199,14 @@ def run_sam3d_inference(
                 continue
             outputs = estimator.process_one_image(img=image, bboxes=None)
             best = _select_largest(outputs)
+            proposal_source = "person_detector"
+            if best is None and fallback_bbox is not None:
+                outputs = estimator.process_one_image(
+                    img=image,
+                    bboxes=fallback_bbox.reshape(1, 4),
+                )
+                best = _select_largest(outputs)
+                proposal_source = "fixed_render_roi_fallback"
             if best is None:
                 failures[sample_id] = "no_person_detected"
                 continue
@@ -191,6 +219,7 @@ def run_sam3d_inference(
                     output=best,
                     config_path=Path(config_path),
                     device=device,
+                    proposal_source=proposal_source,
                 )
             except (KeyError, TypeError, ValueError) as error:
                 failures[sample_id] = f"invalid_output:{error}"
