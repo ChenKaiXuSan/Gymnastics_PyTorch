@@ -130,6 +130,31 @@ def test_inventory_rejects_release_without_all_forty_subjects() -> None:
         fetch_hub_inventory(FakeApi(incomplete), "wjwow/FreeMan", "main")
 
 
+def test_inventory_accepts_subject_archives_under_videos_directory() -> None:
+    siblings = [
+        FakeSibling(f"videos/subj{subject:02d}.zip", subject)
+        for subject in range(1, 41)
+    ]
+    siblings.extend(
+        [
+            FakeSibling("videos/subj02.z01", 101),
+            FakeSibling("videos/subj02.z02", 102),
+        ]
+    )
+
+    entries = fetch_hub_inventory(
+        FakeApi(siblings),
+        "wjwow/FreeMan",
+        "main",
+    )
+
+    assert {entry.path for entry in entries} >= {
+        "videos/subj01.zip",
+        "videos/subj02.z01",
+        "videos/subj40.zip",
+    }
+
+
 def test_preflight_rejects_missing_hf(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(shutil, "which", lambda _: None)
 
@@ -289,6 +314,25 @@ def test_subject_archive_set_orders_numeric_parts_before_zip() -> None:
     ]
 
 
+def test_subject_archive_set_supports_nested_z_volumes() -> None:
+    entries = (
+        ArchiveEntry("videos/subj02.zip", 4, None),
+        ArchiveEntry("videos/subj02.z03", 3, None),
+        ArchiveEntry("videos/subj02.z01", 1, None),
+        ArchiveEntry("videos/subj01.zip", 5, None),
+        ArchiveEntry("videos/subj02.z02", 2, None),
+    )
+
+    selected = subject_archive_set(2, entries)
+
+    assert [item.path for item in selected] == [
+        "videos/subj02.z01",
+        "videos/subj02.z02",
+        "videos/subj02.z03",
+        "videos/subj02.zip",
+    ]
+
+
 class FakeSevenZip:
     def __init__(self, *, listing: tuple[str, ...], expected_reconstructed: bytes | None = None):
         self.listing = listing
@@ -356,6 +400,36 @@ def test_extract_subject_reconstructs_numeric_parts_and_removes_temporary_zip(
     assert not (work_root / "subject_02.reconstructed.zip").exists()
     assert (archive_root / "subj02.01").is_file()
     assert (archive_root / "subj02.zip").is_file()
+
+
+def test_extract_subject_discovers_nested_z_volumes(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    archive_root = tmp_path / "archives"
+    video_root = archive_root / "videos"
+    work_root = tmp_path / "work"
+    video_root.mkdir(parents=True)
+    first = b"PK\x03\x04first"
+    final = b"lastPK\x05\x06"
+    (video_root / "subj02.z01").write_bytes(first)
+    (video_root / "subj02.zip").write_bytes(final)
+    monkeypatch.setattr(shutil, "which", lambda _: "/opt/7z")
+    runner = FakeSevenZip(
+        listing=("30FPS/videos/session_subj02/vframes/c01.mp4",),
+        expected_reconstructed=first + final,
+    )
+
+    subject_root = extract_subject(
+        2,
+        archive_root,
+        work_root,
+        runner=runner,
+    )
+
+    assert (
+        subject_root / "30FPS/videos/session_subj02/vframes/c01.mp4"
+    ).is_file()
 
 
 def test_extract_rejects_archive_member_path_traversal(

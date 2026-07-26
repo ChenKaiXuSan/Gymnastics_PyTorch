@@ -106,11 +106,11 @@ def fetch_hub_inventory(
             key=lambda entry: entry.path,
         )
     )
-    paths = {entry.path for entry in entries}
+    basenames = {PurePosixPath(entry.path).name for entry in entries}
     missing = [
         f"subj{subject:02d}.zip"
         for subject in range(1, 41)
-        if f"subj{subject:02d}.zip" not in paths
+        if f"subj{subject:02d}.zip" not in basenames
     ]
     if missing:
         raise RuntimeError(
@@ -317,27 +317,47 @@ def subject_archive_set(
     if subject_id < 1 or subject_id > 40:
         raise ValueError("FreeMan subject_id must be within 1..40")
     stem = f"subj{subject_id:02d}"
-    terminal = next(
-        (entry for entry in entries if entry.path == f"{stem}.zip"),
-        None,
-    )
-    if terminal is None:
+    terminals = [
+        entry
+        for entry in entries
+        if PurePosixPath(entry.path).name == f"{stem}.zip"
+    ]
+    if not terminals:
         raise RuntimeError(f"missing required subject archive {stem}.zip")
+    if len(terminals) != 1:
+        raise RuntimeError(f"duplicate required subject archive {stem}.zip")
+    terminal = terminals[0]
+    terminal_parent = PurePosixPath(terminal.path).parent
     numbered: list[tuple[int, ArchiveEntry]] = []
-    pattern = re.compile(rf"^{re.escape(stem)}\.(\d+)$")
     for entry in entries:
-        match = pattern.fullmatch(entry.path)
-        if match:
-            numbered.append((int(match.group(1)), entry))
+        path = PurePosixPath(entry.path)
+        if path.parent != terminal_parent:
+            continue
+        index = _volume_index(path.name, stem)
+        if index is not None:
+            numbered.append((index, entry))
     numbered.sort(key=lambda item: item[0])
     if numbered:
         observed = [index for index, _ in numbered]
+        if len(set(observed)) != len(observed):
+            raise RuntimeError(
+                f"duplicate numeric volumes for {stem}: {observed}"
+            )
         expected = list(range(1, observed[-1] + 1))
         if observed != expected:
             raise RuntimeError(
                 f"non-contiguous numeric volumes for {stem}: {observed}"
             )
     return tuple(entry for _, entry in numbered) + (terminal,)
+
+
+def _volume_index(name: str, stem: str) -> int | None:
+    match = re.fullmatch(
+        rf"{re.escape(stem)}\.(?:z)?(\d+)",
+        name,
+        flags=re.IGNORECASE,
+    )
+    return int(match.group(1)) if match else None
 
 
 def _completed(
@@ -477,9 +497,14 @@ def _reconstruct_numeric_archive(
         raise RuntimeError(
             f"cannot determine numeric ZIP volume order for subject {subject_id:02d}"
         )
+    stem = f"subj{subject_id:02d}"
     numeric = sorted(
-        (path for path in pieces if path.suffix[1:].isdigit()),
-        key=lambda path: int(path.suffix[1:]),
+        (
+            path
+            for path in pieces
+            if _volume_index(path.name, stem) is not None
+        ),
+        key=lambda path: _volume_index(path.name, stem) or 0,
     )
     terminal = next(path for path in pieces if path.suffix.lower() == ".zip")
     if starts[0] in numeric and finals[0] == terminal:
@@ -514,20 +539,32 @@ def _subject_archive_input(
     seven_zip: str,
     runner: Runner,
 ) -> tuple[Path, bool]:
-    terminal = archive_root / f"subj{subject_id:02d}.zip"
-    if not terminal.is_file():
-        raise FileNotFoundError(terminal)
+    stem = f"subj{subject_id:02d}"
+    terminals = sorted(archive_root.rglob(f"{stem}.zip"))
+    if not terminals:
+        raise FileNotFoundError(archive_root / f"{stem}.zip")
+    if len(terminals) != 1:
+        raise RuntimeError(f"duplicate required subject archive {stem}.zip")
+    terminal = terminals[0]
     if _archive_test(terminal, seven_zip=seven_zip, runner=runner):
         return terminal, False
     numeric = sorted(
-        archive_root.glob(f"subj{subject_id:02d}.[0-9]*"),
-        key=lambda path: int(path.suffix[1:]),
+        (
+            path
+            for path in terminal.parent.iterdir()
+            if path.is_file()
+            and _volume_index(path.name, stem) is not None
+        ),
+        key=lambda path: _volume_index(path.name, stem) or 0,
     )
     if not numeric:
         raise RuntimeError(
             f"invalid FreeMan subject archive without numeric volumes: {terminal.name}"
         )
-    observed = [int(path.suffix[1:]) for path in numeric]
+    observed = [
+        int(_volume_index(path.name, stem) or 0)
+        for path in numeric
+    ]
     if observed != list(range(1, observed[-1] + 1)):
         raise RuntimeError(
             f"non-contiguous numeric volumes for subject {subject_id:02d}: {observed}"

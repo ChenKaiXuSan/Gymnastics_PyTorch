@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from importlib import import_module
 import os
+from pathlib import Path
 import sys
 from typing import Sequence
 
@@ -136,6 +137,13 @@ def _invoke(target: tuple[str, str, bool], argv: list[str]) -> int:
 
 
 def _configure_runtime_cache() -> None:
+    credential_cache = Path(
+        os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")
+    )
+    os.environ.setdefault(
+        "HF_HOME",
+        str(credential_cache / "huggingface"),
+    )
     cache_root = LOCAL_ROOT / "cache"
     matplotlib_cache = cache_root / "matplotlib"
     xdg_cache = cache_root / "xdg"
