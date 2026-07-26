@@ -236,3 +236,101 @@ class MappedPose:
         object.__setattr__(self, "points", _readonly_array(points))
         object.__setattr__(self, "valid", _readonly_array(valid))
         object.__setattr__(self, "joint_names", tuple(self.joint_names))
+
+
+@dataclass(frozen=True)
+class ViewPrediction:
+    """One selected FreeMan view's compact SAM3D prediction."""
+
+    session_id: str
+    subject_id: int
+    fps: float
+    view_id: str
+    frame_ids: np.ndarray
+    points3d: np.ndarray
+    points2d: np.ndarray
+    valid3d: np.ndarray
+    valid2d: np.ndarray
+    metadata: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        frame_ids = np.asarray(self.frame_ids, dtype=np.int64)
+        points3d = np.asarray(self.points3d, dtype=np.float32)
+        points2d = np.asarray(self.points2d, dtype=np.float32)
+        valid3d = np.asarray(self.valid3d, dtype=bool)
+        valid2d = np.asarray(self.valid2d, dtype=bool)
+        frames = len(frame_ids)
+        if points3d.shape != (frames, 70, 3):
+            raise ValueError("SAM3D points3d must have shape [T,70,3]")
+        if points2d.shape != (frames, 70, 2):
+            raise ValueError("SAM3D points2d must have shape [T,70,2]")
+        if valid3d.shape != (frames, 70) or valid2d.shape != (frames, 70):
+            raise ValueError("SAM3D validity masks must have shape [T,70]")
+        if (
+            frames == 0
+            or np.any(frame_ids < 0)
+            or (frames > 1 and not np.all(np.diff(frame_ids) > 0))
+        ):
+            raise ValueError("SAM3D frame IDs must be non-empty and increasing")
+        if not np.isfinite(self.fps) or self.fps <= 0:
+            raise ValueError("SAM3D prediction FPS must be positive")
+        if not isinstance(self.metadata, Mapping):
+            raise ValueError("SAM3D prediction metadata must be a mapping")
+        object.__setattr__(self, "frame_ids", _readonly_array(frame_ids))
+        object.__setattr__(self, "points3d", _readonly_array(points3d))
+        object.__setattr__(self, "points2d", _readonly_array(points2d))
+        object.__setattr__(self, "valid3d", _readonly_array(valid3d))
+        object.__setattr__(self, "valid2d", _readonly_array(valid2d))
+        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+
+
+@dataclass(frozen=True)
+class InferenceIdentity:
+    """Fields that make a cached SAM3D view reusable."""
+
+    session_id: str
+    subject_id: int
+    fps: int
+    view_id: str
+    source_video_sha256: str
+    source_frame_count: int
+    frame_stride: int
+    sam3d_config_sha256: str
+    checkpoint_id: str
+
+    def __post_init__(self) -> None:
+        if (
+            not self.session_id
+            or not self.view_id
+            or self.subject_id < 1
+            or self.subject_id > 40
+            or self.fps not in {30, 60}
+            or self.source_frame_count < 1
+            or self.frame_stride < 1
+            or not self.checkpoint_id
+        ):
+            raise ValueError("invalid SAM3D inference identity")
+        for name, digest in (
+            ("source_video_sha256", self.source_video_sha256),
+            ("sam3d_config_sha256", self.sam3d_config_sha256),
+        ):
+            if len(digest) != 64 or any(
+                character not in "0123456789abcdef" for character in digest
+            ):
+                raise ValueError(f"{name} must be a lowercase SHA256")
+
+
+@dataclass(frozen=True)
+class InferenceArtifact:
+    """Published SAM3D prediction artifact summary."""
+
+    path: Path
+    session_id: str
+    view_id: str
+    frames: int
+    valid_frames: int
+
+    def __post_init__(self) -> None:
+        if self.frames < 1 or self.valid_frames < 0 or self.valid_frames > self.frames:
+            raise ValueError("invalid inference artifact frame counts")
+        object.__setattr__(self, "path", Path(self.path).resolve())
