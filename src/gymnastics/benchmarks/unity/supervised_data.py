@@ -8,8 +8,15 @@ from types import MappingProxyType
 from typing import Mapping
 
 import numpy as np
+import torch
+from torch.utils.data import Dataset
 
 from gymnastics.fusion.rotation_aware.config import load_skeleton_spec
+from gymnastics.fusion.rotation_aware.dataset import (
+    PosePairWindowDataset,
+    SplitManifest,
+    WindowConfig,
+)
 from gymnastics.fusion.rotation_aware.inference import (
     CanonicalTrial,
     canonicalize_trial,
@@ -95,6 +102,68 @@ class UnitySupervisedSequence:
             self, "gt_unity16_m", _readonly(gt, dtype=np.float32)
         )
         object.__setattr__(self, "gt_valid", _readonly(valid, dtype=bool))
+
+
+class UnitySupervisedWindowDataset(Dataset[dict[str, object]]):
+    """Attach frame-aligned Unity16 targets to canonical training windows."""
+
+    def __init__(
+        self,
+        sequence: UnitySupervisedSequence,
+        *,
+        skeleton_path: Path,
+        length: int,
+        stride: int,
+    ) -> None:
+        skeleton = load_skeleton_spec(Path(skeleton_path))
+        person_id = sequence.canonical_trial.trial.person_id
+        manifest = SplitManifest(
+            train=(person_id,),
+            val=(),
+            test=(),
+        )
+        self.sequence = sequence
+        self._windows = PosePairWindowDataset(
+            [sequence.canonical_trial.trial],
+            skeleton=skeleton,
+            manifest=manifest,
+            split="train",
+            config=WindowConfig(
+                length=length,
+                train_stride=stride,
+                eval_stride=stride,
+            ),
+        )
+
+    def __len__(self) -> int:
+        return len(self._windows)
+
+    def __getitem__(self, index: int) -> dict[str, object]:
+        sample = dict(self._windows[index])
+        frame_indices = sample["global_frame_index"]
+        if not isinstance(frame_indices, torch.Tensor):
+            raise TypeError("window global_frame_index must be a tensor")
+        length = len(frame_indices)
+        gt = torch.zeros((length, 16, 3), dtype=torch.float32)
+        valid = torch.zeros((length, 16), dtype=torch.bool)
+        sample_ids = torch.full((length,), -1, dtype=torch.int64)
+        present = frame_indices >= 0
+        source = frame_indices[present].numpy()
+        if len(source):
+            gt[present] = torch.from_numpy(
+                np.array(self.sequence.gt_unity16_m[source], copy=True)
+            )
+            valid[present] = torch.from_numpy(
+                np.array(self.sequence.gt_valid[source], copy=True)
+            )
+            sample_ids[present] = torch.from_numpy(
+                np.array(self.sequence.sample_ids[source], copy=True)
+            )
+        sample["gt_unity16_m"] = gt
+        sample["gt_valid"] = valid & present[:, None]
+        sample["sample_ids"] = sample_ids
+        sample["training_sequence_id"] = self.sequence.sequence_id
+        return sample
 
 
 def build_supervised_sequence(

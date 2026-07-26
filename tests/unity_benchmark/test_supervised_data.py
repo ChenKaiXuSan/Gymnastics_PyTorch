@@ -9,6 +9,7 @@ import pytest
 from gymnastics.benchmarks.unity.dataset import load_unity_benchmark
 from gymnastics.benchmarks.unity.supervised_data import (
     UNITY_SUPERVISED_FOLDS,
+    UnitySupervisedWindowDataset,
     audit_fold_isolation,
     build_supervised_sequences,
     select_supervised_fold,
@@ -80,3 +81,36 @@ def test_sequence_filtered_loader_materializes_only_training_direction() -> None
     assert {
         frame.sequence_id for frame in benchmark.frames
     } == {"continuous_left_060_r00"}
+
+
+def test_supervised_windows_align_gt_with_global_frame_indices() -> None:
+    sequences = _real_sequences()
+    train, _, _ = select_supervised_fold(
+        sequences, UNITY_SUPERVISED_FOLDS["left_to_right"]
+    )
+    dataset = UnitySupervisedWindowDataset(
+        train, skeleton_path=SKELETON, length=32, stride=8
+    )
+
+    assert len(dataset) == 10
+    first = dataset[0]
+    last = dataset[len(dataset) - 1]
+    assert first["gt_unity16_m"].shape == (32, 16, 3)
+    assert first["gt_valid"].shape == (32, 16)
+    assert first["sample_ids"].tolist() == train.sample_ids[:32].tolist()
+    assert last["sample_ids"][-1].item() == train.sample_ids[-1]
+    assert first["training_sequence_id"] == train.sequence_id
+
+
+def test_supervised_windows_mask_padded_targets_and_sample_ids() -> None:
+    static = _real_sequences()["static_sweep"]
+    dataset = UnitySupervisedWindowDataset(
+        static, skeleton_path=SKELETON, length=8, stride=3
+    )
+
+    assert len(dataset) == 1
+    sample = dataset[0]
+    assert sample["sample_ids"].tolist()[-3:] == [-1, -1, -1]
+    assert not sample["gt_valid"][-3:].any()
+    assert not sample["padding_mask"][-3:].any()
+    assert np.all(sample["gt_unity16_m"][-3:].numpy() == 0)
