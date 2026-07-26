@@ -92,7 +92,8 @@ Before downloading, `inspect` and `download` must verify:
 - the target filesystem has enough free space for the remaining archives plus
   a configurable safety reserve;
 - partial files and completed files are distinguishable;
-- expected split archives such as `.z01`, `.z02`, and `.z03` are retained.
+- published numeric split volumes such as `subj02.01`, `subj02.02`, and
+  `subj02.03` are retained alongside their `.zip` file.
 
 Downloads use `--local-dir` to avoid a second full Hub cache. They are
 resumable and never write into a tracked directory.
