@@ -1,0 +1,20 @@
+paths:
+  dataset_root: /home/data/xchen/gymnastics/unity_benchmark
+  output_root: local/runs/unity_benchmark
+  sam3d_config: configs/sam3d/sam3d_body.yaml
+  skeleton: configs/fusion/skeleton_mhr70.yaml
+
+checkpoints:
+  A4: local/runs/fuse_rotation_aware/runs/all137_a4_e100_seed0/checkpoints/best.pt
+  A5: local/runs/fuse_rotation_aware/runs/all137_a5_e100_seed0/checkpoints/best.pt
+  A6: local/runs/fuse_rotation_aware/runs/all137_a6_e100_seed0/checkpoints/best.pt
+  A7: local/runs/fuse_rotation_aware/runs/all137_a7_e100_seed0/checkpoints/best.pt
+  A8: local/runs/fuse_rotation_aware/runs/all137_a8_e100_seed0/checkpoints/best.pt
+  A9: local/runs/fuse_rotation_aware/runs/all137_a9_e100_seed0/checkpoints/best.pt
+
+data:
+  fps: 60.0
+
+evaluation:
+  alignment: similarity
+  camera_reference: cam0
