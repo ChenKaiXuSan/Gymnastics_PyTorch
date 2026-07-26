@@ -383,6 +383,56 @@ def test_extract_rejects_archive_member_path_traversal(
     assert not (tmp_path / "escape.mp4").exists()
 
 
+def test_extract_ignores_7z_archive_header_path(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    archive_root = tmp_path / "archives"
+    archive_root.mkdir()
+    archive = archive_root / "subj01.zip"
+    archive.write_bytes(b"PK\x03\x04safePK\x05\x06")
+    monkeypatch.setattr(shutil, "which", lambda _: "/opt/7z")
+    member = "30FPS/videos/session_subj01/vframes/c01.mp4"
+
+    class HeaderRunner:
+        def __call__(self, command, **kwargs):
+            operation = command[1]
+            if operation == "t":
+                return subprocess.CompletedProcess(
+                    command, 0, stdout="", stderr=""
+                )
+            if operation == "l":
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=(
+                        f"Path = {archive.resolve()}\n"
+                        "Type = zip\n"
+                        "----------\n"
+                        f"Path = {member}\n"
+                    ),
+                    stderr="",
+                )
+            output_arg = next(
+                item for item in command if item.startswith("-o")
+            )
+            target = Path(output_arg[2:]) / member
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"video")
+            return subprocess.CompletedProcess(
+                command, 0, stdout="", stderr=""
+            )
+
+    subject_root = extract_subject(
+        1,
+        archive_root,
+        tmp_path / "work",
+        runner=HeaderRunner(),
+    )
+
+    assert (subject_root / member).is_file()
+
+
 @pytest.mark.parametrize(
     "target_factory",
     [
@@ -492,3 +542,85 @@ def test_extract_shared_annotations_publishes_only_consumed_archives(
     assert (shared_root / "session_list.txt").is_file()
     assert not (shared_root / "motions").exists()
     assert not (shared_root / "bbox2d").exists()
+
+
+def test_extract_shared_annotations_keeps_same_named_fps_archives(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    archive_root = tmp_path / "archives"
+    work_root = tmp_path / "work"
+    entries = []
+    archive_members = {}
+    for fps in (30, 60):
+        for kind, suffix in (
+            ("cameras", "json"),
+            ("keypoints2d", "npy"),
+            ("keypoints3d", "npy"),
+        ):
+            relative = f"{fps}FPS/{kind}.zip"
+            archive = archive_root / relative
+            archive.parent.mkdir(parents=True, exist_ok=True)
+            archive.write_bytes(b"PK\x03\x04fixturePK\x05\x06")
+            entries.append(
+                ArchiveEntry(relative, archive.stat().st_size, None)
+            )
+            archive_members[relative] = (
+                f"{fps}FPS/{kind}/session_{fps}_subj01.{suffix}",
+            )
+        for name in ("session_list.txt", "train.txt", "valid.txt", "test.txt"):
+            relative = f"{fps}FPS/{name}"
+            path = archive_root / relative
+            path.write_text(
+                f"session_{fps}_subj01\n" if name != "valid.txt" else "",
+                encoding="utf-8",
+            )
+            entries.append(
+                ArchiveEntry(relative, max(path.stat().st_size, 1), None)
+            )
+    monkeypatch.setattr(shutil, "which", lambda _: "/opt/7z")
+
+    class NestedRunner:
+        def __call__(self, command, **kwargs):
+            operation = command[1]
+            archive = (
+                Path(command[-1])
+                if operation in {"t", "l"}
+                else Path(command[2])
+            )
+            relative = archive.relative_to(archive_root).as_posix()
+            if operation == "t":
+                return subprocess.CompletedProcess(
+                    command, 0, stdout="", stderr=""
+                )
+            if operation == "l":
+                output = "\n".join(
+                    f"Path = {member}"
+                    for member in archive_members[relative]
+                )
+                return subprocess.CompletedProcess(
+                    command, 0, stdout=output, stderr=""
+                )
+            output_arg = next(
+                item for item in command if item.startswith("-o")
+            )
+            output_root = Path(output_arg[2:])
+            for member in archive_members[relative]:
+                target = output_root / member
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"annotation")
+            return subprocess.CompletedProcess(
+                command, 0, stdout="", stderr=""
+            )
+
+    shared = extract_shared_annotations(
+        entries,
+        archive_root,
+        work_root,
+        runner=NestedRunner(),
+    )
+
+    assert (shared / "30FPS/cameras/session_30_subj01.json").is_file()
+    assert (shared / "60FPS/cameras/session_60_subj01.json").is_file()
+    assert (shared / "30FPS/session_list.txt").is_file()
+    assert (shared / "60FPS/session_list.txt").is_file()

@@ -385,9 +385,19 @@ def _archive_members(
             f"cannot list FreeMan archive {archive.name}: "
             + (completed.stderr.strip() or completed.stdout.strip())
         )
+    lines = completed.stdout.splitlines()
+    separator = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if line.strip() == "----------"
+        ),
+        None,
+    )
+    member_lines = lines[separator + 1 :] if separator is not None else lines
     members = tuple(
         line.split("=", 1)[1].strip()
-        for line in completed.stdout.splitlines()
+        for line in member_lines
         if line.startswith("Path =") and line.split("=", 1)[1].strip()
     )
     if not members:
@@ -656,24 +666,61 @@ def extract_shared_annotations(
         raise RuntimeError(f"partial shared workspace requires inspection: {partial}")
     partial.mkdir(parents=True)
     seven_zip = _seven_zip()
-    by_name = {Path(entry.path).name: entry for entry in entries}
     for name in _SHARED_ARCHIVES:
-        entry = by_name.get(name)
-        if entry is None:
-            raise RuntimeError(f"missing required shared archive: {name}")
-        archive = archives / entry.path
-        if not _archive_test(archive, seven_zip=seven_zip, runner=runner):
-            raise RuntimeError(f"invalid required shared archive: {name}")
-        _extract_archive(
-            archive,
-            partial,
-            seven_zip=seven_zip,
-            runner=runner,
+        matching = sorted(
+            (
+                entry
+                for entry in entries
+                if Path(entry.path).name == name
+            ),
+            key=lambda entry: entry.path,
         )
-    for name in sorted(_SHARED_TEXT_FILES):
-        source = archives / name
+        if not matching:
+            raise RuntimeError(f"missing required shared archive: {name}")
+        for entry in matching:
+            archive = archives / entry.path
+            if not _archive_test(archive, seven_zip=seven_zip, runner=runner):
+                raise RuntimeError(
+                    f"invalid required shared archive: {entry.path}"
+                )
+            members = _archive_members(
+                archive,
+                seven_zip=seven_zip,
+                runner=runner,
+            )
+            parent_parts = Path(entry.path).parent.parts
+            fps_parent = next(
+                (
+                    part
+                    for part in parent_parts
+                    if part in {"30FPS", "60FPS"}
+                ),
+                None,
+            )
+            member_roots = {
+                PurePosixPath(member.replace("\\", "/")).parts[0]
+                for member in members
+                if PurePosixPath(member.replace("\\", "/")).parts
+            }
+            destination = (
+                partial / fps_parent
+                if fps_parent is not None and fps_parent not in member_roots
+                else partial
+            )
+            _extract_archive(
+                archive,
+                destination,
+                seven_zip=seven_zip,
+                runner=runner,
+            )
+    for entry in sorted(entries, key=lambda item: item.path):
+        if Path(entry.path).name not in _SHARED_TEXT_FILES:
+            continue
+        source = archives / entry.path
         if source.is_file():
-            shutil.copy2(source, partial / name)
+            destination = partial / entry.path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
     if not _shared_tree_valid(partial):
         raise RuntimeError("shared FreeMan extraction is missing required annotations")
     _write_json_atomic(partial / "extraction_manifest.json", identity)
