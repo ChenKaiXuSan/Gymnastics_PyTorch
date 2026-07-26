@@ -10,11 +10,16 @@ from types import SimpleNamespace
 import pytest
 
 from gymnastics.benchmarks.freeman.download import (
+    cleanup_subject_workspace,
     download_release,
+    extract_shared_annotations,
+    extract_subject,
     fetch_hub_inventory,
     run_preflight,
+    subject_archive_set,
     validate_downloads,
 )
+from gymnastics.benchmarks.freeman.schema import ArchiveEntry
 
 
 @dataclass(frozen=True)
@@ -263,3 +268,227 @@ def test_download_uses_hf_local_dir_and_writes_validated_state(
     assert (tmp_path / "manifests" / "remote_inventory.json").is_file()
     assert (tmp_path / "manifests" / "download_state.json").is_file()
     assert not list((tmp_path / "manifests").glob("*.tmp"))
+
+
+def test_subject_archive_set_orders_numeric_parts_before_zip() -> None:
+    entries = (
+        ArchiveEntry("subj02.zip", 4, None),
+        ArchiveEntry("subj02.03", 3, None),
+        ArchiveEntry("subj02.01", 1, None),
+        ArchiveEntry("subj01.zip", 5, None),
+        ArchiveEntry("subj02.02", 2, None),
+    )
+
+    selected = subject_archive_set(2, entries)
+
+    assert [item.path for item in selected] == [
+        "subj02.01",
+        "subj02.02",
+        "subj02.03",
+        "subj02.zip",
+    ]
+
+
+class FakeSevenZip:
+    def __init__(self, *, listing: tuple[str, ...], expected_reconstructed: bytes | None = None):
+        self.listing = listing
+        self.expected_reconstructed = expected_reconstructed
+
+    def __call__(self, command, **kwargs):
+        operation = command[1]
+        archive = Path(command[-1]) if operation in {"t", "l"} else Path(command[2])
+        if operation == "t":
+            if archive.name.endswith(".reconstructed.zip"):
+                success = (
+                    self.expected_reconstructed is not None
+                    and archive.read_bytes() == self.expected_reconstructed
+                )
+                return subprocess.CompletedProcess(
+                    command, 0 if success else 2, stdout="", stderr=""
+                )
+            return subprocess.CompletedProcess(command, 2, stdout="", stderr="split")
+        if operation == "l":
+            output = "\n".join(f"Path = {member}" for member in self.listing)
+            return subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
+        if operation == "x":
+            output_arg = next(item for item in command if item.startswith("-o"))
+            output_root = Path(output_arg[2:])
+            for member in self.listing:
+                target = output_root / member
+                if member.endswith("/"):
+                    target.mkdir(parents=True, exist_ok=True)
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(b"fixture")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        raise AssertionError(f"unexpected command: {command}")
+
+
+def test_extract_subject_reconstructs_numeric_parts_and_removes_temporary_zip(
+    monkeypatch, tmp_path: Path
+) -> None:
+    archive_root = tmp_path / "archives"
+    work_root = tmp_path / "work"
+    archive_root.mkdir()
+    first = b"PK\x03\x04first"
+    middle = b"middle"
+    final = b"lastPK\x05\x06"
+    (archive_root / "subj02.01").write_bytes(first)
+    (archive_root / "subj02.02").write_bytes(middle)
+    (archive_root / "subj02.zip").write_bytes(final)
+    monkeypatch.setattr(shutil, "which", lambda _: "/opt/7z")
+    runner = FakeSevenZip(
+        listing=("30FPS/videos/session_subj02/vframes/c01.mp4",),
+        expected_reconstructed=first + middle + final,
+    )
+
+    subject_root = extract_subject(
+        2,
+        archive_root,
+        work_root,
+        runner=runner,
+    )
+
+    assert subject_root == work_root / "subject_02"
+    assert (
+        subject_root / "30FPS/videos/session_subj02/vframes/c01.mp4"
+    ).is_file()
+    assert not (work_root / "subject_02.reconstructed.zip").exists()
+    assert (archive_root / "subj02.01").is_file()
+    assert (archive_root / "subj02.zip").is_file()
+
+
+def test_extract_rejects_archive_member_path_traversal(
+    monkeypatch, tmp_path: Path
+) -> None:
+    archive_root = tmp_path / "archives"
+    archive_root.mkdir()
+    (archive_root / "subj01.zip").write_bytes(b"PK\x03\x04safePK\x05\x06")
+    monkeypatch.setattr(shutil, "which", lambda _: "/opt/7z")
+
+    class TraversalRunner(FakeSevenZip):
+        def __call__(self, command, **kwargs):
+            if command[1] == "t":
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+            return super().__call__(command, **kwargs)
+
+    with pytest.raises(RuntimeError, match="unsafe archive member"):
+        extract_subject(
+            1,
+            archive_root,
+            tmp_path / "work",
+            runner=TraversalRunner(listing=("../../escape.mp4",)),
+        )
+
+    assert not (tmp_path / "escape.mp4").exists()
+
+
+@pytest.mark.parametrize(
+    "target_factory",
+    [
+        lambda work: Path("/"),
+        lambda work: work,
+        lambda work: work / "subject_02",
+    ],
+)
+def test_cleanup_rejects_any_target_other_than_exact_subject(
+    tmp_path: Path, target_factory
+) -> None:
+    work_root = tmp_path / "work"
+    work_root.mkdir()
+    target = target_factory(work_root)
+    if target != Path("/") and target != work_root:
+        target.mkdir()
+
+    with pytest.raises(ValueError, match="refusing"):
+        cleanup_subject_workspace(1, target, work_root)
+
+
+def test_cleanup_rejects_subject_symlink_escaping_work_root(tmp_path: Path) -> None:
+    work_root = tmp_path / "work"
+    outside = tmp_path / "outside"
+    work_root.mkdir()
+    outside.mkdir()
+    link = work_root / "subject_01"
+    link.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="refusing"):
+        cleanup_subject_workspace(1, link, work_root)
+
+    assert outside.is_dir()
+
+
+def test_cleanup_removes_only_exact_subject_workspace(tmp_path: Path) -> None:
+    work_root = tmp_path / "work"
+    subject = work_root / "subject_01"
+    other = work_root / "subject_02"
+    subject.mkdir(parents=True)
+    other.mkdir()
+    (subject / "artifact.txt").write_text("done", encoding="utf-8")
+
+    cleanup_subject_workspace(1, subject, work_root)
+
+    assert not subject.exists()
+    assert other.is_dir()
+
+
+def test_extract_shared_annotations_publishes_only_consumed_archives(
+    monkeypatch, tmp_path: Path
+) -> None:
+    archive_root = tmp_path / "archives"
+    work_root = tmp_path / "work"
+    archive_root.mkdir()
+    members = {
+        "cameras.zip": ("30FPS/cameras/session_subj01.json",),
+        "keypoints2d.zip": ("30FPS/keypoints2d/session_subj01.npy",),
+        "keypoints3d.zip": ("30FPS/keypoints3d/session_subj01.npy",),
+    }
+    entries = []
+    for name in (*members, "motions.zip", "bbox2d.zip"):
+        payload = b"PK\x03\x04" + name.encode() + b"PK\x05\x06"
+        (archive_root / name).write_bytes(payload)
+        entries.append(ArchiveEntry(name, len(payload), _digest(payload)))
+    (archive_root / "session_list.txt").write_text(
+        "session_subj01\n", encoding="utf-8"
+    )
+    (archive_root / "train.txt").write_text("session_subj01\n", encoding="utf-8")
+    (archive_root / "valid.txt").write_text("", encoding="utf-8")
+    (archive_root / "test.txt").write_text("", encoding="utf-8")
+    for name in ("session_list.txt", "train.txt", "valid.txt", "test.txt"):
+        path = archive_root / name
+        entries.append(ArchiveEntry(name, path.stat().st_size or 1, None))
+    monkeypatch.setattr(shutil, "which", lambda _: "/opt/7z")
+
+    class SharedRunner:
+        def __call__(self, command, **kwargs):
+            operation = command[1]
+            archive = Path(command[-1]) if operation in {"t", "l"} else Path(command[2])
+            if operation == "t":
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+            if operation == "l":
+                output = "\n".join(
+                    f"Path = {member}" for member in members[archive.name]
+                )
+                return subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
+            output_arg = next(item for item in command if item.startswith("-o"))
+            output_root = Path(output_arg[2:])
+            for member in members[archive.name]:
+                target = output_root / member
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"annotation")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    shared_root = extract_shared_annotations(
+        entries,
+        archive_root,
+        work_root,
+        runner=SharedRunner(),
+    )
+
+    assert shared_root == work_root / "shared"
+    assert (shared_root / "30FPS/cameras/session_subj01.json").is_file()
+    assert (shared_root / "30FPS/keypoints2d/session_subj01.npy").is_file()
+    assert (shared_root / "30FPS/keypoints3d/session_subj01.npy").is_file()
+    assert (shared_root / "session_list.txt").is_file()
+    assert not (shared_root / "motions").exists()
+    assert not (shared_root / "bbox2d").exists()

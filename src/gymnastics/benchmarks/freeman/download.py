@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+from pathlib import PurePosixPath
+import re
 import shutil
 import subprocess
 from typing import Any
@@ -300,3 +302,375 @@ def download_release(
     _write_json_atomic(manifest_root / "remote_inventory.json", inventory_payload)
     _write_json_atomic(manifest_root / "download_state.json", state_payload)
     return report.archive_root
+
+
+def subject_archive_set(
+    subject_id: int,
+    entries: Sequence[ArchiveEntry],
+) -> tuple[ArchiveEntry, ...]:
+    """Return one subject's contiguous numeric pieces followed by its ZIP."""
+    if subject_id < 1 or subject_id > 40:
+        raise ValueError("FreeMan subject_id must be within 1..40")
+    stem = f"subj{subject_id:02d}"
+    terminal = next(
+        (entry for entry in entries if entry.path == f"{stem}.zip"),
+        None,
+    )
+    if terminal is None:
+        raise RuntimeError(f"missing required subject archive {stem}.zip")
+    numbered: list[tuple[int, ArchiveEntry]] = []
+    pattern = re.compile(rf"^{re.escape(stem)}\.(\d+)$")
+    for entry in entries:
+        match = pattern.fullmatch(entry.path)
+        if match:
+            numbered.append((int(match.group(1)), entry))
+    numbered.sort(key=lambda item: item[0])
+    if numbered:
+        observed = [index for index, _ in numbered]
+        expected = list(range(1, observed[-1] + 1))
+        if observed != expected:
+            raise RuntimeError(
+                f"non-contiguous numeric volumes for {stem}: {observed}"
+            )
+    return tuple(entry for _, entry in numbered) + (terminal,)
+
+
+def _completed(
+    runner: Runner,
+    command: list[str],
+) -> subprocess.CompletedProcess[str]:
+    return runner(
+        command,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _seven_zip() -> str:
+    executable = shutil.which("7z")
+    if executable is None:
+        raise RuntimeError(
+            "7z executable not found; install p7zip to extract FreeMan archives"
+        )
+    return executable
+
+
+def _archive_test(
+    archive: Path,
+    *,
+    seven_zip: str,
+    runner: Runner,
+) -> bool:
+    return _completed(runner, [seven_zip, "t", str(archive)]).returncode == 0
+
+
+def _archive_members(
+    archive: Path,
+    *,
+    seven_zip: str,
+    runner: Runner,
+) -> tuple[str, ...]:
+    completed = _completed(
+        runner,
+        [seven_zip, "l", "-slt", str(archive)],
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"cannot list FreeMan archive {archive.name}: "
+            + (completed.stderr.strip() or completed.stdout.strip())
+        )
+    members = tuple(
+        line.split("=", 1)[1].strip()
+        for line in completed.stdout.splitlines()
+        if line.startswith("Path =") and line.split("=", 1)[1].strip()
+    )
+    if not members:
+        raise RuntimeError(f"FreeMan archive has no members: {archive.name}")
+    return members
+
+
+def _validate_archive_members(members: Sequence[str], output_root: Path) -> None:
+    root = output_root.resolve()
+    for member in members:
+        normalized = member.replace("\\", "/")
+        pure = PurePosixPath(normalized)
+        if (
+            pure.is_absolute()
+            or ".." in pure.parts
+            or re.match(r"^[A-Za-z]:", normalized)
+        ):
+            raise RuntimeError(f"unsafe archive member: {member}")
+        destination = (root / Path(*pure.parts)).resolve()
+        if destination != root and root not in destination.parents:
+            raise RuntimeError(f"unsafe archive member: {member}")
+
+
+def _extract_archive(
+    archive: Path,
+    output_root: Path,
+    *,
+    seven_zip: str,
+    runner: Runner,
+) -> None:
+    members = _archive_members(archive, seven_zip=seven_zip, runner=runner)
+    _validate_archive_members(members, output_root)
+    completed = _completed(
+        runner,
+        [
+            seven_zip,
+            "x",
+            str(archive),
+            f"-o{output_root}",
+            "-y",
+        ],
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"cannot extract FreeMan archive {archive.name}: "
+            + (completed.stderr.strip() or completed.stdout.strip())
+        )
+
+
+def _contains_signature(path: Path, signature: bytes, *, tail: bool) -> bool:
+    with path.open("rb") as stream:
+        if tail:
+            stream.seek(max(0, path.stat().st_size - 65_557))
+        data = stream.read(65_557 if tail else 4)
+    return signature in data
+
+
+def _reconstruct_numeric_archive(
+    subject_id: int,
+    pieces: Sequence[Path],
+    work_root: Path,
+    *,
+    seven_zip: str,
+    runner: Runner,
+) -> Path:
+    starts = [
+        path
+        for path in pieces
+        if _contains_signature(path, b"PK\x03\x04", tail=False)
+    ]
+    finals = [
+        path
+        for path in pieces
+        if _contains_signature(path, b"PK\x05\x06", tail=True)
+    ]
+    if len(starts) != 1 or len(finals) != 1 or starts[0] == finals[0]:
+        raise RuntimeError(
+            f"cannot determine numeric ZIP volume order for subject {subject_id:02d}"
+        )
+    numeric = sorted(
+        (path for path in pieces if path.suffix[1:].isdigit()),
+        key=lambda path: int(path.suffix[1:]),
+    )
+    terminal = next(path for path in pieces if path.suffix.lower() == ".zip")
+    if starts[0] in numeric and finals[0] == terminal:
+        ordered = numeric + [terminal]
+    elif starts[0] == terminal and finals[0] in numeric:
+        ordered = [terminal] + numeric
+    else:
+        raise RuntimeError(
+            f"ambiguous numeric ZIP volume order for subject {subject_id:02d}"
+        )
+    work_root.mkdir(parents=True, exist_ok=True)
+    reconstructed = work_root / f"subject_{subject_id:02d}.reconstructed.zip"
+    temporary = reconstructed.with_suffix(reconstructed.suffix + ".partial")
+    with temporary.open("wb") as target:
+        for part in ordered:
+            with part.open("rb") as source:
+                shutil.copyfileobj(source, target, length=8 * 1024 * 1024)
+    temporary.replace(reconstructed)
+    if not _archive_test(reconstructed, seven_zip=seven_zip, runner=runner):
+        reconstructed.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"reconstructed ZIP validation failed for subject {subject_id:02d}"
+        )
+    return reconstructed
+
+
+def _subject_archive_input(
+    subject_id: int,
+    archive_root: Path,
+    work_root: Path,
+    *,
+    seven_zip: str,
+    runner: Runner,
+) -> tuple[Path, bool]:
+    terminal = archive_root / f"subj{subject_id:02d}.zip"
+    if not terminal.is_file():
+        raise FileNotFoundError(terminal)
+    if _archive_test(terminal, seven_zip=seven_zip, runner=runner):
+        return terminal, False
+    numeric = sorted(
+        archive_root.glob(f"subj{subject_id:02d}.[0-9]*"),
+        key=lambda path: int(path.suffix[1:]),
+    )
+    if not numeric:
+        raise RuntimeError(
+            f"invalid FreeMan subject archive without numeric volumes: {terminal.name}"
+        )
+    observed = [int(path.suffix[1:]) for path in numeric]
+    if observed != list(range(1, observed[-1] + 1)):
+        raise RuntimeError(
+            f"non-contiguous numeric volumes for subject {subject_id:02d}: {observed}"
+        )
+    reconstructed = _reconstruct_numeric_archive(
+        subject_id,
+        [*numeric, terminal],
+        work_root,
+        seven_zip=seven_zip,
+        runner=runner,
+    )
+    return reconstructed, True
+
+
+def _has_subject_video(subject_root: Path) -> bool:
+    for fps in ("30FPS", "60FPS"):
+        if any((subject_root / fps / "videos").glob("*/vframes/c01.mp4")):
+            return True
+    return False
+
+
+def extract_subject(
+    subject_id: int,
+    archive_root: Path,
+    work_root: Path,
+    *,
+    runner: Runner = subprocess.run,
+) -> Path:
+    """Safely extract one subject, reconstructing numeric ZIP pieces if needed."""
+    if subject_id < 1 or subject_id > 40:
+        raise ValueError("FreeMan subject_id must be within 1..40")
+    archives = Path(archive_root).resolve()
+    work = Path(work_root).resolve()
+    subject_root = work / f"subject_{subject_id:02d}"
+    if subject_root.exists():
+        if _has_subject_video(subject_root):
+            return subject_root
+        raise RuntimeError(f"existing subject workspace is invalid: {subject_root}")
+    partial = work / f"subject_{subject_id:02d}.partial"
+    if partial.exists():
+        raise RuntimeError(f"partial subject workspace requires inspection: {partial}")
+    seven_zip = _seven_zip()
+    archive, disposable = _subject_archive_input(
+        subject_id,
+        archives,
+        work,
+        seven_zip=seven_zip,
+        runner=runner,
+    )
+    _extract_archive(
+        archive,
+        partial,
+        seven_zip=seven_zip,
+        runner=runner,
+    )
+    if not _has_subject_video(partial):
+        raise RuntimeError(
+            f"subject {subject_id:02d} extraction contains no FreeMan c01 videos"
+        )
+    partial.replace(subject_root)
+    if disposable:
+        archive.unlink()
+    return subject_root
+
+
+def cleanup_subject_workspace(
+    subject_id: int,
+    subject_root: Path,
+    work_root: Path,
+) -> None:
+    """Remove only the exact non-symlink subject workspace requested."""
+    work = Path(work_root).resolve()
+    target = Path(subject_root)
+    expected = work / f"subject_{subject_id:02d}"
+    if (
+        target.is_symlink()
+        or target.resolve(strict=False) != expected
+        or expected.parent != work
+    ):
+        raise ValueError(f"refusing to remove unsafe subject workspace: {target}")
+    if expected.exists():
+        shutil.rmtree(expected)
+
+
+_SHARED_ARCHIVES = ("cameras.zip", "keypoints2d.zip", "keypoints3d.zip")
+_SHARED_TEXT_FILES = {
+    "session_list.txt",
+    "session_list_mono.txt",
+    "ignore_list.txt",
+    "train.txt",
+    "valid.txt",
+    "validation.txt",
+    "test.txt",
+}
+
+
+def _shared_tree_valid(root: Path) -> bool:
+    return (
+        any(root.rglob("session_list.txt"))
+        and any(path for path in root.rglob("*.json") if "camera" in str(path.parent).lower())
+        and any(path for path in root.rglob("*.npy") if "keypoints2d" in str(path.parent))
+        and any(path for path in root.rglob("*.npy") if "keypoints3d" in str(path.parent))
+    )
+
+
+def extract_shared_annotations(
+    entries: Sequence[ArchiveEntry],
+    archive_root: Path,
+    work_root: Path,
+    *,
+    runner: Runner = subprocess.run,
+) -> Path:
+    """Publish only the shared annotations consumed by the benchmark."""
+    archives = Path(archive_root).resolve()
+    work = Path(work_root).resolve()
+    shared = work / "shared"
+    manifest_entries = [
+        asdict(entry)
+        for entry in entries
+        if Path(entry.path).name in {*_SHARED_ARCHIVES, *_SHARED_TEXT_FILES}
+    ]
+    identity = {
+        "consumed_entries": sorted(manifest_entries, key=lambda item: item["path"])
+    }
+    if shared.exists():
+        manifest = shared / "extraction_manifest.json"
+        if (
+            manifest.is_file()
+            and json.loads(manifest.read_text(encoding="utf-8")) == identity
+            and _shared_tree_valid(shared)
+        ):
+            return shared
+        raise RuntimeError(f"existing shared FreeMan workspace is invalid: {shared}")
+    partial = work / "shared.partial"
+    if partial.exists():
+        raise RuntimeError(f"partial shared workspace requires inspection: {partial}")
+    partial.mkdir(parents=True)
+    seven_zip = _seven_zip()
+    by_name = {Path(entry.path).name: entry for entry in entries}
+    for name in _SHARED_ARCHIVES:
+        entry = by_name.get(name)
+        if entry is None:
+            raise RuntimeError(f"missing required shared archive: {name}")
+        archive = archives / entry.path
+        if not _archive_test(archive, seven_zip=seven_zip, runner=runner):
+            raise RuntimeError(f"invalid required shared archive: {name}")
+        _extract_archive(
+            archive,
+            partial,
+            seven_zip=seven_zip,
+            runner=runner,
+        )
+    for name in sorted(_SHARED_TEXT_FILES):
+        source = archives / name
+        if source.is_file():
+            shutil.copy2(source, partial / name)
+    if not _shared_tree_valid(partial):
+        raise RuntimeError("shared FreeMan extraction is missing required annotations")
+    _write_json_atomic(partial / "extraction_manifest.json", identity)
+    partial.replace(shared)
+    return shared
