@@ -481,8 +481,8 @@ def discover_completed_runs(
         raise ValueError("duplicate expected Unity supervised matrix cell")
     runs: list[UnityFineTuneRun] = []
     expected_roots: set[Path] = set()
-    for fold_name, ablation, seed in sorted(
-        unique, key=lambda item: (item[0], item[1], item[2])
+    for ablation, fold_name, seed in sorted(
+        unique, key=lambda item: (item[1], item[0], item[2])
     ):
         if fold_name not in {"left_to_right", "right_to_left"}:
             raise ValueError(f"unexpected fold identity: {fold_name}")

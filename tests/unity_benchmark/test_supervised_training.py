@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 from gymnastics.benchmarks.unity.dataset import load_unity_benchmark
 from gymnastics.benchmarks.unity.supervised import (
     UnityFineTuneConfig,
+    discover_completed_runs,
     run_finetuned_inference,
     run_supervised_finetune,
     train_supervised_epoch,
@@ -283,3 +284,15 @@ def test_finetuned_inference_writes_only_heldout_and_static_sequences(
     assert not (
         run.run_root / "inference" / f"{run.train_sequence}.npz"
     ).exists()
+
+
+def test_completed_run_discovery_uses_ablation_fold_seed_cell_order(
+    tmp_path: Path,
+) -> None:
+    runs = discover_completed_runs(
+        tmp_path,
+        expected_cells=(("A4", "left_to_right", 0),),
+        resolved_config={},
+    )
+
+    assert runs == ()
