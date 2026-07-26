@@ -8,10 +8,13 @@ import pytest
 from gymnastics.benchmarks.unity.evaluation import (
     EvaluationBundle,
     angular_residual_deg,
+    build_reference_sequence,
     evaluate_method_sequence,
     sequence_joint_errors,
     summarize_results,
+    to_evaluation_sequence,
 )
+from gymnastics.benchmarks.unity.dataset import load_unity_benchmark
 from gymnastics.benchmarks.unity.mapping import EVALUATION_JOINT_NAMES
 from gymnastics.benchmarks.unity.report import write_report
 from gymnastics.benchmarks.unity.schema import MethodSequence
@@ -123,3 +126,28 @@ def test_evaluation_reports_millimetres_and_report_separates_diagnostics(
     text = report.read_text(encoding="utf-8")
     assert "Valid Method Ranking" in text
     assert "Diagnostic Methods" in text
+
+
+def test_converts_mhr70_candidate_and_builds_matching_reference() -> None:
+    benchmark = load_unity_benchmark(
+        "/home/data/xchen/gymnastics/unity_benchmark"
+    )
+    frames = benchmark.frames[:5]
+    mhr = np.ones((5, 70, 3), dtype=np.float32)
+    candidate = MethodSequence(
+        "cam0",
+        "static_sweep",
+        np.asarray([frame.sample_id for frame in frames]),
+        mhr,
+        np.ones((5, 70), dtype=bool),
+        tuple(f"joint_{index}" for index in range(70)),
+        {"ranking_group": "valid"},
+    )
+
+    converted = to_evaluation_sequence(candidate)
+    reference = build_reference_sequence("static_sweep", frames)
+
+    assert converted.points.shape == (5, 16, 3)
+    assert converted.joint_names == EVALUATION_JOINT_NAMES
+    assert reference.sample_ids.tolist() == converted.sample_ids.tolist()
+    assert reference.method == "unity_gt"

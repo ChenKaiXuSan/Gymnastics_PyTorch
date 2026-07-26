@@ -14,8 +14,12 @@ from gymnastics.fusion.deterministic.experiment_matrix import (
     fit_similarity,
 )
 
-from .mapping import EVALUATION_JOINT_NAMES
-from .schema import MethodSequence
+from .mapping import (
+    EVALUATION_JOINT_NAMES,
+    map_mhr70_to_unity,
+    select_unity_evaluation_joints,
+)
+from .schema import MethodSequence, UnityFrame
 
 
 @dataclass(frozen=True)
@@ -50,6 +54,42 @@ class EvaluationBundle:
     diagnostics: tuple[Mapping[str, object], ...]
     tables: Mapping[str, tuple[Mapping[str, object], ...]]
     provenance: Mapping[str, object]
+
+
+def to_evaluation_sequence(sequence: MethodSequence) -> MethodSequence:
+    if sequence.joint_names == EVALUATION_JOINT_NAMES:
+        return sequence
+    if sequence.points.shape[1] != 70:
+        raise ValueError(
+            f"{sequence.method} has neither Unity16 nor MHR70 joints"
+        )
+    mapped = map_mhr70_to_unity(sequence.points, sequence.valid)
+    return MethodSequence(
+        method=sequence.method,
+        sequence_id=sequence.sequence_id,
+        sample_ids=sequence.sample_ids,
+        points=mapped.points,
+        valid=mapped.valid,
+        joint_names=mapped.joint_names,
+        metadata=sequence.metadata,
+    )
+
+
+def build_reference_sequence(
+    sequence_id: str, frames: Sequence[UnityFrame]
+) -> MethodSequence:
+    world = np.stack([frame.gt_world_m for frame in frames])
+    available = np.stack([frame.gt_available for frame in frames])
+    selected = select_unity_evaluation_joints(world, available)
+    return MethodSequence(
+        method="unity_gt",
+        sequence_id=sequence_id,
+        sample_ids=np.asarray([frame.sample_id for frame in frames]),
+        points=selected.points,
+        valid=selected.valid,
+        joint_names=selected.joint_names,
+        metadata={"ranking_group": "reference"},
+    )
 
 
 def sequence_joint_errors(

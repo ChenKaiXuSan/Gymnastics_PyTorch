@@ -37,6 +37,7 @@ _COMMANDS = {
     "classify": ("gymnastics.classification.train", "init_params", False),
     "analyze": ("gymnastics.analysis.main", "main", False),
     "calibrate": ("gymnastics.calibration.main", "main", False),
+    "benchmark:unity": ("gymnastics.benchmarks.unity.cli", "main", True),
 }
 
 
@@ -87,10 +88,23 @@ def _parser() -> argparse.ArgumentParser:
         help="run the self-supervised paper method",
         add_help=False,
     )
+    benchmark = commands.add_parser("benchmark", help="run external benchmarks")
+    benchmark_commands = benchmark.add_subparsers(dest="benchmark_command")
+    benchmark_commands.add_parser(
+        "unity",
+        help="run the Unity external benchmark",
+        add_help=False,
+    )
     return parser
 
 
 def _target_key(args: argparse.Namespace) -> str | None:
+    if args.command == "benchmark":
+        return (
+            f"benchmark:{args.benchmark_command}"
+            if args.benchmark_command is not None
+            else None
+        )
     if args.command == "triangulate":
         mode = args.triangulation_command or "run"
         return f"triangulate:{mode}"

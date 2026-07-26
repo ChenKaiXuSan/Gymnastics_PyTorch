@@ -29,5 +29,6 @@ def test_unified_cli_lists_pipeline_commands():
         "classify",
         "analyze",
         "calibrate",
+        "benchmark",
     ):
         assert command in result.stdout
