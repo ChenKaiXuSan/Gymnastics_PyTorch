@@ -9,7 +9,12 @@ import cv2
 import numpy as np
 
 from .dataset import group_evaluation_sequences
-from .mapping import EVALUATION_JOINT_NAMES, select_unity_evaluation_joints
+from .mapping import (
+    EVALUATION_JOINT_NAMES,
+    map_mhr70_to_unity,
+    select_unity_evaluation_joints,
+)
+from .sam3d import load_sam3d_camera_cache
 from .schema import MethodSequence, UnityBenchmark, UnityCamera
 
 
@@ -157,6 +162,59 @@ def run_oracle_triangulation(
         )
         _save_method_sequence(
             Path(output_root) / "oracle2d" / f"{sequence_id}.npz", sequence
+        )
+        outputs.append(sequence)
+    return tuple(outputs)
+
+
+def run_sam3d_triangulation(
+    benchmark: UnityBenchmark,
+    cache_root: Path,
+    output_root: Path,
+) -> tuple[MethodSequence, ...]:
+    outputs: list[MethodSequence] = []
+    for sequence_id, frames in group_evaluation_sequences(benchmark).items():
+        sample_ids = tuple(frame.sample_id for frame in frames)
+        cam0 = load_sam3d_camera_cache(cache_root, "cam0", sample_ids)
+        cam1 = load_sam3d_camera_cache(cache_root, "cam1", sample_ids)
+        reconstructed = triangulate_pixels(
+            cam0.points_2d,
+            cam1.points_2d,
+            benchmark.cameras["cam0"],
+            benchmark.cameras["cam1"],
+        )
+        valid = (
+            cam0.valid_2d
+            & cam1.valid_2d
+            & np.isfinite(reconstructed).all(axis=-1)
+        )
+        mapped = map_mhr70_to_unity(reconstructed, valid)
+        reprojection = {
+            "cam0": reprojection_errors(
+                reconstructed, cam0.points_2d, benchmark.cameras["cam0"]
+            ),
+            "cam1": reprojection_errors(
+                reconstructed, cam1.points_2d, benchmark.cameras["cam1"]
+            ),
+        }
+        metadata = {
+            "ranking_group": "valid",
+            "source": "sam3d_predicted_2d",
+            "camera_calibration": "unity_exact",
+            "cam0_reprojection_mean_px": float(np.nanmean(reprojection["cam0"])),
+            "cam1_reprojection_mean_px": float(np.nanmean(reprojection["cam1"])),
+        }
+        sequence = MethodSequence(
+            method="triangulation_sam3d2d",
+            sequence_id=sequence_id,
+            sample_ids=np.asarray(sample_ids),
+            points=mapped.points,
+            valid=mapped.valid,
+            joint_names=EVALUATION_JOINT_NAMES,
+            metadata=metadata,
+        )
+        _save_method_sequence(
+            Path(output_root) / "sam3d2d" / f"{sequence_id}.npz", sequence
         )
         outputs.append(sequence)
     return tuple(outputs)
