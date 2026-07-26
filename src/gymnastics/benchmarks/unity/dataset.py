@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 
@@ -51,8 +52,19 @@ def _image_points(records: list[dict[str, object]]) -> tuple[np.ndarray, np.ndar
     return points, visible
 
 
-def load_unity_benchmark(root: Path) -> UnityBenchmark:
+def load_unity_benchmark(
+    root: Path,
+    *,
+    sequence_ids: Sequence[str] | None = None,
+) -> UnityBenchmark:
     root = Path(root).resolve()
+    requested_sequences = (
+        None
+        if sequence_ids is None
+        else frozenset(str(value) for value in sequence_ids)
+    )
+    if requested_sequences is not None and not requested_sequences:
+        raise ValueError("sequence_ids must not be empty")
     skeleton = _required_json(root / "skeleton.json")
     camera_payload = _required_json(root / "cameras.json")
     if not isinstance(skeleton, dict) or not isinstance(camera_payload, dict):
@@ -77,11 +89,17 @@ def load_unity_benchmark(root: Path) -> UnityBenchmark:
             continue
         record = json.loads(line)
         sample_id = int(record["sample_id"])
+        sequence_id = str(record["sequence_id"])
         if sample_id <= previous_id:
             raise ValueError(
                 f"sample_id must be unique and increasing at line {line_number}"
             )
         previous_id = sample_id
+        if (
+            requested_sequences is not None
+            and sequence_id not in requested_sequences
+        ):
+            continue
         images = {
             camera_id: (root / str(record["images"][camera_id])).resolve()
             for camera_id in cameras
@@ -105,7 +123,7 @@ def load_unity_benchmark(root: Path) -> UnityBenchmark:
         frames.append(
             UnityFrame(
                 sample_id=sample_id,
-                sequence_id=str(record["sequence_id"]),
+                sequence_id=sequence_id,
                 frame_index=int(record["frame_index"]),
                 sample_type=str(record["sample_type"]),
                 phase=str(record.get("phase", "")),

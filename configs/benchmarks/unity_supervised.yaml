@@ -1,0 +1,33 @@
+base_config: configs/benchmarks/unity.yaml
+
+paths:
+  output_root: local/runs/unity_benchmark/supervised_finetune
+  skeleton: configs/fusion/skeleton_mhr70.yaml
+
+matrix:
+  ablations: [A4, A5, A6, A7, A8, A9]
+  folds: [left_to_right, right_to_left]
+  seeds: [0, 1, 2]
+
+window:
+  length: 32
+  train_stride: 8
+
+training:
+  epochs: 100
+  batch_size: 4
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  optimizer: adamw
+  device: cuda
+
+loss:
+  unity_3d_weight: 1.0
+  self_supervised_weight: 0.1
+  smooth_l1_beta_m: 0.02
+
+evaluation:
+  window_length: 32
+  stride: 8
+  static_sequence: static_sweep
+  alignment: one_sim3_per_sequence

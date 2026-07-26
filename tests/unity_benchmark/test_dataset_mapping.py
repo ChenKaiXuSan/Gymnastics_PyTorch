@@ -141,6 +141,27 @@ def test_loads_manifest_and_groups_static_samples(tmp_path: Path) -> None:
     assert groups["continuous_left_060_r00"][0].image_paths["cam0"].is_absolute()
 
 
+def test_sequence_filtered_loader_materializes_only_requested_sequence(
+    tmp_path: Path,
+) -> None:
+    benchmark = load_unity_benchmark(
+        _write_fixture(tmp_path),
+        sequence_ids=("continuous_left_060_r00",),
+    )
+
+    assert [frame.sample_id for frame in benchmark.frames] == [2]
+    assert {
+        frame.sequence_id for frame in benchmark.frames
+    } == {"continuous_left_060_r00"}
+
+
+def test_sequence_filtered_loader_rejects_empty_request(tmp_path: Path) -> None:
+    with np.testing.assert_raises_regex(
+        ValueError, "sequence_ids must not be empty"
+    ):
+        load_unity_benchmark(_write_fixture(tmp_path), sequence_ids=())
+
+
 def test_maps_exact_sixteen_homologous_joints() -> None:
     points = np.zeros((2, 70, 3), dtype=np.float32)
     for index in range(70):
