@@ -9,13 +9,14 @@ import math
 from pathlib import Path
 import random
 import subprocess
-from typing import Iterable, Mapping
+from typing import Iterable, Mapping, Sequence
 
 import numpy as np
 import torch
 import yaml
 from torch.utils.data import DataLoader
 
+from gymnastics.common.skeletons.mhr70 import mhr_names
 from gymnastics.fusion.rotation_aware.config import SkeletonSpec
 from gymnastics.fusion.rotation_aware.corruptions import CorruptionConfig
 from gymnastics.fusion.rotation_aware.dataset import (
@@ -25,10 +26,12 @@ from gymnastics.fusion.rotation_aware.losses import (
     LossConfig,
     compute_self_supervised_losses,
 )
+from gymnastics.fusion.rotation_aware.inference import run_inference
 from gymnastics.fusion.rotation_aware.model import RotationAwareFusionModel
 from gymnastics.fusion.rotation_aware.training import _forward_window
 
-from .fusion import load_rotation_aware_model
+from .fusion import _save_sequence, load_rotation_aware_model
+from .schema import MethodSequence
 from .supervised_data import (
     UnityFold,
     UnitySupervisedSequence,
@@ -464,3 +467,179 @@ def validate_completed_run(
         yaml.YAMLError,
     ):
         return False
+
+
+def discover_completed_runs(
+    output_root: Path,
+    *,
+    expected_cells: Sequence[tuple[str, str, int]],
+    resolved_config: Mapping[str, object],
+) -> tuple[UnityFineTuneRun, ...]:
+    """Discover only configured matrix cells in stable fold/ablation/seed order."""
+    unique = set(expected_cells)
+    if len(unique) != len(expected_cells):
+        raise ValueError("duplicate expected Unity supervised matrix cell")
+    runs: list[UnityFineTuneRun] = []
+    expected_roots: set[Path] = set()
+    for fold_name, ablation, seed in sorted(
+        unique, key=lambda item: (item[0], item[1], item[2])
+    ):
+        if fold_name not in {"left_to_right", "right_to_left"}:
+            raise ValueError(f"unexpected fold identity: {fold_name}")
+        if ablation not in {"A4", "A5", "A6", "A7", "A8", "A9"}:
+            raise ValueError(f"unexpected ablation identity: {ablation}")
+        if seed not in {0, 1, 2}:
+            raise ValueError(f"unexpected seed identity: {seed}")
+        train_sequence = (
+            "continuous_left_060_r00"
+            if fold_name == "left_to_right"
+            else "continuous_right_060_r00"
+        )
+        test_sequence = (
+            "continuous_right_060_r00"
+            if fold_name == "left_to_right"
+            else "continuous_left_060_r00"
+        )
+        run_root = (
+            Path(output_root)
+            / f"fold_{fold_name}"
+            / ablation
+            / f"seed_{seed}"
+        )
+        expected_roots.add(run_root.resolve())
+        run = UnityFineTuneRun(
+            ablation=ablation,
+            fold=fold_name,
+            seed=seed,
+            train_sequence=train_sequence,
+            test_sequence=test_sequence,
+            run_root=run_root,
+            final_checkpoint=run_root / "final.pt",
+            metrics_path=run_root / "history.json",
+            provenance_path=run_root / "provenance.json",
+        )
+        if not run.provenance_path.is_file():
+            continue
+        provenance = json.loads(
+            run.provenance_path.read_text(encoding="utf-8")
+        )
+        stored_resolved = provenance.get("resolved_config")
+        if resolved_config and isinstance(stored_resolved, Mapping):
+            for key, value in resolved_config.items():
+                if stored_resolved.get(key) != value:
+                    raise ValueError(
+                        f"resolved config mismatch for {fold_name}/{ablation}/{seed}"
+                    )
+        if not validate_completed_run(
+            run,
+            source_checkpoint_sha256=str(
+                provenance.get("source_checkpoint_sha256", "")
+            ),
+            resolved_config=dict(stored_resolved or {}),
+            unity_manifest_sha256=str(
+                provenance.get("unity_manifest_sha256", "")
+            ),
+        ):
+            continue
+        runs.append(run)
+    for final_path in Path(output_root).glob(
+        "fold_*/*/seed_*/final.pt"
+    ):
+        if final_path.parent.resolve() not in expected_roots:
+            raise ValueError(f"unexpected completed Unity run: {final_path.parent}")
+    return tuple(runs)
+
+
+def run_finetuned_inference(
+    run: UnityFineTuneRun,
+    sequences: Mapping[str, UnitySupervisedSequence],
+    *,
+    skeleton_path: Path,
+    window_length: int,
+    stride: int,
+    device: str = "cpu",
+) -> tuple[MethodSequence, ...]:
+    """Infer only the held-out direction and static OOD diagnostic."""
+    if device != "cpu":
+        raise ValueError("fine-tuned Unity inference currently requires device='cpu'")
+    if run.train_sequence in {
+        run.test_sequence,
+        "static_sweep",
+    }:
+        raise ValueError("training identity overlaps an evaluation sequence")
+    selected = (run.test_sequence, "static_sweep")
+    if any(sequence_id not in sequences for sequence_id in selected):
+        raise ValueError("held-out or static Unity sequence is unavailable")
+    provenance = json.loads(
+        run.provenance_path.read_text(encoding="utf-8")
+    )
+    if provenance.get("fold") != run.fold:
+        raise ValueError("completed run provenance does not match fold")
+    loaded = load_rotation_aware_model(
+        run.final_checkpoint, skeleton_path, device
+    )
+    if loaded.ablation != run.ablation:
+        raise ValueError("fine-tuned checkpoint ablation mismatch")
+    outputs: list[MethodSequence] = []
+    for sequence_id in selected:
+        sequence = sequences[sequence_id]
+        with torch.inference_mode():
+            result = run_inference(
+                loaded.model,
+                sequence.raw_trial,
+                loaded.skeleton,
+                output_root=run.run_root
+                / "inference"
+                / "_runtime"
+                / sequence_id,
+                run_id=(
+                    f"unity_supervised_{run.fold}_"
+                    f"{run.ablation.lower()}_seed{run.seed}"
+                ),
+                window_length=window_length,
+                stride=stride,
+                provenance={
+                    **dict(loaded.provenance),
+                    "ablation": run.ablation,
+                    "checkpoint_path": str(run.final_checkpoint),
+                    "checkpoint_sha256": loaded.checkpoint_sha256,
+                    "model_config": {
+                        "hidden_channels": loaded.hidden_channels
+                    },
+                },
+                resolved_config=provenance["resolved_config"],
+            )
+        with np.load(result.sequence_path, allow_pickle=False) as data:
+            points = np.asarray(data["kpts_world"], dtype=np.float32)
+            valid = np.asarray(data["joint_valid"], dtype=bool)
+        metadata = {
+            "ranking_group": "unity_supervised",
+            "unity_gt_used_for_training": True,
+            "evaluation_gt_loaded_after_training": True,
+            "fold": run.fold,
+            "seed": run.seed,
+            "ablation": run.ablation,
+            "train_sequence": run.train_sequence,
+            "test_sequence": run.test_sequence,
+            "source_checkpoint_sha256": provenance[
+                "source_checkpoint_sha256"
+            ],
+            "final_checkpoint_sha256": provenance[
+                "final_checkpoint_sha256"
+            ],
+        }
+        method_sequence = MethodSequence(
+            method=run.ablation,
+            sequence_id=sequence_id,
+            sample_ids=sequence.sample_ids,
+            points=points,
+            valid=valid,
+            joint_names=tuple(mhr_names),
+            metadata=metadata,
+        )
+        _save_sequence(
+            run.run_root / "inference" / f"{sequence_id}.npz",
+            method_sequence,
+        )
+        outputs.append(method_sequence)
+    return tuple(outputs)

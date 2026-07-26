@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 from gymnastics.benchmarks.unity.dataset import load_unity_benchmark
 from gymnastics.benchmarks.unity.supervised import (
     UnityFineTuneConfig,
+    run_finetuned_inference,
     run_supervised_finetune,
     train_supervised_epoch,
     validate_completed_run,
@@ -20,6 +21,7 @@ from gymnastics.benchmarks.unity.supervised_data import (
     UNITY_SUPERVISED_FOLDS,
     UnitySupervisedWindowDataset,
     build_supervised_sequence,
+    build_supervised_sequences,
 )
 from gymnastics.benchmarks.unity.supervised_loss import (
     UnitySupervisedLossConfig,
@@ -221,3 +223,63 @@ def test_run_rejects_source_checkpoint_ablation_mismatch(
             self_supervised_config=LossConfig(),
             corruption_config=CorruptionConfig(enabled_families=()),
         )
+
+
+def test_finetuned_inference_writes_only_heldout_and_static_sequences(
+    tmp_path: Path,
+) -> None:
+    benchmark = load_unity_benchmark(UNITY_ROOT)
+    sequences = build_supervised_sequences(
+        benchmark,
+        SAM3D_ROOT,
+        skeleton_path=SKELETON_PATH,
+        fps=60.0,
+    )
+    fold = UNITY_SUPERVISED_FOLDS["left_to_right"]
+    source = _source_checkpoint(tmp_path / "source_a4.pt")
+    run = run_supervised_finetune(
+        sequences[fold.train_sequence],
+        ablation="A4",
+        fold=fold,
+        seed=0,
+        source_checkpoint=source,
+        skeleton_path=SKELETON_PATH,
+        output_root=tmp_path / "runs",
+        config=UnityFineTuneConfig(
+            epochs=2,
+            batch_size=16,
+            device="cpu",
+        ),
+        loss_config=UnitySupervisedLossConfig(),
+        self_supervised_config=LossConfig(),
+        corruption_config=CorruptionConfig(enabled_families=()),
+    )
+
+    outputs = run_finetuned_inference(
+        run,
+        sequences,
+        skeleton_path=SKELETON_PATH,
+        window_length=32,
+        stride=8,
+        device="cpu",
+    )
+
+    assert {item.sequence_id for item in outputs} == {
+        run.test_sequence,
+        "static_sweep",
+    }
+    assert all(
+        item.metadata["ranking_group"] == "unity_supervised"
+        for item in outputs
+    )
+    assert all(item.metadata["unity_gt_used_for_training"] for item in outputs)
+    assert all(
+        item.metadata["evaluation_gt_loaded_after_training"] for item in outputs
+    )
+    assert all(item.metadata["fold"] == run.fold for item in outputs)
+    assert all(item.metadata["seed"] == run.seed for item in outputs)
+    assert all(len(item.metadata["source_checkpoint_sha256"]) == 64 for item in outputs)
+    assert all(len(item.metadata["final_checkpoint_sha256"]) == 64 for item in outputs)
+    assert not (
+        run.run_root / "inference" / f"{run.train_sequence}.npz"
+    ).exists()
