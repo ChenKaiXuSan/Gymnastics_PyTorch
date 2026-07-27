@@ -9,6 +9,8 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 import hashlib
 import json
+import multiprocessing
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -59,6 +61,21 @@ _STAGES = ("inspect", "download", "infer", "fuse", "evaluate", "report", "run")
 _FORCE_STAGES = ("inspect", "infer", "fuse", "evaluate", "report")
 
 
+def partition_subjects(
+    subjects: Sequence[int],
+    worker_count: int,
+) -> tuple[tuple[int, ...], ...]:
+    """Partition unique sorted subjects round-robin across workers."""
+    if worker_count < 1:
+        raise ValueError("worker_count must be positive")
+    partitions: list[list[int]] = [[] for _ in range(worker_count)]
+    for index, subject in enumerate(sorted({int(value) for value in subjects})):
+        if subject < 1 or subject > 40:
+            raise ValueError("FreeMan subjects must be within 1..40")
+        partitions[index % worker_count].append(subject)
+    return tuple(tuple(values) for values in partitions)
+
+
 class StageOperations:
     """Replaceable stage boundary used by the CLI and its tests."""
 
@@ -87,6 +104,7 @@ class StageOperations:
         force_stage: str | None = None,
         keep_workspace: bool = False,
         dry_run: bool = False,
+        devices: Sequence[int] | None = None,
     ) -> Any:
         raise NotImplementedError
 
@@ -154,6 +172,169 @@ def run_subjects(
         if isinstance(artifacts, Mapping):
             subject_state[key]["artifacts"] = dict(artifacts)
         _atomic_json(state_file, state)
+
+
+def _worker_state_path(output_root: Path, device: int) -> Path:
+    return (
+        Path(output_root)
+        / "workers"
+        / f"device_{int(device)}"
+        / "run_state.json"
+    )
+
+
+def _run_device_worker(
+    config: Mapping[str, Any],
+    device: int,
+    subjects: Sequence[int],
+    state_path: Path,
+    keep_workspace: bool,
+) -> None:
+    """Run one disjoint subject shard with one visible physical GPU."""
+    worker_config = deepcopy(dict(config))
+    worker_config["sam3d"]["device"] = 0
+    previous_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(int(device))
+    operations = DefaultStageOperations()
+    work_root = Path(worker_config["paths"]["work_root"])
+    try:
+        run_subjects(
+            subjects,
+            state_path=Path(state_path),
+            process=lambda subject: operations._process_subject(
+                worker_config,
+                subject,
+            ),
+            cleanup=lambda subject: cleanup_subject_workspace(
+                subject,
+                work_root / f"subject_{subject:02d}",
+                work_root,
+            ),
+            keep_workspace=keep_workspace,
+        )
+    finally:
+        if previous_visible_devices is None:
+            os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+        else:
+            os.environ["CUDA_VISIBLE_DEVICES"] = previous_visible_devices
+
+
+def _merge_worker_states(
+    canonical_path: Path,
+    worker_paths: Sequence[Path],
+) -> dict[str, Any]:
+    """Atomically merge worker terminal states without downgrading completion."""
+    canonical = _load_state(Path(canonical_path))
+    canonical_subjects = canonical["subjects"]
+    for worker_path in worker_paths:
+        worker = _load_state(Path(worker_path))
+        for subject, details in worker["subjects"].items():
+            if canonical_subjects.get(subject, {}).get("status") == "complete":
+                continue
+            if (
+                isinstance(details, Mapping)
+                and details.get("status") in {"complete", "failed"}
+            ):
+                canonical_subjects[str(subject)] = dict(details)
+    _atomic_json(Path(canonical_path), canonical)
+    return canonical
+
+
+def _run_parallel_subjects(
+    config: Mapping[str, Any],
+    canonical_state_path: Path,
+    devices: Sequence[int],
+    keep_workspace: bool,
+) -> None:
+    """Run outstanding subjects in isolated spawned GPU workers."""
+    device_ids = tuple(int(value) for value in devices)
+    if (
+        not device_ids
+        or len(set(device_ids)) != len(device_ids)
+        or any(value < 0 for value in device_ids)
+    ):
+        raise ValueError("devices must contain unique non-negative integers")
+    canonical = _load_state(Path(canonical_state_path))
+    outstanding = [
+        int(subject)
+        for subject in config["dataset"]["subjects"]
+        if canonical["subjects"].get(str(int(subject)), {}).get("status")
+        != "complete"
+    ]
+    assignments = partition_subjects(outstanding, len(device_ids))
+    context = multiprocessing.get_context("spawn")
+    workers: list[tuple[int, tuple[int, ...], Path, Any]] = []
+    output_root = Path(config["paths"]["output_root"])
+    for device, subjects in zip(device_ids, assignments):
+        if not subjects:
+            continue
+        state_path = _worker_state_path(output_root, device)
+        seed = {
+            "stages": {},
+            "subjects": {
+                str(subject): dict(canonical["subjects"][str(subject)])
+                for subject in subjects
+                if str(subject) in canonical["subjects"]
+                and canonical["subjects"][str(subject)].get("status")
+                != "complete"
+            },
+        }
+        _atomic_json(state_path, seed)
+        process = context.Process(
+            target=_run_device_worker,
+            args=(
+                config,
+                device,
+                subjects,
+                state_path,
+                keep_workspace,
+            ),
+        )
+        workers.append((device, subjects, state_path, process))
+        previous_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(device)
+        try:
+            process.start()
+        finally:
+            if previous_visible_devices is None:
+                os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+            else:
+                os.environ["CUDA_VISIBLE_DEVICES"] = previous_visible_devices
+
+    for _, _, _, process in workers:
+        process.join()
+
+    failures: list[tuple[int, int]] = []
+    for device, subjects, state_path, process in workers:
+        exitcode = int(process.exitcode or 0)
+        if exitcode == 0:
+            continue
+        failures.append((device, exitcode))
+        worker_state = _load_state(state_path)
+        for subject in subjects:
+            key = str(subject)
+            status = worker_state["subjects"].get(key, {}).get("status")
+            if status in {"complete", "failed"}:
+                continue
+            worker_state["subjects"][key] = {
+                "status": "failed",
+                "error_type": "WorkerProcessError",
+                "error_message": (
+                    f"device {device} worker exited with code {exitcode}"
+                ),
+            }
+        _atomic_json(state_path, worker_state)
+
+    _merge_worker_states(
+        Path(canonical_state_path),
+        [state_path for _, _, state_path, _ in workers],
+    )
+    if failures:
+        details = ", ".join(
+            f"device {device} (exit code {exitcode})"
+            for device, exitcode in failures
+        )
+        raise RuntimeError(f"FreeMan GPU workers failed: {details}")
 
 
 def _remove_scoped_tree(root: Path, target: Path) -> None:
@@ -769,6 +950,7 @@ class DefaultStageOperations(StageOperations):
         force_stage: str | None = None,
         keep_workspace: bool = False,
         dry_run: bool = False,
+        devices: Sequence[int] | None = None,
     ) -> Any:
         state_path = self._state_path(config)
         state = _load_state(state_path)
@@ -825,18 +1007,26 @@ class DefaultStageOperations(StageOperations):
             )
             state["stages"]["shared_annotations"] = {"status": "complete"}
             _atomic_json(state_path, state)
-        run_subjects(
-            config["dataset"]["subjects"],
-            state_path=state_path,
-            process=lambda subject: self._process_subject(config, subject),
-            cleanup=lambda subject: cleanup_subject_workspace(
-                subject,
-                Path(config["paths"]["work_root"])
-                / f"subject_{subject:02d}",
-                Path(config["paths"]["work_root"]),
-            ),
-            keep_workspace=keep_workspace,
-        )
+        if devices:
+            _run_parallel_subjects(
+                config,
+                state_path,
+                devices,
+                keep_workspace,
+            )
+        else:
+            run_subjects(
+                config["dataset"]["subjects"],
+                state_path=state_path,
+                process=lambda subject: self._process_subject(config, subject),
+                cleanup=lambda subject: cleanup_subject_workspace(
+                    subject,
+                    Path(config["paths"]["work_root"])
+                    / f"subject_{subject:02d}",
+                    Path(config["paths"]["work_root"]),
+                ),
+                keep_workspace=keep_workspace,
+            )
         state = _load_state(state_path)
         state["stages"]["report"] = {"status": "running"}
         _atomic_json(state_path, state)
@@ -869,6 +1059,7 @@ def make_parser() -> argparse.ArgumentParser:
             child.add_argument("--force-stage", choices=_FORCE_STAGES)
             child.add_argument("--keep-workspace", action="store_true")
             child.add_argument("--dry-run", action="store_true")
+            child.add_argument("--devices", type=int, nargs="+")
     return parser
 
 
@@ -907,6 +1098,15 @@ def main(
         return 0
     config = _overrides(load_config(args.config), args)
     stages = operations or DefaultStageOperations()
+    devices = (
+        tuple(int(value) for value in args.devices)
+        if getattr(args, "devices", None)
+        else None
+    )
+    if devices is not None and (
+        len(set(devices)) != len(devices) or any(value < 0 for value in devices)
+    ):
+        parser.error("--devices values must be unique non-negative integers")
     if args.stage == "download":
         stages.inspect(config)
         stages.download(config)
@@ -918,6 +1118,7 @@ def main(
             force_stage=args.force_stage,
             keep_workspace=args.keep_workspace,
             dry_run=args.dry_run,
+            devices=devices,
         )
     else:
         getattr(stages, args.stage)(config)
