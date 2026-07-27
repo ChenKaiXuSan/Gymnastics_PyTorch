@@ -10,6 +10,7 @@ from gymnastics.benchmarks.freeman.sam3d import (
     load_inference,
     validate_inference,
 )
+from gymnastics.benchmarks.freeman import sam3d
 from gymnastics.benchmarks.freeman.schema import SelectedPair
 
 
@@ -117,6 +118,53 @@ def test_failed_detection_keeps_frame_identity_and_false_masks(
     assert not view_a.valid3d[1].any()
     assert not view_a.valid2d[1].any()
     np.testing.assert_array_equal(view_a.points3d[1], np.zeros((70, 3)))
+
+
+def test_truncates_selected_pair_to_common_decodable_trailing_frame(
+    freeman_fixture, tmp_path: Path, monkeypatch
+) -> None:
+    session = load_subject_sessions(
+        freeman_fixture.subject_root,
+        freeman_fixture.shared_root,
+        fps_values=(30,),
+    )[0]
+    original_capture = sam3d.cv2.VideoCapture
+
+    class TruncatedCapture:
+        def __init__(self, path):
+            self._capture = original_capture(path)
+            self._truncate = str(path).endswith("c01.mp4")
+            self._reads = 0
+
+        def isOpened(self):
+            return self._capture.isOpened()
+
+        def read(self):
+            if self._truncate and self._reads >= 2:
+                return False, None
+            success, frame = self._capture.read()
+            if success:
+                self._reads += 1
+            return success, frame
+
+        def release(self):
+            self._capture.release()
+
+    monkeypatch.setattr(sam3d.cv2, "VideoCapture", TruncatedCapture)
+
+    artifacts = infer_subject_sessions(
+        [session],
+        {session.session_id: _pair(session)},
+        _config(tmp_path),
+        estimator_factory=lambda _: FakeEstimator(),
+    )
+
+    assert all(item.frames == 2 for item in artifacts)
+    for artifact in artifacts:
+        np.testing.assert_array_equal(
+            load_inference(artifact.path).frame_ids,
+            np.array([0, 1]),
+        )
 
 
 def test_valid_identical_cache_resumes_without_estimator_calls(

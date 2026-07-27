@@ -25,6 +25,7 @@ from .schema import (
 
 
 EstimatorFactory = Callable[[Mapping[str, Any]], Any]
+_MAX_TRAILING_DECODE_SHORTFALL = 16
 
 
 def _sha256(path: Path) -> str:
@@ -46,6 +47,7 @@ def _identity(
     session: FreeManSession,
     view_id: str,
     config: Mapping[str, Any],
+    source_frame_count: int,
 ) -> InferenceIdentity:
     return InferenceIdentity(
         session_id=session.session_id,
@@ -53,7 +55,7 @@ def _identity(
         fps=session.fps,
         view_id=view_id,
         source_video_sha256=_sha256(session.video_paths[view_id]),
-        source_frame_count=len(session.frame_ids),
+        source_frame_count=int(source_frame_count),
         frame_stride=int(config["dataset"]["frame_stride"]),
         sam3d_config_sha256=_sha256(_config_path(config)),
         checkpoint_id=str(config["sam3d"]["checkpoint_id"]),
@@ -269,6 +271,31 @@ def _stream_view(
     )
 
 
+def _decodable_frame_count(path: Path, expected_frames: int) -> int:
+    """Count readable frames, tolerating only a small container-tail mismatch."""
+    capture = cv2.VideoCapture(str(path))
+    if not capture.isOpened():
+        raise RuntimeError(f"cannot open FreeMan video {path}")
+    decoded = 0
+    try:
+        while decoded < expected_frames:
+            success, _ = capture.read()
+            if not success:
+                break
+            decoded += 1
+    finally:
+        capture.release()
+    if decoded <= 0:
+        raise RuntimeError(f"FreeMan video has no decodable frames: {path}")
+    shortfall = expected_frames - decoded
+    if shortfall > _MAX_TRAILING_DECODE_SHORTFALL:
+        raise RuntimeError(
+            f"video decode stopped {shortfall} frames before the expected end "
+            f"at frame {decoded}: {path}"
+        )
+    return decoded
+
+
 def _publish_prediction(
     path: Path,
     prediction: ViewPrediction,
@@ -352,12 +379,31 @@ def infer_subject_sessions(
         pair = pairs.get(session.session_id)
         if pair is None or pair.session_id != session.session_id:
             raise ValueError(f"missing selected pair for {session.session_id}")
-        for view_id in (pair.view_a, pair.view_b):
+        selected_views = (pair.view_a, pair.view_b)
+        for view_id in selected_views:
             if view_id not in session.video_paths:
                 raise ValueError(
                     f"selected view {view_id} is missing from {session.session_id}"
                 )
-            identity = _identity(session, view_id, config)
+        expected_frames = len(session.frame_ids)
+        decodable_counts = {
+            view_id: _decodable_frame_count(
+                session.video_paths[view_id],
+                expected_frames,
+            )
+            for view_id in selected_views
+        }
+        common_frame_count = min(decodable_counts.values())
+        common_frame_ids = session.frame_ids[
+            session.frame_ids < common_frame_count
+        ][::frame_stride]
+        for view_id in selected_views:
+            identity = _identity(
+                session,
+                view_id,
+                config,
+                common_frame_count,
+            )
             path = _prediction_path(session, view_id, config)
             if validate_inference(path, identity):
                 artifacts.append(_artifact(path))
@@ -365,7 +411,7 @@ def infer_subject_sessions(
             if estimator is None:
                 estimator = factory(config)
             frame_ids = np.array(
-                session.frame_ids[::frame_stride],
+                common_frame_ids,
                 dtype=np.int64,
                 copy=True,
             )
