@@ -614,9 +614,33 @@ def extract_subject(
         seven_zip=seven_zip,
         runner=runner,
     )
+    members = _archive_members(
+        archive,
+        seven_zip=seven_zip,
+        runner=runner,
+    )
+    member_roots = {
+        PurePosixPath(member.replace("\\", "/")).parts[0]
+        for member in members
+        if PurePosixPath(member.replace("\\", "/")).parts
+    }
+    fps_parent = next(
+        (
+            part
+            for part in archive.parent.parts
+            if part in {"30FPS", "60FPS"}
+        ),
+        "30FPS",
+    )
+    if member_roots & {"30FPS", "60FPS"}:
+        destination = partial
+    elif "videos" in member_roots:
+        destination = partial / fps_parent
+    else:
+        destination = partial / fps_parent / "videos"
     _extract_archive(
         archive,
-        partial,
+        destination,
         seven_zip=seven_zip,
         runner=runner,
     )
@@ -739,11 +763,20 @@ def extract_shared_annotations(
                 for member in members
                 if PurePosixPath(member.replace("\\", "/")).parts
             }
-            destination = (
-                partial / fps_parent
-                if fps_parent is not None and fps_parent not in member_roots
-                else partial
+            flat_members = all(
+                len(PurePosixPath(member.replace("\\", "/")).parts) == 1
+                for member in members
             )
+            if flat_members:
+                destination = (
+                    partial
+                    / (fps_parent or "30FPS")
+                    / Path(name).stem
+                )
+            elif fps_parent is not None and fps_parent not in member_roots:
+                destination = partial / fps_parent
+            else:
+                destination = partial
             _extract_archive(
                 archive,
                 destination,

@@ -52,6 +52,26 @@ def test_records_trailing_video_exclusion_without_shifting_frames(
     assert session.excluded_trailing_frames["keypoints3d"] == 1
 
 
+def test_uses_actual_synchronized_media_fps_within_nominal_subset(
+    freeman_fixture,
+) -> None:
+    for view in range(1, 9):
+        freeman_fixture.rewrite_video(
+            30,
+            f"c{view:02d}",
+            frames=3,
+            media_fps=25,
+        )
+
+    session = load_subject_sessions(
+        freeman_fixture.subject_root,
+        freeman_fixture.shared_root,
+        fps_values=(30,),
+    )[0]
+
+    assert session.fps == pytest.approx(25.0)
+
+
 def test_rejects_duplicate_session_ids(freeman_fixture) -> None:
     subset = freeman_fixture.shared_root / "30FPS"
     session = freeman_fixture.session_ids[30]
@@ -112,6 +132,32 @@ def test_reference_uses_only_optimized_keypoints(freeman_fixture) -> None:
     assert reference.reference_scale_to_m == 0.001
     assert reference.joint_names == FREEMAN_COCO17_NAMES
     assert not reference.points_m.flags.writeable
+
+
+def test_reference_masks_nonfinite_official_3d_joints(
+    freeman_fixture,
+) -> None:
+    subset = freeman_fixture.shared_root / "30FPS"
+    session_id = freeman_fixture.session_ids[30]
+    path = subset / "keypoints3d" / f"{session_id}.npy"
+    payload = np.load(path, allow_pickle=True)[0]
+    payload["keypoints3d_optim"][0, 0] = np.nan
+    np.save(
+        path,
+        np.asarray([payload], dtype=object),
+        allow_pickle=True,
+    )
+
+    session = load_subject_sessions(
+        freeman_fixture.subject_root,
+        freeman_fixture.shared_root,
+        fps_values=(30,),
+    )[0]
+    reference = load_session_reference(session, reference_scale_to_m=0.001)
+
+    assert not reference.valid[0, 0]
+    np.testing.assert_array_equal(reference.points_m[0, 0], np.zeros(3))
+    assert reference.valid[0, 1:].all()
 
 
 def _rvec_for_world_axis(axis: np.ndarray) -> np.ndarray:

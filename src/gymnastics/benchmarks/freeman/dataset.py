@@ -116,8 +116,8 @@ def _load_annotation_shapes(
         raise ValueError("FreeMan keypoints2d must have shape [8,F,17,3]")
     if keypoints3d.ndim != 3 or keypoints3d.shape[1:] != (17, 3):
         raise ValueError("FreeMan keypoints3d_optim must have shape [F,17,3]")
-    if not np.isfinite(keypoints2d).all() or not np.isfinite(keypoints3d).all():
-        raise ValueError("FreeMan annotations must contain finite values")
+    if not np.isfinite(keypoints2d).all():
+        raise ValueError("FreeMan keypoints2d must contain finite values")
     return keypoints2d, keypoints3d
 
 
@@ -145,7 +145,7 @@ def _load_cameras(path: Path) -> dict[str, FreeManCamera]:
     return cameras
 
 
-def _video_metadata(path: Path, expected_fps: int) -> int:
+def _video_metadata(path: Path) -> tuple[int, float]:
     capture = cv2.VideoCapture(str(path))
     if not capture.isOpened():
         raise ValueError(f"cannot open FreeMan video: {path}")
@@ -154,13 +154,11 @@ def _video_metadata(path: Path, expected_fps: int) -> int:
         frames = int(round(capture.get(cv2.CAP_PROP_FRAME_COUNT)))
     finally:
         capture.release()
-    if not np.isfinite(fps) or abs(fps - expected_fps) > 0.5:
-        raise ValueError(
-            f"FreeMan video FPS mismatch for {path}: {fps} != {expected_fps}"
-        )
+    if not np.isfinite(fps) or fps <= 0:
+        raise ValueError(f"FreeMan video has invalid FPS for {path}: {fps}")
     if frames <= 0:
         raise ValueError(f"FreeMan video has no frames: {path}")
-    return frames
+    return frames, fps
 
 
 def _subset_lists_root(shared_root: Path, subset_root: Path) -> Path:
@@ -222,9 +220,28 @@ def load_subject_sessions(
                 keypoints2d_path,
                 keypoints3d_path,
             )
-            counts = {
-                view: _video_metadata(path, fps)
+            video_metadata = {
+                view: _video_metadata(path)
                 for view, path in video_paths.items()
+            }
+            media_fps_values = np.asarray(
+                [metadata[1] for metadata in video_metadata.values()],
+                dtype=np.float64,
+            )
+            if not np.allclose(
+                media_fps_values,
+                media_fps_values[0],
+                rtol=0.0,
+                atol=0.05,
+            ):
+                raise ValueError(
+                    f"FreeMan session views have inconsistent FPS: "
+                    f"{session_id} {dict(zip(video_metadata, media_fps_values))}"
+                )
+            media_fps = float(np.mean(media_fps_values))
+            counts = {
+                view: metadata[0]
+                for view, metadata in video_metadata.items()
             }
             counts["keypoints2d"] = int(keypoints2d.shape[1])
             counts["keypoints3d"] = int(keypoints3d.shape[0])
@@ -238,7 +255,7 @@ def load_subject_sessions(
                 FreeManSession(
                     session_id=session_id,
                     subject_id=subject_id,
-                    fps=fps,
+                    fps=media_fps,
                     split=membership.get(session_id, "unassigned"),
                     scenario=None,
                     action=None,

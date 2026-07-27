@@ -39,7 +39,7 @@ _METRIC_COLUMNS = (
 class SessionMetrics:
     subject_id: int
     session_id: str
-    fps: int
+    fps: float
     split: str
     scenario: str | None
     action: str | None

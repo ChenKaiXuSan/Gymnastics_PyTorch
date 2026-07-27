@@ -114,7 +114,7 @@ class FreeManSession:
 
     session_id: str
     subject_id: int
-    fps: int
+    fps: float
     split: str
     scenario: str | None
     action: str | None
@@ -130,9 +130,10 @@ class FreeManSession:
             not self.session_id
             or self.subject_id < 1
             or self.subject_id > 40
-            or self.fps not in {30, 60}
+            or not np.isfinite(self.fps)
+            or self.fps <= 0
         ):
-            raise ValueError("session ID, subject 1..40, and FPS 30/60 are required")
+            raise ValueError("session ID, subject 1..40, and positive FPS are required")
         videos = _path_mapping(self.video_paths)
         cameras = MappingProxyType(dict(self.cameras))
         if len(videos) < 2 or set(videos) != set(cameras):
@@ -155,6 +156,7 @@ class FreeManSession:
         object.__setattr__(self, "cameras", cameras)
         object.__setattr__(self, "keypoints2d_path", Path(self.keypoints2d_path).resolve())
         object.__setattr__(self, "keypoints3d_path", Path(self.keypoints3d_path).resolve())
+        object.__setattr__(self, "fps", float(self.fps))
         object.__setattr__(self, "frame_ids", _readonly_array(frame_ids))
         object.__setattr__(
             self,
@@ -198,7 +200,7 @@ class ReferenceSequence:
 
     session_id: str
     subject_id: int
-    fps: int
+    fps: float
     split: str
     scenario: str | None
     action: str | None
@@ -221,7 +223,8 @@ class ReferenceSequence:
         if (
             self.subject_id < 1
             or self.subject_id > 40
-            or self.fps not in {30, 60}
+            or not np.isfinite(self.fps)
+            or self.fps <= 0
             or not self.split
             or not np.isfinite(self.reference_scale_to_m)
             or self.reference_scale_to_m <= 0
@@ -231,6 +234,7 @@ class ReferenceSequence:
         object.__setattr__(self, "valid", _readonly_array(valid))
         object.__setattr__(self, "frame_ids", _readonly_array(frame_ids))
         object.__setattr__(self, "joint_names", tuple(self.joint_names))
+        object.__setattr__(self, "fps", float(self.fps))
 
 
 @dataclass(frozen=True)
@@ -305,7 +309,7 @@ class InferenceIdentity:
 
     session_id: str
     subject_id: int
-    fps: int
+    fps: float
     view_id: str
     source_video_sha256: str
     source_frame_count: int
@@ -319,12 +323,14 @@ class InferenceIdentity:
             or not self.view_id
             or self.subject_id < 1
             or self.subject_id > 40
-            or self.fps not in {30, 60}
+            or not np.isfinite(self.fps)
+            or self.fps <= 0
             or self.source_frame_count < 1
             or self.frame_stride < 1
             or not self.checkpoint_id
         ):
             raise ValueError("invalid SAM3D inference identity")
+        object.__setattr__(self, "fps", float(self.fps))
         for name, digest in (
             ("source_video_sha256", self.source_video_sha256),
             ("sam3d_config_sha256", self.sam3d_config_sha256),

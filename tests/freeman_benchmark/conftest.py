@@ -26,8 +26,19 @@ class FreeManFixture:
             / f"{view}.mp4"
         )
 
-    def rewrite_video(self, fps: int, view: str, frames: int) -> None:
-        _write_video(self.video_path(fps, view), fps=fps, frames=frames)
+    def rewrite_video(
+        self,
+        fps: int,
+        view: str,
+        frames: int,
+        *,
+        media_fps: int | None = None,
+    ) -> None:
+        _write_video(
+            self.video_path(fps, view),
+            fps=media_fps or fps,
+            frames=frames,
+        )
 
 
 def _write_video(path: Path, *, fps: int, frames: int) -> None:

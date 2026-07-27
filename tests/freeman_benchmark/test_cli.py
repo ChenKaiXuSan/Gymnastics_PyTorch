@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+import gymnastics.benchmarks.freeman.cli as freeman_cli
 from gymnastics.benchmarks.freeman.cli import (
+    DefaultStageOperations,
     StageOperations,
     main,
     reset_forced_stage,
@@ -142,6 +145,93 @@ def test_run_subjects_preserves_failed_workspace_and_records_error(
         "error_type": "RuntimeError",
         "error_message": "broken inference",
     }
+
+
+def test_run_resumes_after_completed_dataset_preparation(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "output"
+    work = tmp_path / "work"
+    shared = work / "shared"
+    for relative in (
+        "30FPS/cameras",
+        "30FPS/keypoints2d",
+        "30FPS/keypoints3d",
+    ):
+        (shared / relative).mkdir(parents=True, exist_ok=True)
+    (shared / "session_list.txt").write_text("session_subj01\n", encoding="utf-8")
+    (shared / "30FPS/cameras/session_subj01.json").write_text(
+        "[]",
+        encoding="utf-8",
+    )
+    (shared / "30FPS/keypoints2d/session_subj01.npy").write_bytes(b"2d")
+    (shared / "30FPS/keypoints3d/session_subj01.npy").write_bytes(b"3d")
+    (shared / "extraction_manifest.json").write_text("{}", encoding="utf-8")
+    output.mkdir()
+    state_path = output / "run_state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "stages": {
+                    "inspect": {"status": "complete"},
+                    "download": {"status": "complete"},
+                    "shared_annotations": {"status": "complete"},
+                },
+                "subjects": {"1": {"status": "failed"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    results_json = output / "results.json"
+    markdown = output / "report.md"
+    results_json.write_text("{}", encoding="utf-8")
+    markdown.write_text("report", encoding="utf-8")
+    calls: list[str] = []
+
+    class ResumeOperations(DefaultStageOperations):
+        def inspect(self, config, *, dry_run=False):
+            calls.append("inspect")
+            return SimpleNamespace(
+                required_bytes=0,
+                entries=(),
+                archive_root=tmp_path / "archives",
+            )
+
+        def report(self, config):
+            calls.append("report")
+            return SimpleNamespace(
+                results_json=results_json,
+                markdown=markdown,
+            )
+
+    monkeypatch.setattr(
+        freeman_cli,
+        "validate_downloads",
+        lambda *args, **kwargs: calls.append("validate"),
+    )
+    monkeypatch.setattr(
+        freeman_cli,
+        "extract_shared_annotations",
+        lambda *args, **kwargs: calls.append("extract"),
+    )
+    monkeypatch.setattr(
+        freeman_cli,
+        "run_subjects",
+        lambda *args, **kwargs: calls.append("subjects"),
+    )
+    config = {
+        "paths": {
+            "archive_root": tmp_path / "archives",
+            "work_root": work,
+            "output_root": output,
+        },
+        "dataset": {"subjects": [1], "frame_stride": 1},
+    }
+
+    ResumeOperations().run(config)
+
+    assert calls == ["subjects", "report"]
 
 
 def test_force_infer_invalidates_only_selected_subject_and_downstream(

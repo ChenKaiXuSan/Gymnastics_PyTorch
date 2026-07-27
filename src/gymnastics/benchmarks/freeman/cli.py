@@ -20,6 +20,7 @@ import pandas as pd
 
 from .dataset import load_session_reference, load_subject_sessions
 from .download import (
+    _shared_tree_valid,
     cleanup_subject_workspace,
     download_release,
     extract_shared_annotations,
@@ -779,39 +780,51 @@ class DefaultStageOperations(StageOperations):
                 for subject in config["dataset"]["subjects"]:
                     state["subjects"].pop(str(int(subject)), None)
         _atomic_json(state_path, state)
-        state["stages"]["inspect"] = {"status": "running"}
-        _atomic_json(state_path, state)
-        try:
-            report = self.inspect(config, dry_run=dry_run)
-        except Exception as error:
-            state["stages"]["inspect"] = {
-                "status": "failed",
-                "error_type": type(error).__name__,
-                "error_message": str(error),
-            }
-            _atomic_json(state_path, state)
-            raise
-        state["stages"]["inspect"] = {"status": "complete"}
-        _atomic_json(state_path, state)
-        if dry_run:
-            return report
-        state["stages"]["download"] = {"status": "running"}
-        _atomic_json(state_path, state)
-        if report.required_bytes:
-            self.download(config)
-        else:
-            validate_downloads(report.entries, report.archive_root)
-        state["stages"]["download"] = {"status": "complete"}
-        _atomic_json(state_path, state)
-        state["stages"]["shared_annotations"] = {"status": "running"}
-        _atomic_json(state_path, state)
-        extract_shared_annotations(
-            report.entries,
-            report.archive_root,
-            Path(config["paths"]["work_root"]),
+        shared_root = Path(config["paths"]["work_root"]) / "shared"
+        prepared = (
+            not dry_run
+            and force_stage != "inspect"
+            and all(
+                state["stages"].get(stage, {}).get("status") == "complete"
+                for stage in ("inspect", "download", "shared_annotations")
+            )
+            and (shared_root / "extraction_manifest.json").is_file()
+            and _shared_tree_valid(shared_root)
         )
-        state["stages"]["shared_annotations"] = {"status": "complete"}
-        _atomic_json(state_path, state)
+        if not prepared:
+            state["stages"]["inspect"] = {"status": "running"}
+            _atomic_json(state_path, state)
+            try:
+                report = self.inspect(config, dry_run=dry_run)
+            except Exception as error:
+                state["stages"]["inspect"] = {
+                    "status": "failed",
+                    "error_type": type(error).__name__,
+                    "error_message": str(error),
+                }
+                _atomic_json(state_path, state)
+                raise
+            state["stages"]["inspect"] = {"status": "complete"}
+            _atomic_json(state_path, state)
+            if dry_run:
+                return report
+            state["stages"]["download"] = {"status": "running"}
+            _atomic_json(state_path, state)
+            if report.required_bytes:
+                self.download(config)
+            else:
+                validate_downloads(report.entries, report.archive_root)
+            state["stages"]["download"] = {"status": "complete"}
+            _atomic_json(state_path, state)
+            state["stages"]["shared_annotations"] = {"status": "running"}
+            _atomic_json(state_path, state)
+            extract_shared_annotations(
+                report.entries,
+                report.archive_root,
+                Path(config["paths"]["work_root"]),
+            )
+            state["stages"]["shared_annotations"] = {"status": "complete"}
+            _atomic_json(state_path, state)
         run_subjects(
             config["dataset"]["subjects"],
             state_path=state_path,

@@ -432,6 +432,39 @@ def test_extract_subject_discovers_nested_z_volumes(
     ).is_file()
 
 
+def test_extract_subject_publishes_official_flat_archive_under_30fps(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    archive_root = tmp_path / "archives"
+    video_root = archive_root / "videos"
+    video_root.mkdir(parents=True)
+    (video_root / "subj01.zip").write_bytes(
+        b"PK\x03\x04fixturePK\x05\x06"
+    )
+    monkeypatch.setattr(shutil, "which", lambda _: "/opt/7z")
+    member = "session_subj01/vframes/c01.mp4"
+
+    class FlatSubjectRunner(FakeSevenZip):
+        def __call__(self, command, **kwargs):
+            if command[1] == "t":
+                return subprocess.CompletedProcess(
+                    command, 0, stdout="", stderr=""
+                )
+            return super().__call__(command, **kwargs)
+
+    subject_root = extract_subject(
+        1,
+        archive_root,
+        tmp_path / "work",
+        runner=FlatSubjectRunner(listing=(member,)),
+    )
+
+    assert (
+        subject_root / "30FPS/videos" / member
+    ).is_file()
+
+
 def test_extract_rejects_archive_member_path_traversal(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -616,6 +649,89 @@ def test_extract_shared_annotations_publishes_only_consumed_archives(
     assert (shared_root / "session_list.txt").is_file()
     assert not (shared_root / "motions").exists()
     assert not (shared_root / "bbox2d").exists()
+
+
+def test_extract_shared_annotations_separates_official_flat_archives(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    archive_root = tmp_path / "archives"
+    work_root = tmp_path / "work"
+    archive_root.mkdir()
+    session = "20220929_461ac1f301_subj01"
+    members = {
+        "cameras.zip": (f"{session}.json",),
+        "keypoints2d.zip": (f"{session}.npy",),
+        "keypoints3d.zip": (f"{session}.npy",),
+    }
+    payloads = {
+        "cameras.zip": b"camera",
+        "keypoints2d.zip": b"keypoints2d",
+        "keypoints3d.zip": b"keypoints3d",
+    }
+    entries = []
+    for name in members:
+        archive = archive_root / name
+        archive.write_bytes(b"PK\x03\x04fixturePK\x05\x06")
+        entries.append(ArchiveEntry(name, archive.stat().st_size, None))
+    for name, text in (
+        ("session_list.txt", f"{session}\n"),
+        ("train.txt", f"{session}\n"),
+        ("valid.txt", ""),
+        ("test.txt", ""),
+    ):
+        path = archive_root / name
+        path.write_text(text, encoding="utf-8")
+        entries.append(ArchiveEntry(name, max(path.stat().st_size, 1), None))
+    monkeypatch.setattr(shutil, "which", lambda _: "/opt/7z")
+
+    class FlatRunner:
+        def __call__(self, command, **kwargs):
+            operation = command[1]
+            archive = (
+                Path(command[-1])
+                if operation in {"t", "l"}
+                else Path(command[2])
+            )
+            if operation == "t":
+                return subprocess.CompletedProcess(
+                    command, 0, stdout="", stderr=""
+                )
+            if operation == "l":
+                output = "\n".join(
+                    f"Path = {member}" for member in members[archive.name]
+                )
+                return subprocess.CompletedProcess(
+                    command, 0, stdout=output, stderr=""
+                )
+            output_arg = next(
+                item for item in command if item.startswith("-o")
+            )
+            output_root = Path(output_arg[2:])
+            for member in members[archive.name]:
+                target = output_root / member
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(payloads[archive.name])
+            return subprocess.CompletedProcess(
+                command, 0, stdout="", stderr=""
+            )
+
+    shared = extract_shared_annotations(
+        entries,
+        archive_root,
+        work_root,
+        runner=FlatRunner(),
+    )
+
+    assert (
+        shared / "30FPS/cameras" / f"{session}.json"
+    ).read_bytes() == b"camera"
+    assert (
+        shared / "30FPS/keypoints2d" / f"{session}.npy"
+    ).read_bytes() == b"keypoints2d"
+    assert (
+        shared / "30FPS/keypoints3d" / f"{session}.npy"
+    ).read_bytes() == b"keypoints3d"
 
 
 def test_extract_shared_annotations_keeps_same_named_fps_archives(
