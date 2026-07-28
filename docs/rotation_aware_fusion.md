@@ -207,8 +207,8 @@ them.
 A7-A9 are an additive ladder over A6 that targets trunk axial rotation
 (体干回旋 / twist), which coordinate-space averaging tends to shrink. They are
 opt-in: A6 behaviour is unchanged unless the corresponding loss weight or the
-twist residual is enabled. Scored on 137 persons, similarity-aligned, against
-the regenerated triangulated GT:
+twist residual is enabled. The following 137-person aggregate is descriptive
+because it includes training and validation people:
 
 | metric | A6 | A7 (改法4) | A8 (改法2) | A9 (改法3) |
 | --- | ---: | ---: | ---: | ---: |
@@ -217,10 +217,11 @@ the regenerated triangulated GT:
 | peak angular-velocity retention (1.0=ideal) | 1.00 | 1.087 | 1.911 | 2.352 |
 | joint jerk (lower=smoother) | 5480 | 4397 | 7150 | 5822 |
 
-- **A7 (改法4) is the recommended twist improvement and the main line.** Anchoring
-  the ROM target to the wider per-view range recovers +5.4% ROM retention (p=7e-7)
-  and −20% jerk (p=3e-24) at negligible MPJPE cost. Its value is on the twist axis,
-  not MPJPE — evaluate/report this on trunk-twist fidelity, not per-frame position.
+- **A6 remains the paper mainline.** A7's all-person aggregate recovers +5.4%
+  ROM retention and lowers jerk, but this does not reproduce on the 14-person
+  held-out test split (A7 ROM retention 0.948 versus 1.000 for A6; MPJPE
+  61.31 versus 60.78 mm). A7 is therefore a follow-up candidate rather than a
+  recommended improvement.
 - **A8 (改法2) and A9 (改法3) are negative controls, not shipped.** A free twist
   residual (A8) over-rotates (MPJPE +49%, peak ω 1.91×); constraining its rate to
   the per-view observed envelope (A9) fails to help — the envelope is noisier and

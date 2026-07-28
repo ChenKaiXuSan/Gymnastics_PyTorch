@@ -80,6 +80,18 @@ conda run -n gymnastic gymnastics calibrate
 
 Configuration is grouped by domain under `configs/`.
 
+## Results
+
+The current evidence summary, including cohort definitions, headline fusion and
+classification results, failure coverage, and unfinished experiments, is in
+[docs/results_summary.md](docs/results_summary.md).
+
+Regenerate the detailed local tables from the saved per-person/fold artefacts:
+
+```bash
+conda run -n gymnastic python -m gymnastics.analysis.project_results
+```
+
 ## Data and local assets
 
 The external dataset defaults to `/home/data/xchen/gymnastics` and can be
@@ -137,6 +149,7 @@ conda run -n gymnastic python -m compileall -q src/gymnastics
 Additional workflow documentation:
 
 - [Current pipeline](docs/current_pipeline.md)
+- [Results summary](docs/results_summary.md)
 - [Runbook](docs/runbook.md)
 - [Module map](docs/modules.md)
 - [Rotation-aware fusion](docs/rotation_aware_fusion.md)

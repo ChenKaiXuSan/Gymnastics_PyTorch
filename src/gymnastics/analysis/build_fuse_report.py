@@ -22,6 +22,8 @@ from typing import Callable, Dict, List, Tuple
 import numpy as np
 from scipy.stats import wilcoxon
 
+from gymnastics.analysis.project_results import paired_comparisons
+
 FUSE_DIR = Path("local/runs/fuse_experiments")
 BUNDLE = FUSE_DIR / "analysis"  # all derived analysis, consolidated in one place
 CMP_DIR = Path("local/runs/analysis/fused_vs_triangulated")
@@ -195,20 +197,38 @@ def main() -> None:
     leakfree = [m for m in ranked if m not in LEAKY]
     best = leakfree[0]
 
-    # Paired Wilcoxon of every method against the best leakage-free method.
+    # Paired comparison of every method against the best leakage-free method.
+    comparison_rows = [
+        {"person_id": person, "method": method, "mpjpe": value}
+        for method, values in methods.items()
+        for person, value in zip(persons, values, strict=True)
+    ]
+    comparison_by_method = {
+        row["method"]: row
+        for row in paired_comparisons(
+            comparison_rows,
+            reference_method=best,
+            metric="mpjpe",
+            seed=0,
+            bootstrap_samples=10_000,
+        )
+    }
     sig_rows = []
     for m in ranked:
         if m == best:
             continue
         diff = methods[m] - methods[best]
-        p = wilcoxon(methods[m], methods[best]).pvalue
+        comparison = comparison_by_method[m]
         sig_rows.append(
             {
                 "method": m,
                 "mean_mpjpe_mm": methods[m].mean() * 1000,
                 "delta_vs_best_mm": diff.mean() * 1000,
+                "delta_ci_low_mm": float(comparison["ci_low"]) * 1000,
+                "delta_ci_high_mm": float(comparison["ci_high"]) * 1000,
                 "worse_on_pct": float((diff > 0).mean() * 100),
-                "wilcoxon_p": p,
+                "wilcoxon_p": float(comparison["wilcoxon_p"]),
+                "holm_p": float(comparison["holm_p"]),
                 "leaky": m in LEAKY,
             }
         )
@@ -262,17 +282,21 @@ def main() -> None:
     A("## 1. Method ranking (vs triangulated GT, similarity-aligned)")
     A("")
     A(f"Baseline for the test is the best leakage-free method, `{best}` "
-      f"({methods[best].mean()*1000:.2f} mm). Paired Wilcoxon over {n_persons} persons.")
+      f"({methods[best].mean()*1000:.2f} mm). Paired Wilcoxon over {n_persons} "
+      "persons with Holm family-wise correction and paired bootstrap confidence "
+      "intervals for the mean difference.")
     A("")
-    A("| rank | method | mean mm | % body | Δ vs best mm | worse on | p | note |")
+    A("| rank | method | mean mm | % body | Δ vs best mm [95% CI] | worse on | Holm p | note |")
     A("|---:|---|---:|---:|---:|---:|---:|---|")
     A(f"| — | `{best}` | {methods[best].mean()*1000:.2f} | "
       f"{body_pct.get(best, float('nan')):.2f} | — | — | — | recommended |")
     for i, r in enumerate(sig_rows, start=1):
         note = "**leakage — excluded**" if r["leaky"] else ""
         A(f"| {i} | `{r['method']}` | {r['mean_mpjpe_mm']:.2f} | "
-          f"{body_pct.get(r['method'], float('nan')):.2f} | {r['delta_vs_best_mm']:+.2f} | "
-          f"{r['worse_on_pct']:.0f}% | {fmt_p(r['wilcoxon_p'])} | {note} |")
+          f"{body_pct.get(r['method'], float('nan')):.2f} | "
+          f"{r['delta_vs_best_mm']:+.2f} "
+          f"[{r['delta_ci_low_mm']:+.2f}, {r['delta_ci_high_mm']:+.2f}] | "
+          f"{r['worse_on_pct']:.0f}% | {fmt_p(r['holm_p'])} | {note} |")
     A("")
     leaky_note = next((r for r in sig_rows if r["leaky"]), None)
     if leaky_note:

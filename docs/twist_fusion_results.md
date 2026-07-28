@@ -22,6 +22,14 @@ regenerated triangulated GT with per-sequence similarity alignment.
 
 ## Results (137 persons, similarity-aligned)
 
+> **Evidence-status update (2026-07-26):** this 137-person table includes the
+> 96 training and 27 validation people and is therefore descriptive, not a
+> held-out generalization result. On the 14-person test split, A6/A7/A8/A9 MPJPE
+> is 60.78/61.31/92.02/94.11 mm; A7 ROM retention is 0.948 (A6: 1.000) and
+> peak-angular-velocity retention is 0.821 (A6: 1.000). Thus the all-person A7
+> ROM gain does not reproduce on test, and A7 is not selected over A6 for the
+> paper mainline.
+
 | metric | A6 | A7 (+改法4) | A8 (+改法2) | A9 (+改法3) |
 |---|---:|---:|---:|---:|
 | **MPJPE (mm)** | **65.7** | 66.3 | 97.9 | 99.0 |
@@ -50,12 +58,12 @@ Paired Wilcoxon, **A9 vs A8** (did 改法3 tame A8's overshoot? No):
 
 ## Findings
 
-1. **改法4 (A7) works — a clean, modest win.** Anchoring the ROM target to the
+1. **改法4 (A7) is promising only in the descriptive all-person analysis.** Anchoring the ROM target to the
    wider per-view range (instead of the coordinate average, which shrinks the
    twist) recovers +5.4% ROM retention and makes motion 20% smoother, at
-   essentially no MPJPE cost. This confirms the core hypothesis: coordinate-space
-   averaging shrinks the trunk twist, and the peak anchor un-shrinks it. Usable
-   as-is with the existing model.
+   essentially no all-person MPJPE cost. The held-out test split does not
+   reproduce the ROM gain, so this supports a follow-up hypothesis rather than a
+   deployable improvement.
 
 2. **改法2 alone (A8) over-rotates.** The twist residual pushes ROM further up
    but massively overshoots — peak angular velocity nearly doubles (unphysical),
@@ -109,8 +117,9 @@ real, not an artifact of the earlier instability.
 
 ## Recommendation
 
-- Ship **A7 (改法4)** as the twist-fidelity improvement: clean, significant,
-  no downside. It remains the best of the ladder.
+- Keep **A6** as the paper mainline. Treat A7 (改法4) as a follow-up candidate:
+  its descriptive all-person gain requires repeated-seed and held-out
+  replication before deployment.
 - Treat **A8 (改法2)** as evidence that a free twist residual over-rotates and
   costs MPJPE/rigidity — do not use it standalone.
 - **Drop 改法3 in its current form.** Bounding to the per-view rate envelope does
