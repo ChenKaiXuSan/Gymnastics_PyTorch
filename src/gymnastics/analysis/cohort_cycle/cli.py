@@ -19,6 +19,7 @@ from .folds import (
 )
 from .features import extract_publication_features
 from .oof import OOFRun, collect_oof_cycles, publish_oof_cycles
+from .statistics import analyze_feature_artifacts
 
 
 STAGES = ("folds", "audit", "features", "analyze", "assets")
@@ -46,6 +47,12 @@ def make_parser() -> argparse.ArgumentParser:
             child.add_argument("--pilot", action="store_true")
             child.add_argument("--publication-root")
             child.add_argument("--output-root")
+        if stage == "analyze":
+            child.add_argument("--pilot", action="store_true")
+            child.add_argument("--feature-root")
+            child.add_argument("--output-root")
+            child.add_argument("--permutations", type=int)
+            child.add_argument("--no-random-slope", action="store_true")
     return parser
 
 
@@ -59,6 +66,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_audit(args, config)
     if args.command == "features":
         return _cmd_features(args, config)
+    if args.command == "analyze":
+        return _cmd_analyze(args, config)
     raise NotImplementedError(f"stage is not implemented yet: {args.command}")
 
 
@@ -238,6 +247,54 @@ def _cmd_features(
         minimum_person_cycles=int(
             quality.get("minimum_person_cycles", 4)
         ),
+    )
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0
+
+
+def _cmd_analyze(
+    args: argparse.Namespace,
+    config: Mapping[str, Any],
+) -> int:
+    paths = _mapping(config, "paths")
+    statistics = _mapping(config, "statistics")
+    cohort_output = Path(_string(paths, "cohort_output"))
+    feature_root = (
+        Path(args.feature_root)
+        if args.feature_root
+        else (
+            cohort_output / "pilot" / "features_seed0_f00"
+            if args.pilot
+            else cohort_output / "analysis" / "features"
+        )
+    )
+    output_root = (
+        Path(args.output_root)
+        if args.output_root
+        else (
+            cohort_output / "pilot" / "statistics_seed0_f00"
+            if args.pilot
+            else cohort_output / "analysis" / "statistics"
+        )
+    )
+    configured_permutations = int(statistics.get("permutations", 10000))
+    permutations = (
+        args.permutations
+        if args.permutations is not None
+        else min(configured_permutations, 499)
+        if args.pilot
+        else configured_permutations
+    )
+    raw_log = statistics.get("log_transform", [])
+    if not isinstance(raw_log, list):
+        raise ValueError("statistics.log_transform must be a list")
+    summary = analyze_feature_artifacts(
+        feature_root,
+        output_root,
+        permutations=permutations,
+        seed=int(statistics.get("permutation_seed", 20260728)),
+        try_random_slope=not args.no_random_slope,
+        log_outcomes={str(value) for value in raw_log},
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
