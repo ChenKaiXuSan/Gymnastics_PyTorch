@@ -10,7 +10,7 @@ paths:
 
 data:
   fps: 60.0
-  cache_dir: ${paths.output_root}/cache
+  cache_dir: ${oc.env:GYMNASTICS_SHARED_RUN_ROOT,/home/workspace/kaixu/code/Gymnastics_PyTorch/local/runs}/fuse_rotation_aware/cache
 
 window:
   length: 128

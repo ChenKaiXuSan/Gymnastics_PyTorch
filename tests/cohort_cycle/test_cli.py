@@ -10,6 +10,10 @@ import pandas as pd
 import yaml
 
 from gymnastics.analysis.cohort_cycle.cli import main as cohort_cycle_main
+from gymnastics.fusion.rotation_aware.cli import (
+    _paths as rotation_paths,
+    load_config as load_rotation_config,
+)
 
 from .test_features import _upright_pose
 from .test_oof import _make_run
@@ -43,6 +47,21 @@ def test_cohort_cycle_help_lists_pipeline_stages():
     assert result.returncode == 0, result.stderr
     for stage in ("folds", "audit", "features", "analyze", "assets"):
         assert stage in result.stdout
+
+
+def test_a6_crossfit_config_resolves_shared_cache_environment(
+    tmp_path: Path,
+    monkeypatch,
+):
+    """A nested unresolved interpolation makes every cross-fit run miss cache."""
+    monkeypatch.setenv("GYMNASTICS_SHARED_RUN_ROOT", str(tmp_path))
+    config = load_rotation_config(
+        PROJECT_ROOT / "configs/analysis/cohort_cycle_a6_train.yaml"
+    )
+
+    paths = rotation_paths(config, None)
+
+    assert paths["cache"] == tmp_path / "fuse_rotation_aware" / "cache"
 
 
 def test_folds_stage_writes_crossfit_manifest_from_config(tmp_path: Path):
