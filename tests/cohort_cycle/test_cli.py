@@ -9,6 +9,8 @@ import yaml
 
 from gymnastics.analysis.cohort_cycle.cli import main as cohort_cycle_main
 
+from .test_oof import _make_run
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -146,3 +148,77 @@ def test_folds_stage_writes_crossfit_manifest_from_config(tmp_path: Path):
         (output / "crossfit_manifest.json").read_text(encoding="utf-8")
     )
     assert manifest["cohort_counts"] == {"elderly": 80, "student": 57}
+
+
+def test_audit_stage_check_only_validates_configured_test_run(
+    tmp_path: Path,
+    capsys,
+):
+    """The public audit command must execute provenance checks, not just parse."""
+    run = _make_run(
+        tmp_path,
+        fold=0,
+        person_id="1",
+        run_id="run0",
+    )
+    (tmp_path / "run_registry.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "primary_seed": 0,
+                "runs": {
+                    "00": {
+                        "outer_fold": 0,
+                        "run_id": run.run_id,
+                        "seed": 0,
+                        "split_file": run.split_manifest.name,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "crossfit_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "cohorts": {"1": "elderly"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = tmp_path / "audit.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "paths": {
+                    "fold_output": str(tmp_path),
+                    "cohort_output": str(tmp_path / "cohort"),
+                    "rotation_aware_root": str(tmp_path),
+                },
+                "crossfit": {
+                    "expected_people": 1,
+                    "expected_cycles": 1,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        cohort_cycle_main(
+            [
+                "audit",
+                "--config",
+                str(config),
+                "--fold",
+                "0",
+                "--check-only",
+            ]
+        )
+        == 0
+    )
+    audit = json.loads(capsys.readouterr().out)
+    assert audit["valid"] is True
+    assert audit["people"] == 1
+    assert audit["cycles"] == 1
