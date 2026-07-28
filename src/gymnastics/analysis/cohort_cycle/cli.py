@@ -19,6 +19,7 @@ from .folds import (
 )
 from .features import extract_publication_features
 from .oof import OOFRun, collect_oof_cycles, publish_oof_cycles
+from .report import render_report
 from .statistics import analyze_feature_artifacts
 
 
@@ -53,6 +54,11 @@ def make_parser() -> argparse.ArgumentParser:
             child.add_argument("--output-root")
             child.add_argument("--permutations", type=int)
             child.add_argument("--no-random-slope", action="store_true")
+        if stage == "assets":
+            child.add_argument("--pilot", action="store_true")
+            child.add_argument("--feature-root")
+            child.add_argument("--statistics-root")
+            child.add_argument("--output-root")
     return parser
 
 
@@ -68,6 +74,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_features(args, config)
     if args.command == "analyze":
         return _cmd_analyze(args, config)
+    if args.command == "assets":
+        return _cmd_assets(args, config)
     raise NotImplementedError(f"stage is not implemented yet: {args.command}")
 
 
@@ -296,6 +304,44 @@ def _cmd_analyze(
         try_random_slope=not args.no_random_slope,
         log_outcomes={str(value) for value in raw_log},
     )
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0
+
+
+def _cmd_assets(
+    args: argparse.Namespace,
+    config: Mapping[str, Any],
+) -> int:
+    paths = _mapping(config, "paths")
+    cohort_output = Path(_string(paths, "cohort_output"))
+    feature_root = (
+        Path(args.feature_root)
+        if args.feature_root
+        else (
+            cohort_output / "pilot" / "features_seed0_f00"
+            if args.pilot
+            else cohort_output / "analysis" / "features"
+        )
+    )
+    statistics_root = (
+        Path(args.statistics_root)
+        if args.statistics_root
+        else (
+            cohort_output / "pilot" / "statistics_seed0_f00_v2"
+            if args.pilot
+            else cohort_output / "analysis" / "statistics"
+        )
+    )
+    output_root = (
+        Path(args.output_root)
+        if args.output_root
+        else (
+            cohort_output / "pilot" / "report_seed0_f00"
+            if args.pilot
+            else cohort_output / "analysis" / "report"
+        )
+    )
+    summary = render_report(feature_root, statistics_root, output_root)
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
 

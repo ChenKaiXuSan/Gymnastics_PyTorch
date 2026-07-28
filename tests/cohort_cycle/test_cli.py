@@ -13,6 +13,7 @@ from gymnastics.analysis.cohort_cycle.cli import main as cohort_cycle_main
 
 from .test_features import _upright_pose
 from .test_oof import _make_run
+from .test_report import _write_finalized_inputs
 from .test_statistics import _write_synthetic_feature_artifacts
 
 
@@ -338,3 +339,34 @@ def test_analyze_stage_writes_corrected_core_results(tmp_path: Path):
     )
     core = pd.read_csv(output / "core_mixed_models.csv")
     assert len(core) == 8
+
+
+def test_assets_stage_renders_an_explicit_finalized_analysis(tmp_path: Path):
+    """The public assets stage must preserve the finalized analysis boundary."""
+    features, statistics = _write_finalized_inputs(tmp_path)
+    output = tmp_path / "report"
+    config = tmp_path / "assets.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {"paths": {"cohort_output": str(tmp_path / "cohort")}}
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        cohort_cycle_main(
+            [
+                "assets",
+                "--config",
+                str(config),
+                "--feature-root",
+                str(features),
+                "--statistics-root",
+                str(statistics),
+                "--output-root",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    assert (output / "cohort_cycle_analysis.pdf").is_file()
