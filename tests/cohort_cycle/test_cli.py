@@ -5,10 +5,12 @@ import os
 import subprocess
 import sys
 
+import numpy as np
 import yaml
 
 from gymnastics.analysis.cohort_cycle.cli import main as cohort_cycle_main
 
+from .test_features import _upright_pose
 from .test_oof import _make_run
 
 
@@ -222,3 +224,76 @@ def test_audit_stage_check_only_validates_configured_test_run(
     assert audit["valid"] is True
     assert audit["people"] == 1
     assert audit["cycles"] == 1
+
+
+def test_features_stage_extracts_an_explicit_publication(tmp_path: Path):
+    """The public features command must materialize tidy analysis tables."""
+    publication = tmp_path / "oof"
+    provenance_rows = []
+    timestamps = np.linspace(0.0, 2.0, 101)
+    theta = np.sin(np.pi * timestamps)
+    for cycle_index in range(4):
+        cycle_id = f"cycle_{cycle_index:03d}"
+        cycle_root = publication / "person_1" / cycle_id
+        cycle_root.mkdir(parents=True)
+        np.savez_compressed(
+            cycle_root / "prediction.npz",
+            kpts_body=_upright_pose(101),
+            theta_fused_rad=theta,
+            omega_fused_rad_s=np.gradient(theta, timestamps),
+            timestamps=timestamps,
+            frame_valid=np.ones(101, dtype=bool),
+            joint_valid=np.ones((101, 70), dtype=bool),
+        )
+        provenance_rows.append(
+            {
+                "person_id": "1",
+                "cohort": "elderly",
+                "outer_fold": "0",
+                "cycle_id": cycle_id,
+                "prediction_path": (
+                    f"person_1/{cycle_id}/prediction.npz"
+                ),
+            }
+        )
+    with (publication / "oof_provenance.csv").open(
+        "w",
+        encoding="utf-8",
+        newline="",
+    ) as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=list(provenance_rows[0]),
+        )
+        writer.writeheader()
+        writer.writerows(provenance_rows)
+    output = tmp_path / "features"
+    config = tmp_path / "features.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "paths": {"cohort_output": str(tmp_path / "cohort")},
+                "quality_control": {
+                    "phase_points": 101,
+                    "minimum_person_cycles": 4,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        cohort_cycle_main(
+            [
+                "features",
+                "--config",
+                str(config),
+                "--publication-root",
+                str(publication),
+                "--output-root",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    assert (output / "cycle_features.csv").is_file()

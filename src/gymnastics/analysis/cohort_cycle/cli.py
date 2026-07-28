@@ -17,6 +17,7 @@ from .folds import (
     load_fold_split,
     write_crossfit_artifacts,
 )
+from .features import extract_publication_features
 from .oof import OOFRun, collect_oof_cycles, publish_oof_cycles
 
 
@@ -40,6 +41,11 @@ def make_parser() -> argparse.ArgumentParser:
             child.add_argument("--publication-root")
             child.add_argument("--strict", action="store_true")
             child.add_argument("--write-final-audit", action="store_true")
+        if stage == "features":
+            child.add_argument("--person", action="append")
+            child.add_argument("--pilot", action="store_true")
+            child.add_argument("--publication-root")
+            child.add_argument("--output-root")
     return parser
 
 
@@ -51,6 +57,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_folds(config)
     if args.command == "audit":
         return _cmd_audit(args, config)
+    if args.command == "features":
+        return _cmd_features(args, config)
     raise NotImplementedError(f"stage is not implemented yet: {args.command}")
 
 
@@ -193,6 +201,46 @@ def _expected_cycle_count(runs: list[OOFRun]) -> int:
                 )
             count += len(trials)
     return count
+
+
+def _cmd_features(
+    args: argparse.Namespace,
+    config: Mapping[str, Any],
+) -> int:
+    paths = _mapping(config, "paths")
+    quality = config.get("quality_control", {})
+    if not isinstance(quality, Mapping):
+        raise ValueError("quality_control must be a mapping")
+    cohort_output = Path(_string(paths, "cohort_output"))
+    publication = (
+        Path(args.publication_root)
+        if args.publication_root
+        else (
+            cohort_output / "pilot" / "oof_seed0_f00"
+            if args.pilot
+            else cohort_output / "oof_seed0"
+        )
+    )
+    output = (
+        Path(args.output_root)
+        if args.output_root
+        else (
+            cohort_output / "pilot" / "features_seed0_f00"
+            if args.pilot
+            else cohort_output / "analysis" / "features"
+        )
+    )
+    summary = extract_publication_features(
+        publication,
+        output,
+        people=set(args.person) if args.person else None,
+        phase_points=int(quality.get("phase_points", 101)),
+        minimum_person_cycles=int(
+            quality.get("minimum_person_cycles", 4)
+        ),
+    )
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0
 
 
 def _load_json(path: Path) -> dict[str, Any]:
