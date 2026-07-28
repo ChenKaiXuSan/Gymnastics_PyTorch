@@ -76,7 +76,7 @@ The new parser exposes `folds`, `audit`, `features`, `analyze`, and `assets`. Ea
 - [ ] **Step 5: Run focused and top-level CLI tests**
 
 ```bash
-conda run -n gymnastic python -m pytest tests/cohort_cycle/test_cli.py tests/test_cli.py -q
+conda run -n gymnastic python -m pytest tests/cohort_cycle/test_cli.py tests/structure/test_cli.py -q
 ```
 
 - [ ] **Step 6: Commit**
@@ -671,7 +671,7 @@ conda run -n gymnastic python -m pytest \
   tests/rotation_aware/test_cli.py \
   tests/rotation_aware/test_dataset.py \
   tests/rotation_aware/test_inference.py \
-  tests/test_cli.py -q
+  tests/structure/test_cli.py -q
 ```
 
 - [ ] **Step 3: Run provenance and leakage audits**

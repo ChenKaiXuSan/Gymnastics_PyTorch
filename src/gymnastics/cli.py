@@ -37,6 +37,11 @@ _COMMANDS = {
     ),
     "classify": ("gymnastics.classification.train", "init_params", False),
     "analyze": ("gymnastics.analysis.main", "main", False),
+    "cohort-cycle": (
+        "gymnastics.analysis.cohort_cycle.cli",
+        "main",
+        True,
+    ),
     "calibrate": ("gymnastics.calibration.main", "main", False),
     "benchmark:freeman": (
         "gymnastics.benchmarks.freeman.cli",
@@ -64,6 +69,11 @@ def _parser() -> argparse.ArgumentParser:
             help=help_text,
             add_help=name in {"classify", "analyze", "calibrate"},
         )
+    commands.add_parser(
+        "cohort-cycle",
+        help="run out-of-fold cohort and repeated-cycle analysis",
+        add_help=False,
+    )
 
     triangulate = commands.add_parser(
         "triangulate",

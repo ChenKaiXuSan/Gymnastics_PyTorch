@@ -28,6 +28,7 @@ analysis = [
   "matplotlib",
   "plotly",
   "seaborn",
+  "statsmodels>=0.14",
 ]
 training = [
   "av",
