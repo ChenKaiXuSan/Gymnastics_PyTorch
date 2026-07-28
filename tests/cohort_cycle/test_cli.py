@@ -185,6 +185,12 @@ def test_audit_stage_check_only_validates_configured_test_run(
         person_id="1",
         run_id="run0",
     )
+    alternate = _make_run(
+        tmp_path,
+        fold=0,
+        person_id="1",
+        run_id="run_alternate",
+    )
     (tmp_path / "run_registry.json").write_text(
         json.dumps(
             {
@@ -246,6 +252,34 @@ def test_audit_stage_check_only_validates_configured_test_run(
     assert audit["valid"] is True
     assert audit["people"] == 1
     assert audit["cycles"] == 1
+
+    alternate_output = tmp_path / "alternate_oof"
+    assert (
+        cohort_cycle_main(
+            [
+                "audit",
+                "--config",
+                str(config),
+                "--fold",
+                "0",
+                "--run-id",
+                alternate.run_id,
+                "--seed",
+                "0",
+                "--publication-root",
+                str(alternate_output),
+            ]
+        )
+        == 0
+    )
+    alternate_rows = list(
+        csv.DictReader(
+            (alternate_output / "oof_provenance.csv").open(
+                encoding="utf-8"
+            )
+        )
+    )
+    assert alternate_rows[0]["run_id"] == "run_alternate"
 
 
 def test_features_stage_extracts_an_explicit_publication(tmp_path: Path):

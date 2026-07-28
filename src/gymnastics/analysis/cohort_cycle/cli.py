@@ -43,6 +43,8 @@ def make_parser() -> argparse.ArgumentParser:
             child.add_argument("--publication-root")
             child.add_argument("--strict", action="store_true")
             child.add_argument("--write-final-audit", action="store_true")
+            child.add_argument("--run-id")
+            child.add_argument("--seed", type=int)
         if stage == "features":
             child.add_argument("--person", action="append")
             child.add_argument("--pilot", action="store_true")
@@ -131,17 +133,27 @@ def _cmd_audit(
         if args.fold
         else sorted(int(key) for key in raw_runs)
     )
+    if args.run_id and len(selected_folds) != 1:
+        raise ValueError("--run-id override requires exactly one --fold")
     runs: list[OOFRun] = []
     for fold in selected_folds:
         entry = raw_runs.get(f"{fold:02d}")
         if not isinstance(entry, Mapping):
             raise ValueError(f"run registry has no fold {fold:02d}")
-        run_id = str(entry["run_id"])
+        run_id = (
+            str(args.run_id)
+            if args.run_id is not None
+            else str(entry["run_id"])
+        )
         runs.append(
             OOFRun(
                 outer_fold=fold,
                 run_id=run_id,
-                seed=int(entry.get("seed", 0)),
+                seed=(
+                    int(args.seed)
+                    if args.seed is not None
+                    else int(entry.get("seed", 0))
+                ),
                 checkpoint=(
                     rotation_root
                     / "runs"
