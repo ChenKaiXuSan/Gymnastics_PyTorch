@@ -65,9 +65,64 @@ class CycleFeatures:
     cycle_id: str
     cycle_index: int
     normalized_cycle_position: float
+    pose_source: str
     eligible: bool
     exclusion_reasons: tuple[str, ...]
     values: Mapping[str, float | None]
+
+
+def axial_rotation_from_pose(kpts_body: np.ndarray) -> np.ndarray:
+    """Derive pelvis-to-shoulder axial rotation in the canonical x-z plane."""
+    points = np.asarray(kpts_body, dtype=np.float64)
+    if points.ndim != 3 or points.shape[1:] != (70, 3):
+        raise ValueError("axial rotation requires pose shaped (frames, 70, 3)")
+    shoulder = (
+        points[:, RIGHT_SHOULDER] - points[:, LEFT_SHOULDER]
+    )[:, [0, 2]]
+    pelvis = (points[:, RIGHT_HIP] - points[:, LEFT_HIP])[:, [0, 2]]
+    shoulder_norm = np.linalg.norm(shoulder, axis=1)
+    pelvis_norm = np.linalg.norm(pelvis, axis=1)
+    if (
+        np.any(~np.isfinite(shoulder))
+        or np.any(~np.isfinite(pelvis))
+        or np.any((shoulder_norm <= 1e-12) | (pelvis_norm <= 1e-12))
+    ):
+        raise ValueError("shoulder or pelvis horizontal axis is degenerate")
+    shoulder_angle = np.arctan2(shoulder[:, 1], shoulder[:, 0])
+    pelvis_angle = np.arctan2(pelvis[:, 1], pelvis[:, 0])
+    return np.unwrap(pelvis_angle - shoulder_angle)
+
+
+def match_pose_frames(
+    source_pose: np.ndarray,
+    source_face_map: np.ndarray,
+    target_face_map: np.ndarray,
+) -> np.ndarray:
+    """Select full-sequence pose frames matching one cycle's face IDs."""
+    pose = np.asarray(source_pose)
+    source = np.asarray(source_face_map)
+    target = np.asarray(target_face_map)
+    if pose.ndim != 3 or pose.shape[1:] != (70, 3):
+        raise ValueError("source pose must have shape (frames, 70, 3)")
+    if source.ndim != 1 or len(source) != len(pose) or target.ndim != 1:
+        raise ValueError("face maps must be 1D and match source pose length")
+    unique, counts = np.unique(source, return_counts=True)
+    if np.any(counts > 1):
+        raise ValueError("source face map contains duplicate frame IDs")
+    lookup = {
+        int(frame_id): int(index)
+        for index, frame_id in enumerate(source.tolist())
+    }
+    missing = sorted(
+        {int(frame_id) for frame_id in target.tolist()} - set(lookup)
+    )
+    if missing:
+        raise ValueError(
+            f"target face map contains missing frame IDs: {missing[:5]}"
+        )
+    return pose[
+        np.asarray([lookup[int(frame_id)] for frame_id in target], dtype=int)
+    ]
 
 
 def angular_jerk(
@@ -221,8 +276,14 @@ def extract_publication_features(
     people: set[str] | None = None,
     phase_points: int = 101,
     minimum_person_cycles: int = 4,
+    pose_source: str = "fused",
+    deterministic_root: str | Path | None = None,
 ) -> dict[str, int]:
     """Extract tidy cycle/person features from an audited OOF publication."""
+    if pose_source not in {"fused", "face", "side", "deterministic"}:
+        raise ValueError(f"unsupported pose source: {pose_source}")
+    if pose_source == "deterministic" and deterministic_root is None:
+        raise ValueError("deterministic pose source requires deterministic_root")
     publication = Path(publication_root)
     output = Path(output_root)
     provenance_path = publication / "oof_provenance.csv"
@@ -255,6 +316,41 @@ def extract_publication_features(
     phase_records: list[dict[str, object]] = []
     repeatability_inputs: dict[str, list[tuple[int, np.ndarray]]] = {}
     for person_id, person_rows in by_person.items():
+        deterministic_pose: np.ndarray | None = None
+        deterministic_face_map: np.ndarray | None = None
+        if pose_source == "deterministic":
+            deterministic_path = (
+                Path(str(deterministic_root))
+                / f"person_{person_id}"
+                / "fused_sequence.npz"
+            )
+            if not deterministic_path.is_file():
+                raise ValueError(
+                    "deterministic pose sequence is missing: "
+                    f"{deterministic_path}"
+                )
+            with np.load(
+                deterministic_path,
+                allow_pickle=False,
+            ) as deterministic_archive:
+                required = ("kpts_body", "face_map")
+                missing = [
+                    name
+                    for name in required
+                    if name not in deterministic_archive
+                ]
+                if missing:
+                    raise ValueError(
+                        "deterministic arrays missing from "
+                        f"{deterministic_path}: {missing}"
+                    )
+                deterministic_pose = np.asarray(
+                    deterministic_archive["kpts_body"],
+                    dtype=np.float64,
+                )
+                deterministic_face_map = np.asarray(
+                    deterministic_archive["face_map"]
+                )
         positions = normalized_cycle_positions(len(person_rows))
         for cycle_offset, (row, position) in enumerate(
             zip(person_rows, positions, strict=True),
@@ -262,28 +358,63 @@ def extract_publication_features(
         ):
             sequence_path = publication / row["prediction_path"]
             with np.load(sequence_path, allow_pickle=False) as archive:
-                required = (
-                    "kpts_body",
-                    "theta_fused_rad",
-                    "omega_fused_rad_s",
+                required = [
                     "timestamps",
                     "frame_valid",
                     "joint_valid",
-                )
+                ]
+                if pose_source == "fused":
+                    required.extend(
+                        (
+                            "kpts_body",
+                            "theta_fused_rad",
+                            "omega_fused_rad_s",
+                        )
+                    )
+                elif pose_source in {"face", "side"}:
+                    required.append(f"kpts_{pose_source}_canonical")
+                else:
+                    required.append("face_map")
                 missing = [name for name in required if name not in archive]
                 if missing:
                     raise ValueError(
                         f"feature arrays missing from {sequence_path}: {missing}"
                     )
-                kpts = np.asarray(archive["kpts_body"], dtype=np.float64)
-                theta = np.asarray(
-                    archive["theta_fused_rad"],
-                    dtype=np.float64,
-                )
-                omega = np.asarray(
-                    archive["omega_fused_rad_s"],
-                    dtype=np.float64,
-                )
+                if pose_source == "fused":
+                    kpts = np.asarray(
+                        archive["kpts_body"],
+                        dtype=np.float64,
+                    )
+                    theta: np.ndarray | None = np.asarray(
+                        archive["theta_fused_rad"],
+                        dtype=np.float64,
+                    )
+                    omega: np.ndarray | None = np.asarray(
+                        archive["omega_fused_rad_s"],
+                        dtype=np.float64,
+                    )
+                elif pose_source in {"face", "side"}:
+                    kpts = np.asarray(
+                        archive[f"kpts_{pose_source}_canonical"],
+                        dtype=np.float64,
+                    )
+                    theta = None
+                    omega = None
+                else:
+                    if (
+                        deterministic_pose is None
+                        or deterministic_face_map is None
+                    ):
+                        raise AssertionError(
+                            "deterministic source was not loaded"
+                        )
+                    kpts = match_pose_frames(
+                        deterministic_pose,
+                        deterministic_face_map,
+                        np.asarray(archive["face_map"]),
+                    ).astype(np.float64, copy=False)
+                    theta = None
+                    omega = None
                 timestamps = np.asarray(
                     archive["timestamps"],
                     dtype=np.float64,
@@ -312,19 +443,6 @@ def extract_publication_features(
                 reasons.append("core_joint_valid_fraction")
             if eligible:
                 try:
-                    signal_valid = (
-                        frame_valid
-                        & np.isfinite(theta)
-                        & np.isfinite(omega)
-                    )
-                    theta_clean = interpolate_short_gaps(
-                        theta,
-                        signal_valid,
-                    )
-                    omega_clean = interpolate_short_gaps(
-                        omega,
-                        signal_valid,
-                    )
                     kpts_clean = kpts.copy()
                     for joint_index in MAJOR_JOINT_INDICES:
                         point_valid = (
@@ -338,6 +456,23 @@ def extract_publication_features(
                         kpts_clean[:, joint_index] = interpolate_short_gaps(
                             kpts[:, joint_index],
                             point_valid,
+                        )
+                    if theta is None or omega is None:
+                        theta_clean = axial_rotation_from_pose(kpts_clean)
+                        omega_clean = np.gradient(theta_clean, timestamps)
+                    else:
+                        signal_valid = (
+                            frame_valid
+                            & np.isfinite(theta)
+                            & np.isfinite(omega)
+                        )
+                        theta_clean = interpolate_short_gaps(
+                            theta,
+                            signal_valid,
+                        )
+                        omega_clean = interpolate_short_gaps(
+                            omega,
+                            signal_valid,
                         )
                     aligned_theta, direction_sign = align_rotation_direction(
                         np.unwrap(theta_clean)
@@ -388,6 +523,7 @@ def extract_publication_features(
                             "cohort": row["cohort"],
                             "outer_fold": int(row["outer_fold"]),
                             "cycle_id": row["cycle_id"],
+                            "pose_source": pose_source,
                             "theta": theta_phase,
                             "omega": omega_phase,
                             "tilt": tilt_phase,
@@ -411,6 +547,7 @@ def extract_publication_features(
                     cycle_id=row["cycle_id"],
                     cycle_index=cycle_offset,
                     normalized_cycle_position=float(position),
+                    pose_source=pose_source,
                     eligible=eligible,
                     exclusion_reasons=tuple(reasons),
                     values=values,
@@ -422,6 +559,7 @@ def extract_publication_features(
                     "cohort": row["cohort"],
                     "outer_fold": int(row["outer_fold"]),
                     "cycle_id": row["cycle_id"],
+                    "pose_source": pose_source,
                     "globally_eligible": qc.globally_eligible,
                     "feature_eligible": eligible,
                     "valid_frame_fraction": float(frame_valid.mean()),
@@ -483,6 +621,7 @@ def extract_publication_features(
         _write_phase_curves(phase_records, staging / "phase_curves.npz")
         summary = {
             "schema_version": 1,
+            "pose_source": pose_source,
             "people": len(by_person),
             "cycles": len(cycle_records),
             "eligible_cycles": sum(record.eligible for record in cycle_records),
@@ -496,6 +635,7 @@ def extract_publication_features(
         )
         manifest = {
             "schema_version": 1,
+            "pose_source": pose_source,
             "source_provenance_sha256": sha256_file(provenance_path),
             "outputs": {
                 path.name: sha256_file(path)
@@ -526,6 +666,7 @@ def _flatten_cycle(record: CycleFeatures) -> dict[str, object]:
         "cycle_id": record.cycle_id,
         "cycle_index": record.cycle_index,
         "normalized_cycle_position": record.normalized_cycle_position,
+        "pose_source": record.pose_source,
         "eligible": record.eligible,
         "exclusion_reasons": ";".join(record.exclusion_reasons),
         **record.values,
@@ -544,6 +685,7 @@ def _person_summaries(
             "person_id": person_id,
             "cohort": group["cohort"].iloc[0],
             "outer_fold": int(group["outer_fold"].iloc[0]),
+            "pose_source": group["pose_source"].iloc[0],
             "total_cycles": len(group),
             "eligible_cycles": int(group["eligible"].sum()),
         }

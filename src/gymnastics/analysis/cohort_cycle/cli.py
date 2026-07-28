@@ -50,12 +50,23 @@ def make_parser() -> argparse.ArgumentParser:
             child.add_argument("--pilot", action="store_true")
             child.add_argument("--publication-root")
             child.add_argument("--output-root")
+            child.add_argument(
+                "--pose-source",
+                choices=("fused", "face", "side", "deterministic"),
+                default="fused",
+            )
+            child.add_argument("--deterministic-root")
         if stage == "analyze":
             child.add_argument("--pilot", action="store_true")
             child.add_argument("--feature-root")
             child.add_argument("--output-root")
             child.add_argument("--permutations", type=int)
             child.add_argument("--no-random-slope", action="store_true")
+            child.add_argument(
+                "--sensitivity-feature",
+                action="append",
+                metavar="NAME=PATH",
+            )
         if stage == "assets":
             child.add_argument("--pilot", action="store_true")
             child.add_argument("--feature-root")
@@ -254,9 +265,30 @@ def _cmd_features(
         Path(args.output_root)
         if args.output_root
         else (
-            cohort_output / "pilot" / "features_seed0_f00"
+            cohort_output
+            / "pilot"
+            / (
+                "features_seed0_f00"
+                if args.pose_source == "fused"
+                else f"features_{args.pose_source}_seed0_f00"
+            )
             if args.pilot
-            else cohort_output / "analysis" / "features"
+            else cohort_output
+            / "analysis"
+            / (
+                "features"
+                if args.pose_source == "fused"
+                else f"features_{args.pose_source}"
+            )
+        )
+    )
+    deterministic_root = (
+        Path(args.deterministic_root)
+        if args.deterministic_root
+        else (
+            Path(_string(paths, "deterministic_root"))
+            if args.pose_source == "deterministic"
+            else None
         )
     )
     summary = extract_publication_features(
@@ -267,6 +299,8 @@ def _cmd_features(
         minimum_person_cycles=int(
             quality.get("minimum_person_cycles", 4)
         ),
+        pose_source=args.pose_source,
+        deterministic_root=deterministic_root,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
@@ -315,6 +349,7 @@ def _cmd_analyze(
         seed=int(statistics.get("permutation_seed", 20260728)),
         try_random_slope=not args.no_random_slope,
         log_outcomes={str(value) for value in raw_log},
+        sensitivity_sources=_parse_named_paths(args.sensitivity_feature),
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
@@ -356,6 +391,22 @@ def _cmd_assets(
     summary = render_report(feature_root, statistics_root, output_root)
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
+
+
+def _parse_named_paths(
+    values: Sequence[str] | None,
+) -> dict[str, Path]:
+    parsed: dict[str, Path] = {}
+    for value in values or ():
+        name, separator, raw_path = value.partition("=")
+        if not separator or not name or not raw_path:
+            raise ValueError(
+                "sensitivity features must use NAME=PATH syntax"
+            )
+        if name in parsed:
+            raise ValueError(f"duplicate sensitivity feature: {name}")
+        parsed[name] = Path(raw_path)
+    return parsed
 
 
 def _load_json(path: Path) -> dict[str, Any]:

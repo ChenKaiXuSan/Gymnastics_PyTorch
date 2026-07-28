@@ -15,7 +15,7 @@ from gymnastics.fusion.rotation_aware.cli import (
     load_config as load_rotation_config,
 )
 
-from .test_features import _upright_pose
+from .test_features import _rotating_pose, _upright_pose
 from .test_oof import _make_run
 from .test_report import _write_finalized_inputs
 from .test_statistics import _write_synthetic_feature_artifacts
@@ -295,6 +295,7 @@ def test_features_stage_extracts_an_explicit_publication(tmp_path: Path):
         np.savez_compressed(
             cycle_root / "prediction.npz",
             kpts_body=_upright_pose(101),
+            kpts_face_canonical=_rotating_pose(theta),
             theta_fused_rad=theta,
             omega_fused_rad_s=np.gradient(theta, timestamps),
             timestamps=timestamps,
@@ -354,6 +355,26 @@ def test_features_stage_extracts_an_explicit_publication(tmp_path: Path):
     )
     assert (output / "cycle_features.csv").is_file()
 
+    face_output = tmp_path / "features_face"
+    assert (
+        cohort_cycle_main(
+            [
+                "features",
+                "--config",
+                str(config),
+                "--publication-root",
+                str(publication),
+                "--output-root",
+                str(face_output),
+                "--pose-source",
+                "face",
+            ]
+        )
+        == 0
+    )
+    face_table = pd.read_csv(face_output / "cycle_features.csv")
+    assert set(face_table["pose_source"]) == {"face"}
+
 
 def test_analyze_stage_writes_corrected_core_results(tmp_path: Path):
     """The public analyze stage must execute the finalized statistical pipeline."""
@@ -386,12 +407,16 @@ def test_analyze_stage_writes_corrected_core_results(tmp_path: Path):
                 "--output-root",
                 str(output),
                 "--no-random-slope",
+                "--sensitivity-feature",
+                f"face={feature_root}",
             ]
         )
         == 0
     )
     core = pd.read_csv(output / "core_mixed_models.csv")
     assert len(core) == 8
+    sensitivity = pd.read_csv(output / "sensitivity_results.csv")
+    assert set(sensitivity["source"]) == {"oof_a6", "face"}
 
 
 def test_assets_stage_renders_an_explicit_finalized_analysis(tmp_path: Path):

@@ -68,6 +68,7 @@ def _write_synthetic_feature_artifacts(feature_root):
         }
         for outcome in outcomes:
             values = group[outcome].to_numpy()
+            row[f"{outcome}_median"] = np.median(values)
             row[f"{outcome}_mad"] = np.median(
                 np.abs(values - np.median(values))
             )
@@ -177,6 +178,7 @@ def test_analysis_writes_eight_core_models_and_corrected_families(
         permutations=99,
         seed=5,
         try_random_slope=False,
+        sensitivity_sources={"face": feature_root},
     )
 
     assert summary["core_outcomes"] == 8
@@ -187,3 +189,7 @@ def test_analysis_writes_eight_core_models_and_corrected_families(
     assert core["interaction_p_holm"].notna().all()
     assert len(variability) == 8
     assert variability["p_holm"].notna().all()
+    sensitivity = pd.read_csv(output / "sensitivity_results.csv")
+    assert len(sensitivity) == 16
+    assert set(sensitivity["source"]) == {"oof_a6", "face"}
+    assert sensitivity["effect"].gt(0).all()

@@ -8,10 +8,12 @@ import pandas as pd
 import pytest
 
 from gymnastics.analysis.cohort_cycle.features import (
+    axial_rotation_from_pose,
     angular_jerk,
     compute_core_scalars,
     extract_publication_features,
     leave_one_cycle_out_repeatability,
+    match_pose_frames,
     peak_rotation_phase,
 )
 
@@ -24,6 +26,15 @@ def _upright_pose(frames: int) -> np.ndarray:
     points[:, 6] = (0.3, 1.0, 0.0)
     points[:, 41] = (0.7, 0.5, 0.7)
     points[:, 62] = (-0.7, 0.5, -0.7)
+    return points
+
+
+def _rotating_pose(theta: np.ndarray) -> np.ndarray:
+    points = _upright_pose(len(theta))
+    points[:, 9, 0] = -0.2 * np.cos(theta)
+    points[:, 9, 2] = -0.2 * np.sin(theta)
+    points[:, 10, 0] = 0.2 * np.cos(theta)
+    points[:, 10, 2] = 0.2 * np.sin(theta)
     return points
 
 
@@ -80,6 +91,44 @@ def test_leave_one_cycle_out_repeatability_matches_known_displacement():
     assert errors[0] == pytest.approx(0.5)
 
 
+def test_axial_rotation_is_derived_from_shoulder_and_pelvis_axes():
+    """Pose-source sensitivities must use one source-independent definition."""
+    theta = np.linspace(-0.4, 0.8, 101)
+    points = _upright_pose(len(theta))
+    points[:, 9, 0] = -0.5 * np.cos(theta)
+    points[:, 9, 2] = -0.5 * np.sin(theta)
+    points[:, 10, 0] = 0.5 * np.cos(theta)
+    points[:, 10, 2] = 0.5 * np.sin(theta)
+
+    recovered = axial_rotation_from_pose(points)
+
+    np.testing.assert_allclose(recovered, theta, atol=1e-12)
+
+
+def test_match_pose_frames_uses_exact_unique_face_frame_ids():
+    """A deterministic full sequence must be sliced to the identical cycle."""
+    source = np.arange(5 * 70 * 3, dtype=np.float64).reshape(5, 70, 3)
+    matched = match_pose_frames(
+        source,
+        np.array([10, 20, 30, 40, 50]),
+        np.array([40, 20, 50]),
+    )
+    np.testing.assert_array_equal(matched, source[[3, 1, 4]])
+
+    with pytest.raises(ValueError, match="duplicate"):
+        match_pose_frames(
+            source,
+            np.array([10, 20, 20, 40, 50]),
+            np.array([20]),
+        )
+    with pytest.raises(ValueError, match="missing"):
+        match_pose_frames(
+            source,
+            np.array([10, 20, 30, 40, 50]),
+            np.array([99]),
+        )
+
+
 def test_extract_publication_writes_cycle_person_qc_and_phase_artifacts(
     tmp_path: Path,
 ):
@@ -89,19 +138,28 @@ def test_extract_publication_writes_cycle_person_qc_and_phase_artifacts(
     timestamps = np.linspace(0.0, 2.0, 101)
     theta = np.sin(2.0 * np.pi * timestamps / 2.0)
     omega = np.gradient(theta, timestamps)
+    deterministic_poses = []
+    deterministic_maps = []
     for cycle_index in range(4):
         cycle_id = f"cycle_{cycle_index:03d}"
         cycle_root = publication / "person_1" / cycle_id
         cycle_root.mkdir(parents=True)
+        face_map = np.arange(101) + cycle_index * 101
+        source_pose = _rotating_pose(theta)
         np.savez_compressed(
             cycle_root / "prediction.npz",
             kpts_body=_upright_pose(101),
+            kpts_face_canonical=source_pose,
+            kpts_side_canonical=source_pose,
             theta_fused_rad=theta,
             omega_fused_rad_s=omega,
             timestamps=timestamps,
             frame_valid=np.ones(101, dtype=bool),
             joint_valid=np.ones((101, 70), dtype=bool),
+            face_map=face_map,
         )
+        deterministic_poses.append(source_pose)
+        deterministic_maps.append(face_map)
         rows.append(
             {
                 "person_id": "1",
@@ -140,3 +198,35 @@ def test_extract_publication_writes_cycle_person_qc_and_phase_artifacts(
     assert (output / "qc_exclusions.csv").is_file()
     phase = np.load(output / "phase_curves.npz")
     assert phase["theta"].shape == (4, 101)
+
+    face_output = tmp_path / "features_face"
+    face_summary = extract_publication_features(
+        publication,
+        face_output,
+        pose_source="face",
+    )
+    assert face_summary["eligible_cycles"] == 4
+    face_cycles = pd.read_csv(face_output / "cycle_features.csv")
+    assert set(face_cycles["pose_source"]) == {"face"}
+    assert face_cycles["trunk_axial_rotation_rom"].notna().all()
+
+    deterministic_root = tmp_path / "deterministic"
+    deterministic_person = deterministic_root / "person_1"
+    deterministic_person.mkdir(parents=True)
+    np.savez_compressed(
+        deterministic_person / "fused_sequence.npz",
+        kpts_body=np.concatenate(deterministic_poses),
+        face_map=np.concatenate(deterministic_maps),
+    )
+    deterministic_output = tmp_path / "features_deterministic"
+    deterministic_summary = extract_publication_features(
+        publication,
+        deterministic_output,
+        pose_source="deterministic",
+        deterministic_root=deterministic_root,
+    )
+    assert deterministic_summary["eligible_cycles"] == 4
+    deterministic_cycles = pd.read_csv(
+        deterministic_output / "cycle_features.csv"
+    )
+    assert set(deterministic_cycles["pose_source"]) == {"deterministic"}

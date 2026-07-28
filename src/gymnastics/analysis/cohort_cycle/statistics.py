@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import json
 from pathlib import Path
 import shutil
@@ -282,6 +283,7 @@ def analyze_feature_artifacts(
     seed: int,
     try_random_slope: bool = True,
     log_outcomes: set[str] | None = None,
+    sensitivity_sources: Mapping[str, str | Path] | None = None,
 ) -> dict[str, int]:
     """Run the prespecified core, variability, ICC, and phase analyses."""
     source = Path(feature_root)
@@ -433,6 +435,45 @@ def analyze_feature_artifacts(
             for cluster in clusters:
                 phase_rows.append({"metric": metric, **cluster})
 
+    sensitivity_paths: dict[str, Path] = {"oof_a6": source}
+    for name, path in (sensitivity_sources or {}).items():
+        if name in sensitivity_paths:
+            raise ValueError(f"duplicate sensitivity source: {name}")
+        sensitivity_paths[str(name)] = Path(path)
+    sensitivity_rows: list[dict[str, object]] = []
+    for source_index, (source_name, source_path) in enumerate(
+        sensitivity_paths.items()
+    ):
+        source_people = pd.read_csv(source_path / "person_features.csv")
+        source_rows: list[dict[str, object]] = []
+        for outcome_index, outcome in enumerate(CORE_OUTCOMES):
+            value_column = f"{outcome}_median"
+            result = person_label_permutation(
+                source_people,
+                value_column,
+                permutations=permutations,
+                seed=seed + 400 + source_index * 20 + outcome_index,
+                bootstrap_samples=max(100, min(permutations, 1000)),
+            )
+            source_rows.append(
+                {
+                    "outcome": outcome,
+                    "source": source_name,
+                    "effect": result["median_difference"],
+                    "ci_low": result["median_difference_ci_low"],
+                    "ci_high": result["median_difference_ci_high"],
+                    "p_value": result["p_value"],
+                    "n_elderly": result["n_elderly"],
+                    "n_student": result["n_student"],
+                }
+            )
+        adjusted = holm_adjust(
+            np.asarray([row["p_value"] for row in source_rows])
+        )
+        for row, p_holm in zip(source_rows, adjusted, strict=True):
+            row["p_holm_within_source"] = float(p_holm)
+        sensitivity_rows.extend(source_rows)
+
     staging.mkdir(parents=True)
     try:
         pd.DataFrame(core_rows).to_csv(
@@ -470,16 +511,11 @@ def analyze_feature_artifacts(
         pd.DataFrame(
             columns=("outcome", "joint_or_region", "effect", "p_value", "p_fdr")
         ).to_csv(staging / "exploratory_fdr.csv", index=False)
-        pd.DataFrame(
-            columns=(
-                "outcome",
-                "source",
-                "effect",
-                "ci_low",
-                "ci_high",
-                "p_value",
-            )
-        ).to_csv(staging / "sensitivity_results.csv", index=False)
+        pd.DataFrame(sensitivity_rows).to_csv(
+            staging / "sensitivity_results.csv",
+            index=False,
+            float_format="%.10g",
+        )
         (staging / "model_diagnostics.json").write_text(
             json.dumps(diagnostics, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -502,6 +538,10 @@ def analyze_feature_artifacts(
                 "phase_curves.npz": sha256_file(
                     source / "phase_curves.npz"
                 ),
+                "sensitivity_person_features": {
+                    name: sha256_file(path / "person_features.csv")
+                    for name, path in sensitivity_paths.items()
+                },
             },
             "outputs": {
                 path.name: sha256_file(path)
@@ -521,6 +561,7 @@ def analyze_feature_artifacts(
         "core_outcomes": len(core_rows),
         "variability_outcomes": len(variability_rows),
         "phase_clusters": len(phase_rows),
+        "sensitivity_rows": len(sensitivity_rows),
     }
 
 
