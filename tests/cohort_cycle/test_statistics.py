@@ -4,7 +4,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from gymnastics.analysis.cohort_cycle import statistics as statistics_module
 from gymnastics.analysis.cohort_cycle.statistics import (
+    _fit_model,
     adjust_phase_cluster_families,
     analyze_feature_artifacts,
     bootstrap_icc,
@@ -133,6 +135,34 @@ def test_mixed_effect_can_omit_artificial_outer_fold_adjustment():
     assert result["include_outer_fold"] is False
     assert "C(outer_fold)" not in result["formula"]
     assert result["cohort_effect"] == pytest.approx(2.5, abs=0.15)
+
+
+def test_mixed_model_optimizer_falls_back_after_singular_lbfgs(monkeypatch):
+    """A numerical failure must not silently change the statistical estimand."""
+    methods = []
+    successful = object()
+
+    class FakeModel:
+        def fit(self, *, method, **kwargs):
+            methods.append(method)
+            if method == "lbfgs":
+                raise np.linalg.LinAlgError("Singular matrix")
+            return successful
+
+    monkeypatch.setattr(
+        statistics_module.smf,
+        "mixedlm",
+        lambda *args, **kwargs: FakeModel(),
+    )
+
+    result = _fit_model(
+        _synthetic_cycles(),
+        "outcome ~ normalized_cycle_position",
+        re_formula="1",
+    )
+
+    assert result is successful
+    assert methods == ["lbfgs", "powell"]
 
 
 def test_person_label_permutation_and_effect_sizes_detect_separation():

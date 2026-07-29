@@ -845,11 +845,25 @@ def _fit_model(
         groups=data["person_id"],
         re_formula=re_formula,
     )
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        return model.fit(
-            reml=False,
-            method="lbfgs",
-            maxiter=500,
-            disp=False,
-        )
+    errors: list[str] = []
+    last_result = None
+    for method in ("lbfgs", "powell", "bfgs"):
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                result = model.fit(
+                    reml=False,
+                    method=method,
+                    maxiter=500,
+                    disp=False,
+                )
+        except (ValueError, np.linalg.LinAlgError) as error:
+            errors.append(f"{method}: {error}")
+            continue
+        last_result = result
+        if bool(getattr(result, "converged", True)):
+            return result
+        errors.append(f"{method}: unconverged")
+    if last_result is not None:
+        return last_result
+    raise ValueError("all mixed-model optimizers failed; " + "; ".join(errors))
