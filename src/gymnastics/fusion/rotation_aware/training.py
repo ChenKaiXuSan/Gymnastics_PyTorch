@@ -12,6 +12,7 @@ from typing import Any, Iterable, Iterator, Mapping
 import torch
 from torch import Tensor, nn
 
+from .camera import CameraFeatureBundle
 from .config import SkeletonSpec
 from .corruptions import CorruptionConfig, apply_corruptions, stable_window_seed
 from .data import validate_cache_manifest_identities
@@ -284,9 +285,34 @@ def _forward_prepared(
             safe_face, safe_side, face_trunk, side_trunk, effective_face_valid, effective_side_valid
         )
     with profiler.stage(_stage_name(phase, "forward")):
+        camera_features = None
+        camera_global = prepared.get("camera_global_features")
+        camera_joint = prepared.get("camera_joint_features")
+        camera_valid = prepared.get("camera_valid")
+        supplied_camera = (
+            camera_global is not None,
+            camera_joint is not None,
+            camera_valid is not None,
+        )
+        if any(supplied_camera) and not all(supplied_camera):
+            raise ValueError(
+                "camera batches require global, joint, and valid tensors"
+            )
+        if all(supplied_camera):
+            if not all(
+                isinstance(value, Tensor)
+                for value in (camera_global, camera_joint, camera_valid)
+            ):
+                raise ValueError("camera batch fields must be tensors")
+            camera_features = CameraFeatureBundle(
+                global_features=camera_global,
+                joint_features=camera_joint,
+                valid=camera_valid,
+            )
         output = model(
             safe_face, safe_side, face_features, side_features, cross, effective_face_valid, effective_side_valid,
             temporal_valid=temporal_valid, dt=dt,
+            camera_features=camera_features,
         )
     reference_valid_face = _required_tensor(prepared, "reference_valid_face")
     reference_valid_side = _required_tensor(prepared, "reference_valid_side")
