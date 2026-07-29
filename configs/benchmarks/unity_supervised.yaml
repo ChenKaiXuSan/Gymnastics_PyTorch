@@ -2,6 +2,7 @@ base_config: configs/benchmarks/unity.yaml
 
 paths:
   output_root: local/runs/unity_benchmark/supervised_finetune
+  extrinsic_output_root: local/runs/unity_benchmark/extrinsic_learning
   skeleton: configs/fusion/skeleton_mhr70.yaml
 
 matrix:
@@ -31,3 +32,18 @@ evaluation:
   stride: 8
   static_sequence: static_sweep
   alignment: one_sim3_per_sequence
+
+extrinsic:
+  methods:
+    - extrinsic_gate
+    - extrinsic_residual_tcn
+    - learnable_triangulation
+  folds: [left_to_right, right_to_left]
+  seeds: [0, 1, 2]
+  epochs: 100
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  hidden_channels: 32
+  max_delta_m: 0.05
+  smooth_l1_beta_m: 0.02
+  device: cpu

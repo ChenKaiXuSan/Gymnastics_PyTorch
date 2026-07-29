@@ -33,6 +33,10 @@ def test_unity_cli_exposes_supervised_stages() -> None:
         "finetune-matrix",
         "evaluate-finetuned",
         "report-finetuned",
+        "train-extrinsic",
+        "train-extrinsic-matrix",
+        "evaluate-extrinsic",
+        "report-extrinsic",
     ):
         assert stage in help_result.stdout
 
@@ -66,6 +70,36 @@ def test_supervised_stage_arguments_parse() -> None:
     assert matrix.device == "cuda"
     assert evaluate.stage == "evaluate-finetuned"
     assert report.stage == "report-finetuned"
+
+
+def test_extrinsic_stage_arguments_parse() -> None:
+    parser = unity_cli._parser()
+    one = parser.parse_args(
+        [
+            "train-extrinsic",
+            "--method",
+            "extrinsic_gate",
+            "--fold",
+            "right_to_left",
+            "--seed",
+            "1",
+            "--device",
+            "cpu",
+        ]
+    )
+    matrix = parser.parse_args(["train-extrinsic-matrix", "--device", "cpu"])
+    evaluate = parser.parse_args(["evaluate-extrinsic"])
+    report = parser.parse_args(["report-extrinsic"])
+
+    assert (one.method, one.fold, one.seed, one.device) == (
+        "extrinsic_gate",
+        "right_to_left",
+        1,
+        "cpu",
+    )
+    assert matrix.device == "cpu"
+    assert evaluate.stage == "evaluate-extrinsic"
+    assert report.stage == "report-extrinsic"
 
 
 def test_matrix_dispatch_skips_two_completed_cells(
