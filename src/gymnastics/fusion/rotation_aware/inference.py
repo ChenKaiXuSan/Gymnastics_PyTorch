@@ -12,6 +12,7 @@ import torch
 
 from gymnastics.fusion.deterministic.experiment_matrix import kpts_world_to_body
 
+from .camera import CameraFeatureBundle
 from .config import SkeletonSpec
 from .corruptions import CorruptionConfig, apply_corruptions
 from .features import (
@@ -140,6 +141,7 @@ def _forward(
     valid_side: torch.Tensor,
     skeleton: SkeletonSpec,
     dt: torch.Tensor,
+    camera_features: CameraFeatureBundle | None = None,
 ):
     temporal = valid_face.any(dim=-1) | valid_side.any(dim=-1)
     dt = torch.where(temporal, dt, torch.zeros_like(dt))
@@ -170,6 +172,7 @@ def _forward(
         valid_side,
         temporal_valid=temporal,
         dt=dt,
+        camera_features=camera_features,
     )
     return output, face_features[1].loss_weight, side_features[1].loss_weight
 
