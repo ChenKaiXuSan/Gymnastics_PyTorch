@@ -80,10 +80,31 @@ def test_write_extrinsic_report_orders_each_regime_by_mpjpe(
         static_rows=(),
         output_root=tmp_path,
         provenance={"protocol": "direction-held-out-2x3"},
+        baseline_results={
+            "tables": {
+                "by_sequence": [
+                    {
+                        "method": method,
+                        "sequence_id": sequence,
+                        "mpjpe_mm": value,
+                    }
+                    for method, value in (
+                        ("avg_world_face_ref", 117.0),
+                        ("triangulation_sam3d2d", 40.0),
+                    )
+                    for sequence in (
+                        "continuous_left_060_r00",
+                        "continuous_right_060_r00",
+                    )
+                ]
+            }
+        },
     )
     text = report.read_text(encoding="utf-8")
     assert text.index("extrinsic_residual_tcn") < text.index("extrinsic_gate")
     assert "Calibrated 2D-to-3D" in text
+    assert "11.000 mm" in text
+    assert "0.000 mm" not in text
     assert (tmp_path / "evaluation/by_method.csv").is_file()
+    assert (tmp_path / "evaluation/baseline_comparison.csv").is_file()
     assert (tmp_path / "report/results.json").is_file()
-

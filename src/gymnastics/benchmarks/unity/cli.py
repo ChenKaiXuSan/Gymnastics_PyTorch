@@ -1099,6 +1099,11 @@ def _evaluate_extrinsic_artifacts(
             "unity_gt_supervision": True,
             "exact_camera_geometry": True,
         },
+        baseline_results=json.loads(
+            (zero_shot_root / "report/results.json").read_text(
+                encoding="utf-8"
+            )
+        ),
     )
 
 

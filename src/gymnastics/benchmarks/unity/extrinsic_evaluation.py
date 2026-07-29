@@ -240,18 +240,67 @@ def write_extrinsic_report(
     static_rows: Sequence[Mapping[str, object]],
     output_root: Path,
     provenance: Mapping[str, object],
+    baseline_results: Mapping[str, object] | None = None,
 ) -> Path:
     """Write strict aggregate artifacts and a regime-grouped Markdown report."""
     summaries = aggregate_extrinsic_results(heldout_rows)
+    comparisons: list[Mapping[str, object]] = []
+    if baseline_results is not None:
+        tables = baseline_results.get("tables")
+        if not isinstance(tables, Mapping):
+            raise ValueError("baseline results require tables")
+        by_sequence = tables.get("by_sequence")
+        if not isinstance(by_sequence, list):
+            raise ValueError("baseline results require tables.by_sequence")
+        learned_by_method = {str(row["method"]): row for row in summaries}
+        for learned_method, baseline_method in (
+            ("extrinsic_gate", "avg_world_face_ref"),
+            ("learnable_triangulation", "triangulation_sam3d2d"),
+        ):
+            values = [
+                float(row["mpjpe_mm"])
+                for row in by_sequence
+                if isinstance(row, Mapping)
+                and str(row.get("method")) == baseline_method
+                and str(row.get("sequence_id")) != "static_sweep"
+            ]
+            if len(values) != 2:
+                raise ValueError(
+                    f"baseline {baseline_method} requires two continuous directions"
+                )
+            learned = float(
+                learned_by_method[learned_method]["macro_mpjpe_mm"]
+            )
+            baseline = float(np.mean(values))
+            improvement = baseline - learned
+            comparisons.append(
+                MappingProxyType(
+                    {
+                        "learned_method": learned_method,
+                        "baseline_method": baseline_method,
+                        "learned_mpjpe_mm": learned,
+                        "baseline_mpjpe_mm": baseline,
+                        "improvement_mm": improvement,
+                        "relative_improvement_pct": (
+                            100.0 * improvement / baseline
+                        ),
+                    }
+                )
+            )
     by_method = Path(output_root) / "evaluation/by_method.csv"
     _write_csv(by_method, summaries)
     _write_csv(Path(output_root) / "evaluation/run_results.csv", heldout_rows)
     _write_csv(Path(output_root) / "evaluation/static_diagnostics.csv", static_rows)
+    _write_csv(
+        Path(output_root) / "evaluation/baseline_comparison.csv",
+        comparisons,
+    )
     payload = {
         "provenance": dict(provenance),
         "by_method": [dict(row) for row in summaries],
         "heldout_runs": [dict(row) for row in heldout_rows],
         "static_diagnostics": [dict(row) for row in static_rows],
+        "baseline_comparison": [dict(row) for row in comparisons],
     }
     result_path = Path(output_root) / "report/results.json"
     _atomic_json(result_path, payload)
@@ -294,6 +343,24 @@ def write_extrinsic_report(
                 f"| {float(row['macro_mpjpe_mm']):.3f} "
                 f"| {float(row['seed_std_mpjpe_mm']):.3f} "
                 f"| {float(row['macro_angle_mae_deg']):.3f} |"
+            )
+        lines.append("")
+    if comparisons:
+        lines.extend(
+            (
+                "## Matched continuous-direction baselines",
+                "",
+                "| learned method | matched baseline | learned (mm) | baseline (mm) | reduction (mm / %) |",
+                "|---|---|---:|---:|---:|",
+            )
+        )
+        for row in comparisons:
+            lines.append(
+                f"| `{row['learned_method']}` | `{row['baseline_method']}` "
+                f"| {float(row['learned_mpjpe_mm']):.3f} "
+                f"| {float(row['baseline_mpjpe_mm']):.3f} "
+                f"| {float(row['improvement_mm']):.3f} mm / "
+                f"{float(row['relative_improvement_pct']):.2f}\\% |"
             )
         lines.append("")
     lines.extend(
