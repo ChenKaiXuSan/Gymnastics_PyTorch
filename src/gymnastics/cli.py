@@ -43,6 +43,7 @@ _COMMANDS = {
         "main",
         True,
     ),
+    "benchmark:unity": ("gymnastics.benchmarks.unity.cli", "main", True),
 }
 
 
@@ -95,12 +96,17 @@ def _parser() -> argparse.ArgumentParser:
     )
     benchmark = commands.add_parser(
         "benchmark",
-        help="run external zero-shot benchmarks",
+        help="run external benchmarks",
     )
     benchmark_commands = benchmark.add_subparsers(dest="benchmark_command")
     benchmark_commands.add_parser(
         "freeman",
         help="run the full-release FreeMan benchmark",
+        add_help=False,
+    )
+    benchmark_commands.add_parser(
+        "unity",
+        help="run the Unity external benchmark",
         add_help=False,
     )
     return parser
