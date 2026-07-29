@@ -19,7 +19,8 @@ from .phase_statistics import cluster_permutation_test
 
 
 COHORT_TERM = "C(cohort, Treatment(reference='student'))[T.elderly]"
-INTERACTION_TERM = COHORT_TERM + ":normalized_cycle_position"
+CYCLE_TERM = "_cycle_position_centered"
+INTERACTION_TERM = COHORT_TERM + f":{CYCLE_TERM}"
 
 
 def fit_mixed_effect(
@@ -28,21 +29,29 @@ def fit_mixed_effect(
     *,
     try_random_slope: bool = True,
     log_transform: bool = False,
+    cycle_reference: float = 0.5,
+    include_outer_fold: bool = True,
 ) -> dict[str, object]:
     """Fit the prespecified cycle-level mixed-effects model."""
     required = {
         "person_id",
         "cohort",
-        "outer_fold",
         "normalized_cycle_position",
         outcome,
     }
+    if include_outer_fold:
+        required.add("outer_fold")
     missing = required - set(table.columns)
     if missing:
         raise ValueError(f"mixed model columns missing: {sorted(missing)}")
+    if not 0.0 <= cycle_reference <= 1.0:
+        raise ValueError("cycle_reference must lie in [0, 1]")
     data = table[list(required)].dropna().copy()
     if set(data["cohort"]) != {"elderly", "student"}:
         raise ValueError("mixed model requires both cohorts")
+    data[CYCLE_TERM] = (
+        data["normalized_cycle_position"].astype(float) - cycle_reference
+    )
     if log_transform:
         if np.any(data[outcome] <= 0):
             raise ValueError("log-transformed outcome must be positive")
@@ -52,8 +61,10 @@ def fit_mixed_effect(
     formula = (
         "_model_outcome ~ "
         "C(cohort, Treatment(reference='student'))"
-        " * normalized_cycle_position + C(outer_fold)"
+        f" * {CYCLE_TERM}"
     )
+    if include_outer_fold:
+        formula += " + C(outer_fold)"
     fallback_reason: str | None = None
     result = None
     random_structure = "random_intercept"
@@ -62,7 +73,7 @@ def fit_mixed_effect(
             candidate = _fit_model(
                 data,
                 formula,
-                re_formula="~normalized_cycle_position",
+                re_formula=f"~{CYCLE_TERM}",
             )
             covariance = np.asarray(candidate.cov_re)
             if (
@@ -78,35 +89,172 @@ def fit_mixed_effect(
     if result is None:
         result = _fit_model(data, formula, re_formula="1")
     confidence = result.conf_int()
+    covariance = np.asarray(result.cov_re, dtype=np.float64)
+    random_intercept_variance = (
+        float(covariance[0, 0]) if covariance.size else 0.0
+    )
+    random_slope_variance = (
+        float(covariance[1, 1]) if covariance.shape == (2, 2) else 0.0
+    )
+    intercept_slope_covariance = (
+        float(covariance[0, 1]) if covariance.shape == (2, 2) else 0.0
+    )
+    residual_scale = float(result.scale)
+    if residual_scale > 0:
+        maximum_absolute_standardized_residual = float(
+            np.max(np.abs(np.asarray(result.resid))) / np.sqrt(residual_scale)
+        )
+    else:
+        maximum_absolute_standardized_residual = float("nan")
+    model_outcome_sd = float(data["_model_outcome"].std(ddof=1))
+    cohort_effect = float(result.params[COHORT_TERM])
     return {
         "outcome": outcome,
         "transform": "log" if log_transform else "identity",
+        "formula": formula,
+        "cycle_reference": float(cycle_reference),
+        "include_outer_fold": bool(include_outer_fold),
         "random_structure": random_structure,
         "fallback_reason": fallback_reason,
         "converged": bool(result.converged),
         "n_people": int(data["person_id"].nunique()),
         "n_cycles": int(len(data)),
-        "cohort_effect": float(result.params[COHORT_TERM]),
+        "cohort_effect": cohort_effect,
+        "cohort_effect_se": float(result.bse[COHORT_TERM]),
+        "cohort_effect_standardized": (
+            cohort_effect / model_outcome_sd
+            if model_outcome_sd > 0
+            else float("nan")
+        ),
         "cohort_ci_low": float(confidence.loc[COHORT_TERM, 0]),
         "cohort_ci_high": float(confidence.loc[COHORT_TERM, 1]),
         "cohort_p_value": float(result.pvalues[COHORT_TERM]),
-        "cycle_effect": float(result.params["normalized_cycle_position"]),
+        "cycle_effect": float(result.params[CYCLE_TERM]),
+        "cycle_effect_se": float(result.bse[CYCLE_TERM]),
         "cycle_ci_low": float(
-            confidence.loc["normalized_cycle_position", 0]
+            confidence.loc[CYCLE_TERM, 0]
         ),
         "cycle_ci_high": float(
-            confidence.loc["normalized_cycle_position", 1]
+            confidence.loc[CYCLE_TERM, 1]
         ),
-        "cycle_p_value": float(
-            result.pvalues["normalized_cycle_position"]
-        ),
+        "cycle_p_value": float(result.pvalues[CYCLE_TERM]),
         "interaction_effect": float(result.params[INTERACTION_TERM]),
+        "interaction_effect_se": float(result.bse[INTERACTION_TERM]),
         "interaction_ci_low": float(confidence.loc[INTERACTION_TERM, 0]),
         "interaction_ci_high": float(confidence.loc[INTERACTION_TERM, 1]),
         "interaction_p_value": float(result.pvalues[INTERACTION_TERM]),
+        "random_intercept_variance": max(0.0, random_intercept_variance),
+        "random_slope_variance": max(0.0, random_slope_variance),
+        "intercept_slope_covariance": intercept_slope_covariance,
+        "model_outcome_sd": model_outcome_sd,
         "aic": float(result.aic),
         "bic": float(result.bic),
-        "residual_scale": float(result.scale),
+        "residual_scale": residual_scale,
+        "maximum_absolute_standardized_residual": (
+            maximum_absolute_standardized_residual
+        ),
+    }
+
+
+def adjust_phase_cluster_families(
+    rows: list[dict[str, object]],
+    *,
+    metrics: tuple[str, ...] = ("theta", "omega", "tilt", "wrist"),
+) -> list[dict[str, object]]:
+    """Apply Holm correction to the minimum cluster p-value per descriptor."""
+    if not rows:
+        return []
+    minimum_by_metric = {
+        metric: min(
+            (
+                float(row["p_value"])
+                for row in rows
+                if row["metric"] == metric
+            ),
+            default=1.0,
+        )
+        for metric in metrics
+    }
+    adjusted = holm_adjust(
+        np.asarray([minimum_by_metric[metric] for metric in metrics])
+    )
+    adjusted_by_metric = dict(zip(metrics, adjusted, strict=True))
+    return [
+        {
+            **row,
+            "p_holm_across_metrics": float(
+                max(
+                    float(row["p_value"]),
+                    adjusted_by_metric[str(row["metric"])],
+                )
+            ),
+        }
+        for row in rows
+    ]
+
+
+def _permutation_fallback_model(
+    cycles: pd.DataFrame,
+    outcome: str,
+    *,
+    permutations: int,
+    seed: int,
+    error: Exception,
+    cycle_reference: float,
+    include_outer_fold: bool,
+) -> dict[str, object]:
+    """Return an explicitly labelled person-level fallback result."""
+    person_values = (
+        cycles.groupby(["person_id", "cohort"], as_index=False)[outcome]
+        .median()
+        .rename(columns={outcome: "_fallback_value"})
+    )
+    permutation = person_label_permutation(
+        person_values,
+        "_fallback_value",
+        permutations=permutations,
+        seed=seed,
+    )
+    outcome_sd = float(person_values["_fallback_value"].std(ddof=1))
+    cohort_effect = float(permutation["median_difference"])
+    return {
+        "outcome": outcome,
+        "transform": "identity",
+        "formula": "",
+        "cycle_reference": cycle_reference,
+        "include_outer_fold": include_outer_fold,
+        "random_structure": "none",
+        "fallback_reason": str(error),
+        "converged": False,
+        "n_people": int(person_values["person_id"].nunique()),
+        "n_cycles": int(cycles[outcome].notna().sum()),
+        "cohort_effect": cohort_effect,
+        "cohort_effect_se": np.nan,
+        "cohort_effect_standardized": (
+            cohort_effect / outcome_sd if outcome_sd > 0 else np.nan
+        ),
+        "cohort_ci_low": np.nan,
+        "cohort_ci_high": np.nan,
+        "cohort_p_value": permutation["p_value"],
+        "cycle_effect": np.nan,
+        "cycle_effect_se": np.nan,
+        "cycle_ci_low": np.nan,
+        "cycle_ci_high": np.nan,
+        "cycle_p_value": 1.0,
+        "interaction_effect": np.nan,
+        "interaction_effect_se": np.nan,
+        "interaction_ci_low": np.nan,
+        "interaction_ci_high": np.nan,
+        "interaction_p_value": 1.0,
+        "random_intercept_variance": np.nan,
+        "random_slope_variance": np.nan,
+        "intercept_slope_covariance": np.nan,
+        "model_outcome_sd": outcome_sd,
+        "aic": np.nan,
+        "bic": np.nan,
+        "residual_scale": np.nan,
+        "maximum_absolute_standardized_residual": np.nan,
+        "model_status": "person_permutation_fallback",
     }
 
 
@@ -299,7 +447,12 @@ def analyze_feature_artifacts(
     log_set = set(log_outcomes or ())
 
     core_rows: list[dict[str, object]] = []
-    diagnostics: dict[str, object] = {}
+    no_fold_rows: list[dict[str, object]] = []
+    diagnostics: dict[str, object] = {
+        "cycle_reference": 0.5,
+        "primary": {},
+        "no_outer_fold": {},
+    }
     for outcome_index, outcome in enumerate(CORE_OUTCOMES):
         try:
             result = fit_mixed_effect(
@@ -307,53 +460,75 @@ def analyze_feature_artifacts(
                 outcome,
                 try_random_slope=try_random_slope,
                 log_transform=outcome in log_set,
+                cycle_reference=0.5,
+                include_outer_fold=True,
             )
             result["model_status"] = "mixed_effect"
         except Exception as error:  # robust prespecified fallback
-            person_values = (
-                cycles.groupby(["person_id", "cohort"], as_index=False)[
-                    outcome
-                ]
-                .median()
-                .rename(columns={outcome: "_fallback_value"})
-            )
-            permutation = person_label_permutation(
-                person_values,
-                "_fallback_value",
+            result = _permutation_fallback_model(
+                cycles,
+                outcome,
                 permutations=permutations,
                 seed=seed + outcome_index,
+                error=error,
+                cycle_reference=0.5,
+                include_outer_fold=True,
             )
-            result = {
-                "outcome": outcome,
-                "transform": "identity",
-                "random_structure": "none",
-                "fallback_reason": str(error),
-                "converged": False,
-                "n_people": int(person_values["person_id"].nunique()),
-                "n_cycles": int(cycles[outcome].notna().sum()),
-                "cohort_effect": permutation["median_difference"],
-                "cohort_ci_low": np.nan,
-                "cohort_ci_high": np.nan,
-                "cohort_p_value": permutation["p_value"],
-                "cycle_effect": np.nan,
-                "cycle_ci_low": np.nan,
-                "cycle_ci_high": np.nan,
-                "cycle_p_value": 1.0,
-                "interaction_effect": np.nan,
-                "interaction_ci_low": np.nan,
-                "interaction_ci_high": np.nan,
-                "interaction_p_value": 1.0,
-                "aic": np.nan,
-                "bic": np.nan,
-                "residual_scale": np.nan,
-                "model_status": "person_permutation_fallback",
-            }
+        try:
+            no_fold_result = fit_mixed_effect(
+                cycles,
+                outcome,
+                try_random_slope=try_random_slope,
+                log_transform=outcome in log_set,
+                cycle_reference=0.5,
+                include_outer_fold=False,
+            )
+            no_fold_result["model_status"] = "mixed_effect"
+        except Exception as error:
+            no_fold_result = _permutation_fallback_model(
+                cycles,
+                outcome,
+                permutations=permutations,
+                seed=seed + 50 + outcome_index,
+                error=error,
+                cycle_reference=0.5,
+                include_outer_fold=False,
+            )
         core_rows.append(result)
-        diagnostics[outcome] = {
+        no_fold_rows.append(no_fold_result)
+        diagnostics["primary"][outcome] = {
             "model_status": result["model_status"],
             "converged": bool(result["converged"]),
             "random_structure": result["random_structure"],
             "fallback_reason": result["fallback_reason"],
+            "random_intercept_variance": result[
+                "random_intercept_variance"
+            ],
+            "random_slope_variance": result["random_slope_variance"],
+            "intercept_slope_covariance": result[
+                "intercept_slope_covariance"
+            ],
+            "maximum_absolute_standardized_residual": result[
+                "maximum_absolute_standardized_residual"
+            ],
+        }
+        diagnostics["no_outer_fold"][outcome] = {
+            "model_status": no_fold_result["model_status"],
+            "converged": bool(no_fold_result["converged"]),
+            "random_structure": no_fold_result["random_structure"],
+            "fallback_reason": no_fold_result["fallback_reason"],
+            "random_intercept_variance": no_fold_result[
+                "random_intercept_variance"
+            ],
+            "random_slope_variance": no_fold_result[
+                "random_slope_variance"
+            ],
+            "intercept_slope_covariance": no_fold_result[
+                "intercept_slope_covariance"
+            ],
+            "maximum_absolute_standardized_residual": no_fold_result[
+                "maximum_absolute_standardized_residual"
+            ],
         }
     cohort_adjusted = holm_adjust(
         np.asarray([row["cohort_p_value"] for row in core_rows])
@@ -365,6 +540,20 @@ def analyze_feature_artifacts(
         core_rows,
         cohort_adjusted,
         interaction_adjusted,
+        strict=True,
+    ):
+        row["cohort_p_holm"] = float(cohort_p)
+        row["interaction_p_holm"] = float(interaction_p)
+    no_fold_cohort_adjusted = holm_adjust(
+        np.asarray([row["cohort_p_value"] for row in no_fold_rows])
+    )
+    no_fold_interaction_adjusted = holm_adjust(
+        np.asarray([row["interaction_p_value"] for row in no_fold_rows])
+    )
+    for row, cohort_p, interaction_p in zip(
+        no_fold_rows,
+        no_fold_cohort_adjusted,
+        no_fold_interaction_adjusted,
         strict=True,
     ):
         row["cohort_p_holm"] = float(cohort_p)
@@ -434,6 +623,7 @@ def analyze_feature_artifacts(
             )
             for cluster in clusters:
                 phase_rows.append({"metric": metric, **cluster})
+    phase_rows = adjust_phase_cluster_families(phase_rows)
 
     sensitivity_paths: dict[str, Path] = {"oof_a6": source}
     for name, path in (sensitivity_sources or {}).items():
@@ -441,12 +631,57 @@ def analyze_feature_artifacts(
             raise ValueError(f"duplicate sensitivity source: {name}")
         sensitivity_paths[str(name)] = Path(path)
     sensitivity_rows: list[dict[str, object]] = []
+    sensitivity_person_rows: list[dict[str, object]] = []
+    sensitivity_exclusions: list[dict[str, object]] = []
     for source_index, (source_name, source_path) in enumerate(
         sensitivity_paths.items()
     ):
+        cycle_path = source_path / "cycle_features.csv"
+        if not cycle_path.is_file():
+            sensitivity_exclusions.append(
+                {
+                    "source": source_name,
+                    "artifact": str(cycle_path),
+                    "reason": "missing cycle_features.csv",
+                }
+            )
+            continue
+        source_cycles = pd.read_csv(cycle_path)
+        source_cycles = source_cycles.loc[
+            source_cycles["eligible"].astype(bool)
+        ].copy()
         source_people = pd.read_csv(source_path / "person_features.csv")
         source_rows: list[dict[str, object]] = []
+        person_rows: list[dict[str, object]] = []
         for outcome_index, outcome in enumerate(CORE_OUTCOMES):
+            try:
+                mixed_result = fit_mixed_effect(
+                    source_cycles,
+                    outcome,
+                    try_random_slope=try_random_slope,
+                    log_transform=outcome in log_set,
+                    cycle_reference=0.5,
+                    include_outer_fold=True,
+                )
+            except Exception as error:
+                sensitivity_exclusions.append(
+                    {
+                        "source": source_name,
+                        "artifact": str(cycle_path),
+                        "outcome": outcome,
+                        "reason": f"mixed-model failure: {error}",
+                    }
+                )
+            else:
+                mixed_result.update(
+                    {
+                        "source": source_name,
+                        "estimand": (
+                            "mixed_model_mid_repetition_cohort_effect"
+                        ),
+                    }
+                )
+                source_rows.append(mixed_result)
             value_column = f"{outcome}_median"
             result = person_label_permutation(
                 source_people,
@@ -455,7 +690,7 @@ def analyze_feature_artifacts(
                 seed=seed + 400 + source_index * 20 + outcome_index,
                 bootstrap_samples=max(100, min(permutations, 1000)),
             )
-            source_rows.append(
+            person_rows.append(
                 {
                     "outcome": outcome,
                     "source": source_name,
@@ -467,17 +702,31 @@ def analyze_feature_artifacts(
                     "n_student": result["n_student"],
                 }
             )
-        adjusted = holm_adjust(
-            np.asarray([row["p_value"] for row in source_rows])
+        if source_rows:
+            adjusted = holm_adjust(
+                np.asarray(
+                    [row["cohort_p_value"] for row in source_rows]
+                )
+            )
+            for row, p_holm in zip(source_rows, adjusted, strict=True):
+                row["cohort_p_holm_within_source"] = float(p_holm)
+        person_adjusted = holm_adjust(
+            np.asarray([row["p_value"] for row in person_rows])
         )
-        for row, p_holm in zip(source_rows, adjusted, strict=True):
+        for row, p_holm in zip(person_rows, person_adjusted, strict=True):
             row["p_holm_within_source"] = float(p_holm)
         sensitivity_rows.extend(source_rows)
+        sensitivity_person_rows.extend(person_rows)
 
     staging.mkdir(parents=True)
     try:
         pd.DataFrame(core_rows).to_csv(
             staging / "core_mixed_models.csv",
+            index=False,
+            float_format="%.10g",
+        )
+        pd.DataFrame(no_fold_rows).to_csv(
+            staging / "core_mixed_models_no_fold.csv",
             index=False,
             float_format="%.10g",
         )
@@ -501,6 +750,7 @@ def analyze_feature_artifacts(
                 "end_phase",
                 "cluster_mass",
                 "p_value",
+                "p_holm_across_metrics",
                 "direction",
             ),
         ).to_csv(
@@ -512,9 +762,21 @@ def analyze_feature_artifacts(
             columns=("outcome", "joint_or_region", "effect", "p_value", "p_fdr")
         ).to_csv(staging / "exploratory_fdr.csv", index=False)
         pd.DataFrame(sensitivity_rows).to_csv(
-            staging / "sensitivity_results.csv",
+            staging / "sensitivity_mixed_models.csv",
             index=False,
             float_format="%.10g",
+        )
+        pd.DataFrame(sensitivity_person_rows).to_csv(
+            staging / "sensitivity_person_medians.csv",
+            index=False,
+            float_format="%.10g",
+        )
+        pd.DataFrame(
+            sensitivity_exclusions,
+            columns=("source", "artifact", "outcome", "reason"),
+        ).to_csv(
+            staging / "sensitivity_exclusions.csv",
+            index=False,
         )
         (staging / "model_diagnostics.json").write_text(
             json.dumps(diagnostics, indent=2, sort_keys=True) + "\n",
@@ -527,6 +789,7 @@ def analyze_feature_artifacts(
                 "RQ1_cohort": list(CORE_OUTCOMES),
                 "RQ2_variability": list(CORE_OUTCOMES),
                 "RQ3_interaction": list(CORE_OUTCOMES),
+                "phase_descriptors": ["theta", "omega", "tilt", "wrist"],
             },
             "inputs": {
                 "cycle_features.csv": sha256_file(
@@ -541,6 +804,11 @@ def analyze_feature_artifacts(
                 "sensitivity_person_features": {
                     name: sha256_file(path / "person_features.csv")
                     for name, path in sensitivity_paths.items()
+                },
+                "sensitivity_cycle_features": {
+                    name: sha256_file(path / "cycle_features.csv")
+                    for name, path in sensitivity_paths.items()
+                    if (path / "cycle_features.csv").is_file()
                 },
             },
             "outputs": {

@@ -60,10 +60,19 @@ def render_report(
         raise ValueError("analysis manifest must contain eight prespecified outcomes")
     core = pd.read_csv(statistics / "core_mixed_models.csv")
     variability = pd.read_csv(statistics / "variability_results.csv")
+    sensitivity = pd.read_csv(
+        statistics / "sensitivity_mixed_models.csv"
+    )
     people = pd.read_csv(features / "person_features.csv")
     if tuple(core["outcome"]) != CORE_OUTCOMES:
         raise ValueError("core model table does not match prespecified order")
     variability = variability.set_index("outcome")
+    if set(sensitivity["cycle_reference"]) != {0.5}:
+        raise ValueError("sensitivity models must use the mid-repetition reference")
+    if set(sensitivity["estimand"]) != {
+        "mixed_model_mid_repetition_cohort_effect"
+    }:
+        raise ValueError("sensitivity models must use the primary estimand")
 
     rows: list[dict[str, object]] = []
     for _, model in core.iterrows():
@@ -87,6 +96,9 @@ def render_report(
                 "student_q25": float(student.quantile(0.25)),
                 "student_q75": float(student.quantile(0.75)),
                 "cohort_effect": float(model["cohort_effect"]),
+                "cohort_effect_standardized": float(
+                    model["cohort_effect_standardized"]
+                ),
                 "cohort_ci_low": float(model["cohort_ci_low"]),
                 "cohort_ci_high": float(model["cohort_ci_high"]),
                 "cohort_p_holm": float(model["cohort_p_holm"]),
@@ -124,6 +136,7 @@ def render_report(
             report_table,
             features / "phase_curves.npz",
             statistics / "phase_clusters.csv",
+            sensitivity,
             staging / "cohort_cycle_analysis.pdf",
         )
         manifest = {
@@ -145,6 +158,9 @@ def render_report(
                 "phase_clusters.csv": sha256_file(
                     statistics / "phase_clusters.csv"
                 ),
+                "sensitivity_mixed_models.csv": sha256_file(
+                    statistics / "sensitivity_mixed_models.csv"
+                ),
                 "analysis_manifest.json": sha256_file(
                     statistics / "analysis_manifest.json"
                 ),
@@ -163,14 +179,18 @@ def render_report(
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
-    return {"core_outcomes": len(report_table), "figure_panels": 4}
+    return {
+        "core_outcomes": len(report_table),
+        "figure_panels": 4,
+        "panel_c": "source_matched_sensitivity",
+    }
 
 
 def _latex_table(table: pd.DataFrame) -> str:
     lines = [
         r"\begin{table}",
         r"\centering",
-        r"\caption{Out-of-fold cohort and repeated-cycle analysis. Cohort effects are elderly-minus-student mixed-model coefficients at the first-cycle reference; angular speed, duration, and repeatability use log models. MAD effects are person-level median differences. Values are estimated kinematic descriptors, not clinical joint angles.}",
+        r"\caption{Out-of-fold cohort and repeated-cycle analysis. Cohort effects are elderly-minus-student mixed-model coefficients at the mid-repetition reference (normalized cycle position 0.5); angular speed, duration, and repeatability use log models. MAD effects are person-level median differences. Values are estimated kinematic descriptors, not clinical joint angles.}",
         r"\label{tab:cohort_cycle_results}",
         r"\scriptsize",
         r"\resizebox{\linewidth}{!}{%",
@@ -186,12 +206,12 @@ def _latex_table(table: pd.DataFrame) -> str:
             f"[{row['elderly_q25']:.3f}, {row['elderly_q75']:.3f}] & "
             f"{row['student_median']:.3f} "
             f"[{row['student_q25']:.3f}, {row['student_q75']:.3f}] & "
-            f"{row['cohort_effect']:.3f} "
-            f"[{row['cohort_ci_low']:.3f}, {row['cohort_ci_high']:.3f}] & "
+            f"{row['cohort_effect']:.4f} "
+            f"[{row['cohort_ci_low']:.4f}, {row['cohort_ci_high']:.4f}] & "
             f"{row['cohort_p_holm']:.4f} & "
-            f"{row['variability_effect']:.3f} "
+            f"{row['variability_effect']:.4f} "
             f"({row['variability_p_holm']:.4f}) & "
-            f"{row['interaction_effect']:.3f} "
+            f"{row['interaction_effect']:.4f} "
             f"({row['interaction_p_holm']:.4f}) \\\\"
         )
     lines.extend(
@@ -210,6 +230,7 @@ def _render_figure(
     table: pd.DataFrame,
     phase_path: Path,
     cluster_path: Path,
+    sensitivity: pd.DataFrame,
     output_path: Path,
 ) -> None:
     figure, axes = plt.subplots(2, 2, figsize=(11.0, 8.0))
@@ -217,9 +238,16 @@ def _render_figure(
     positions = np.arange(len(table))
 
     axis = axes[0, 0]
-    effect = table["cohort_effect"].to_numpy()
-    low = effect - table["cohort_ci_low"].to_numpy()
-    high = table["cohort_ci_high"].to_numpy() - effect
+    effect = table["cohort_effect_standardized"].to_numpy()
+    raw_effect = table["cohort_effect"].to_numpy()
+    scale = np.divide(
+        effect,
+        raw_effect,
+        out=np.ones_like(effect),
+        where=np.abs(raw_effect) > 1e-12,
+    )
+    low = effect - table["cohort_ci_low"].to_numpy() * scale
+    high = table["cohort_ci_high"].to_numpy() * scale - effect
     axis.errorbar(
         effect,
         positions,
@@ -231,8 +259,8 @@ def _render_figure(
     axis.axvline(0.0, color="0.5", linewidth=1)
     axis.set_yticks(positions, labels)
     axis.invert_yaxis()
-    axis.set_title("A  Adjusted cohort effects")
-    axis.set_xlabel("Elderly − student estimate")
+    axis.set_title("A  Standardized adjusted cohort effects")
+    axis.set_xlabel("Standardized model-scale coefficient")
 
     axis = axes[0, 1]
     variability = table["variability_effect"].to_numpy()
@@ -256,29 +284,58 @@ def _render_figure(
     axis.set_title("B  Within-person MAD differences")
     axis.set_xlabel("Elderly − student median MAD")
 
-    representative = table.iloc[0]
-    phase = np.linspace(0.0, 1.0, 101)
     axis = axes[1, 0]
-    student_change = representative["cycle_effect"] * phase
-    elderly_change = (
-        representative["cycle_effect"]
-        + representative["interaction_effect"]
-    ) * phase
-    axis.plot(phase, student_change, label="Student", color="#315a7d")
-    axis.plot(phase, elderly_change, label="Elderly", color="#a14f3d")
-    axis.set_title(
-        _repetition_panel_title(
-            label=str(representative["label"]),
-            interaction_p_holm=float(
-                representative["interaction_p_holm"]
-            ),
-        )
+    selected_outcomes = (
+        ("angular_speed_p95", "Angular speed", "o", "#315a7d"),
+        (
+            "log_dimensionless_angular_jerk",
+            "Log dimensionless jerk",
+            "s",
+            "#a14f3d",
+        ),
     )
-    axis.set_xlabel("Normalized cycle order")
-    axis.set_ylabel("Change from first cycle")
+    source_order = [
+        source
+        for source in ("oof_a6", "face", "side", "deterministic")
+        if source in set(sensitivity["source"])
+    ]
+    source_labels = {
+        "oof_a6": "OOF A6",
+        "face": "Face",
+        "side": "Side",
+        "deterministic": "Deterministic",
+    }
+    source_positions = np.arange(len(source_order), dtype=float)
+    for outcome, label, marker, color in selected_outcomes:
+        subset = (
+            sensitivity.loc[sensitivity["outcome"] == outcome]
+            .set_index("source")
+            .reindex(source_order)
+        )
+        estimate = subset["cohort_effect"].to_numpy(dtype=float)
+        low = estimate - subset["cohort_ci_low"].to_numpy(dtype=float)
+        high = subset["cohort_ci_high"].to_numpy(dtype=float) - estimate
+        axis.errorbar(
+            estimate,
+            source_positions,
+            xerr=np.vstack([low, high]),
+            fmt=marker,
+            color=color,
+            capsize=3,
+            label=label,
+        )
+    axis.axvline(0.0, color="0.5", linewidth=1)
+    axis.set_yticks(
+        source_positions,
+        [source_labels[source] for source in source_order],
+    )
+    axis.invert_yaxis()
+    axis.set_title("C  Source-matched cohort sensitivity")
+    axis.set_xlabel("Mid-repetition elderly − student coefficient")
     axis.legend(frameon=False)
 
     axis = axes[1, 1]
+    phase = np.linspace(0.0, 1.0, 101)
     with np.load(phase_path, allow_pickle=False) as archive:
         theta = np.asarray(archive["theta"], dtype=np.float64)
         people = np.asarray(archive["person_id"]).astype(str)
@@ -310,7 +367,7 @@ def _render_figure(
     if not clusters.empty:
         for _, cluster in clusters.loc[
             (clusters["metric"] == "theta")
-            & (clusters["p_value"] < 0.05)
+            & (clusters["p_holm_across_metrics"] < 0.05)
         ].iterrows():
             axis.axvspan(
                 cluster["start_phase"],

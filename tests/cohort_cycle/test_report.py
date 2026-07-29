@@ -63,12 +63,16 @@ def _write_finalized_inputs(root: Path) -> tuple[Path, Path]:
             {
                 "outcome": outcome,
                 "cohort_effect": index / 10.0,
-                "cohort_ci_low": index / 10.0 - 0.05,
+                "cohort_ci_low": (
+                    0.0004 if index == 1 else index / 10.0 - 0.05
+                ),
                 "cohort_ci_high": index / 10.0 + 0.05,
+                "cohort_effect_standardized": index / 20.0,
                 "cohort_p_holm": index / 100.0,
                 "cycle_effect": index / 20.0,
                 "interaction_effect": index / 30.0,
                 "interaction_p_holm": index / 80.0,
+                "cycle_reference": 0.5,
                 "n_people": 12,
                 "n_cycles": 72,
             }
@@ -90,6 +94,30 @@ def _write_finalized_inputs(root: Path) -> tuple[Path, Path]:
         statistics / "variability_results.csv",
         index=False,
     )
+    sensitivity_rows = []
+    for source_index, source in enumerate(
+        ("oof_a6", "face", "side", "deterministic")
+    ):
+        for outcome_index, outcome in enumerate(CORE_OUTCOMES, start=1):
+            effect = outcome_index / 10.0 + source_index / 20.0
+            sensitivity_rows.append(
+                {
+                    "source": source,
+                    "outcome": outcome,
+                    "cohort_effect": effect,
+                    "cohort_ci_low": effect - 0.05,
+                    "cohort_ci_high": effect + 0.05,
+                    "cohort_p_holm_within_source": outcome_index / 20.0,
+                    "cycle_reference": 0.5,
+                    "estimand": (
+                        "mixed_model_mid_repetition_cohort_effect"
+                    ),
+                }
+            )
+    pd.DataFrame(sensitivity_rows).to_csv(
+        statistics / "sensitivity_mixed_models.csv",
+        index=False,
+    )
     pd.DataFrame(
         [
             {
@@ -97,6 +125,7 @@ def _write_finalized_inputs(root: Path) -> tuple[Path, Path]:
                 "start_phase": 0.35,
                 "end_phase": 0.55,
                 "p_value": 0.02,
+                "p_holm_across_metrics": 0.08,
             }
         ]
     ).to_csv(statistics / "phase_clusters.csv", index=False)
@@ -130,10 +159,13 @@ def test_report_renders_eight_source_matched_rows_and_four_panels(
     assert r"\begin{table}" in latex
     assert r"\begin{table*}" not in latex
     assert r"\resizebox{\linewidth}{!}" in latex
-    assert "first-cycle reference" in latex
+    assert "mid-repetition reference" in latex
+    assert "first-cycle reference" not in latex
+    assert "0.0004" in latex
     figure = output / "cohort_cycle_analysis.pdf"
     assert figure.read_bytes().startswith(b"%PDF")
     assert (output / "report_manifest.json").is_file()
+    assert summary["panel_c"] == "source_matched_sensitivity"
 
 
 def test_report_refuses_incomplete_core_manifest(tmp_path: Path):

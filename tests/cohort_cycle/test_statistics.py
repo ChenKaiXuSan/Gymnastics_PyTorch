@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from gymnastics.analysis.cohort_cycle.statistics import (
+    adjust_phase_cluster_families,
     analyze_feature_artifacts,
     bootstrap_icc,
     cliffs_delta,
@@ -97,18 +98,41 @@ def _write_synthetic_feature_artifacts(feature_root):
     )
 
 
-def test_mixed_effect_recovers_cohort_and_cycle_interaction():
-    """Ignoring nesting or the interaction would miss known synthetic effects."""
+def test_mixed_effect_cohort_effect_is_reported_at_mid_repetition():
+    """The primary cohort contrast must describe a representative repetition."""
     result = fit_mixed_effect(
         _synthetic_cycles(),
         "outcome",
         try_random_slope=False,
+        cycle_reference=0.5,
+        include_outer_fold=True,
     )
 
     assert result["converged"] is True
-    assert result["cohort_effect"] == pytest.approx(2.0, abs=0.15)
+    assert result["cycle_reference"] == 0.5
+    assert result["include_outer_fold"] is True
+    assert result["cohort_effect"] == pytest.approx(2.5, abs=0.15)
     assert result["cycle_effect"] == pytest.approx(0.5, abs=0.10)
     assert result["interaction_effect"] == pytest.approx(1.0, abs=0.10)
+    assert result["random_intercept_variance"] >= 0.0
+    assert result["random_slope_variance"] >= 0.0
+    assert result["cohort_effect_se"] > 0.0
+    assert result["maximum_absolute_standardized_residual"] >= 0.0
+
+
+def test_mixed_effect_can_omit_artificial_outer_fold_adjustment():
+    """Outer-fold fixed effects must be auditable as a sensitivity choice."""
+    result = fit_mixed_effect(
+        _synthetic_cycles(),
+        "outcome",
+        try_random_slope=False,
+        cycle_reference=0.5,
+        include_outer_fold=False,
+    )
+
+    assert result["include_outer_fold"] is False
+    assert "C(outer_fold)" not in result["formula"]
+    assert result["cohort_effect"] == pytest.approx(2.5, abs=0.15)
 
 
 def test_person_label_permutation_and_effect_sizes_detect_separation():
@@ -183,13 +207,48 @@ def test_analysis_writes_eight_core_models_and_corrected_families(
 
     assert summary["core_outcomes"] == 8
     core = pd.read_csv(output / "core_mixed_models.csv")
+    no_fold = pd.read_csv(output / "core_mixed_models_no_fold.csv")
     variability = pd.read_csv(output / "variability_results.csv")
     assert len(core) == 8
+    assert len(no_fold) == 8
+    assert set(core["cycle_reference"]) == {0.5}
+    assert set(core["include_outer_fold"]) == {True}
+    assert set(no_fold["include_outer_fold"]) == {False}
     assert core["cohort_p_holm"].notna().all()
     assert core["interaction_p_holm"].notna().all()
     assert len(variability) == 8
     assert variability["p_holm"].notna().all()
-    sensitivity = pd.read_csv(output / "sensitivity_results.csv")
+    sensitivity = pd.read_csv(output / "sensitivity_mixed_models.csv")
+    person_medians = pd.read_csv(output / "sensitivity_person_medians.csv")
     assert len(sensitivity) == 16
+    assert len(person_medians) == 16
     assert set(sensitivity["source"]) == {"oof_a6", "face"}
-    assert sensitivity["effect"].gt(0).all()
+    assert set(sensitivity["cycle_reference"]) == {0.5}
+    assert set(sensitivity["estimand"]) == {
+        "mixed_model_mid_repetition_cohort_effect"
+    }
+    assert sensitivity["cohort_effect"].gt(0).all()
+    phase = pd.read_csv(output / "phase_clusters.csv")
+    assert "p_holm_across_metrics" in phase.columns
+
+
+def test_phase_clusters_are_corrected_across_descriptor_families():
+    """Cluster-wise p-values must also account for four descriptor families."""
+    rows = [
+        {"metric": "theta", "p_value": 0.01},
+        {"metric": "theta", "p_value": 0.03},
+        {"metric": "omega", "p_value": 0.02},
+        {"metric": "tilt", "p_value": 0.40},
+    ]
+
+    corrected = adjust_phase_cluster_families(
+        rows,
+        metrics=("theta", "omega", "tilt", "wrist"),
+    )
+
+    frame = pd.DataFrame(corrected)
+    assert "p_holm_across_metrics" in frame
+    assert frame["p_holm_across_metrics"].ge(frame["p_value"]).all()
+    theta = frame.loc[frame["metric"] == "theta"]
+    assert theta["p_holm_across_metrics"].nunique() == 1
+    assert theta["p_holm_across_metrics"].iloc[0] == pytest.approx(0.04)

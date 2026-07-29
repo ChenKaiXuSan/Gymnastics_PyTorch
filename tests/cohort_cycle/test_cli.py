@@ -415,8 +415,14 @@ def test_analyze_stage_writes_corrected_core_results(tmp_path: Path):
     )
     core = pd.read_csv(output / "core_mixed_models.csv")
     assert len(core) == 8
-    sensitivity = pd.read_csv(output / "sensitivity_results.csv")
+    sensitivity = pd.read_csv(output / "sensitivity_mixed_models.csv")
     assert set(sensitivity["source"]) == {"oof_a6", "face"}
+    assert set(sensitivity["cycle_reference"]) == {0.5}
+    assert set(sensitivity["estimand"]) == {
+        "mixed_model_mid_repetition_cohort_effect"
+    }
+    assert (output / "sensitivity_person_medians.csv").is_file()
+    assert (output / "core_mixed_models_no_fold.csv").is_file()
 
 
 def test_assets_stage_renders_an_explicit_finalized_analysis(tmp_path: Path):
