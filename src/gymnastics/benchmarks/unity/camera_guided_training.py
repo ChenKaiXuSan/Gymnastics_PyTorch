@@ -192,9 +192,9 @@ def _expanded_model(
     if not isinstance(state, Mapping):
         raise ValueError("A6 source checkpoint has no model state")
     missing, unexpected = model.load_state_dict(state, strict=False)
-    expected_prefix = "camera_conditioner."
+    expected_prefixes = ("camera_conditioner.", "camera_delta_head.")
     if unexpected or any(
-        not name.startswith(expected_prefix) for name in missing
+        not name.startswith(expected_prefixes) for name in missing
     ):
         raise ValueError(
             "A6 source state is incompatible with camera-guided expansion"

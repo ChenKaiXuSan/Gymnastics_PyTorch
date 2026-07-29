@@ -170,6 +170,12 @@ class RotationAwareFusionModel(nn.Module):
                 camera_config,
                 hidden_channels=hidden_channels,
             )
+            # Keep a direct, independently bounded camera-motion correction.
+            # This bypass is necessary when a transferred A6 delta head is
+            # already saturated and therefore cannot pass useful gradients.
+            self.camera_delta_head = nn.Linear(hidden_channels, 3)
+            nn.init.zeros_(self.camera_delta_head.weight)
+            nn.init.zeros_(self.camera_delta_head.bias)
         self.tcn = DilatedResidualTCN(hidden_channels)
         self.delta_head = nn.Linear(hidden_channels, 3)
         # 改法2: opt-in rotation-parameterised trunk-twist residual. Off by default
@@ -369,6 +375,7 @@ class RotationAwareFusionModel(nn.Module):
                 camera_features,
                 effective_mask,
             )
+        camera_residual_features = fused_features
         batch, frames, joints, channels = fused_features.shape
         temporal = fused_features.permute(0, 2, 3, 1).reshape(batch * joints, channels, frames)
         tcn_mask = effective_mask.permute(0, 2, 1).reshape(batch * joints, 1, frames)
@@ -376,6 +383,21 @@ class RotationAwareFusionModel(nn.Module):
         raw_delta = self.delta_head(temporal.reshape(batch, joints, channels, frames).permute(0, 3, 1, 2))
         bounded_delta = torch.tanh(raw_delta) * self.max_delta_by_joint[None, None, :, None].to(dtype=face.dtype)
         delta = torch.where(effective_mask[..., None], bounded_delta, torch.zeros_like(bounded_delta))
+        if self.camera_config is not None:
+            raw_camera_delta = self.camera_delta_head(
+                camera_residual_features
+            )
+            bounded_camera_delta = (
+                torch.tanh(raw_camera_delta)
+                * self.max_delta_by_joint[None, None, :, None].to(
+                    dtype=face.dtype
+                )
+            )
+            delta = delta + torch.where(
+                effective_mask[..., None],
+                bounded_camera_delta,
+                torch.zeros_like(bounded_camera_delta),
+            )
         if self.twist_residual and self.twist_head is not None:
             # Pool the per-joint fused features to one per-frame vector, predict a
             # bounded trunk-twist correction, and apply it about the pelvis long

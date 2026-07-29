@@ -88,7 +88,10 @@ def test_zero_initialized_camera_model_starts_as_exact_a6_and_receives_gradient(
         base.state_dict(), strict=False
     )
     assert missing
-    assert all(name.startswith("camera_conditioner.") for name in missing)
+    assert all(
+        name.startswith(("camera_conditioner.", "camera_delta_head."))
+        for name in missing
+    )
     assert not unexpected
     face = _inputs()[0]
     camera = _camera_bundle(face)
@@ -156,3 +159,28 @@ def test_camera_bundle_zeros_invalid_nonfinite_rows() -> None:
         sanitized.joint_features[:, 2, 5],
         torch.zeros_like(sanitized.joint_features[:, 2, 5]),
     )
+
+
+def test_camera_residual_bypasses_a_saturated_a6_delta_head() -> None:
+    """Unity can saturate A6's tanh; camera gradients must still reach output."""
+    torch.manual_seed(12)
+    model = RotationAwareFusionModel(
+        SPEC,
+        hidden_channels=16,
+        camera_config=CameraConditioningConfig(19, 8, mode="film"),
+    )
+    with torch.no_grad():
+        model.delta_head.weight.zero_()
+        model.delta_head.bias.fill_(-100.0)
+        model.camera_delta_head.bias.fill_(0.25)
+    face = _inputs()[0]
+    camera = _camera_bundle(face)
+
+    output = _run(model, camera)
+    loss = output.fused_kpts.square().mean()
+    loss.backward()
+
+    assert model.camera_delta_head.weight.grad is not None
+    assert model.camera_delta_head.weight.grad.abs().sum() > 0
+    saturated_a6 = -model.max_delta_by_joint[None, None, :, None]
+    assert not torch.allclose(output.delta_kpts, saturated_a6)
