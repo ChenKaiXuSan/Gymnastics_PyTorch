@@ -156,7 +156,7 @@ def test_report_renders_eight_source_matched_rows_and_four_panels(
     assert table.loc[0, "cohort_p_holm"] == pytest.approx(0.01)
     latex = (output / "cohort_cycle_results.tex").read_text(encoding="utf-8")
     assert "0.0100" in latex
-    assert r"\begin{table}[H]" in latex
+    assert r"\begin{table}" in latex
     assert r"\begin{table*}" not in latex
     assert r"\resizebox{\linewidth}{!}" in latex
     assert "mid-repetition reference" in latex

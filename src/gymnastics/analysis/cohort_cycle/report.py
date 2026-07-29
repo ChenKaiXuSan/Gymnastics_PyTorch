@@ -188,7 +188,7 @@ def render_report(
 
 def _latex_table(table: pd.DataFrame) -> str:
     lines = [
-        r"\begin{table}[H]",
+        r"\begin{table}",
         r"\centering",
         r"\caption{Out-of-fold cohort and repeated-cycle analysis. Cohort effects are elderly-minus-student mixed-model coefficients at the mid-repetition reference (normalized cycle position 0.5); angular speed, duration, and repeatability use log models. MAD effects are person-level median differences. Values are estimated kinematic descriptors, not clinical joint angles.}",
         r"\label{tab:cohort_cycle_results}",
