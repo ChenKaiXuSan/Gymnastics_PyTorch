@@ -8,7 +8,10 @@ import pandas as pd
 import pytest
 
 from gymnastics.analysis.cohort_cycle.features import CORE_OUTCOMES
-from gymnastics.analysis.cohort_cycle.report import render_report
+from gymnastics.analysis.cohort_cycle.report import (
+    _repetition_panel_title,
+    render_report,
+)
 
 
 def _write_finalized_inputs(root: Path) -> tuple[Path, Path]:
@@ -124,6 +127,10 @@ def test_report_renders_eight_source_matched_rows_and_four_panels(
     assert table.loc[0, "cohort_p_holm"] == pytest.approx(0.01)
     latex = (output / "cohort_cycle_results.tex").read_text(encoding="utf-8")
     assert "0.0100" in latex
+    assert r"\begin{table}" in latex
+    assert r"\begin{table*}" not in latex
+    assert r"\resizebox{\linewidth}{!}" in latex
+    assert "first-cycle reference" in latex
     figure = output / "cohort_cycle_analysis.pdf"
     assert figure.read_bytes().startswith(b"%PDF")
     assert (output / "report_manifest.json").is_file()
@@ -144,3 +151,16 @@ def test_report_refuses_incomplete_core_manifest(tmp_path: Path):
 
     with pytest.raises(ValueError, match="eight prespecified"):
         render_report(features, statistics, tmp_path / "report")
+
+
+def test_repetition_panel_names_metric_and_reports_adjusted_interaction():
+    """The representative trend must not look like an unlabeled finding."""
+    title = _repetition_panel_title(
+        label="Axial rotation ROM",
+        interaction_p_holm=1.0,
+    )
+
+    assert title == (
+        "C  Axial rotation ROM repetition trend "
+        "(interaction $p_{Holm}=1.000$)"
+    )

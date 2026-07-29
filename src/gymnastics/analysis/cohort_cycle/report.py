@@ -29,6 +29,17 @@ OUTCOME_LABELS = {
 }
 
 
+def _repetition_panel_title(
+    *,
+    label: str,
+    interaction_p_holm: float,
+) -> str:
+    return (
+        f"C  {label} repetition trend "
+        f"(interaction $p_{{Holm}}={interaction_p_holm:.3f}$)"
+    )
+
+
 def render_report(
     feature_root: str | Path,
     statistics_root: str | Path,
@@ -157,11 +168,12 @@ def render_report(
 
 def _latex_table(table: pd.DataFrame) -> str:
     lines = [
-        r"\begin{table*}[t]",
+        r"\begin{table}",
         r"\centering",
-        r"\caption{Out-of-fold cohort and repeated-cycle analysis. Values are estimated kinematic descriptors, not clinical joint angles.}",
+        r"\caption{Out-of-fold cohort and repeated-cycle analysis. Cohort effects are elderly-minus-student mixed-model coefficients at the first-cycle reference; angular speed, duration, and repeatability use log models. MAD effects are person-level median differences. Values are estimated kinematic descriptors, not clinical joint angles.}",
         r"\label{tab:cohort_cycle_results}",
         r"\scriptsize",
+        r"\resizebox{\linewidth}{!}{%",
         r"\begin{tabular}{lcccccc}",
         r"\toprule",
         r"Outcome & Elderly median [IQR] & Student median [IQR] & Cohort effect [95\% CI] & $p_{\mathrm{Holm}}$ & MAD effect ($p_{\mathrm{Holm}}$) & Cohort$\times$cycle ($p_{\mathrm{Holm}}$) \\",
@@ -185,8 +197,9 @@ def _latex_table(table: pd.DataFrame) -> str:
     lines.extend(
         [
             r"\bottomrule",
-            r"\end{tabular}",
-            r"\end{table*}",
+            r"\end{tabular}%",
+            r"}",
+            r"\end{table}",
             "",
         ]
     )
@@ -253,7 +266,14 @@ def _render_figure(
     ) * phase
     axis.plot(phase, student_change, label="Student", color="#315a7d")
     axis.plot(phase, elderly_change, label="Elderly", color="#a14f3d")
-    axis.set_title("C  Model-estimated repetition trend")
+    axis.set_title(
+        _repetition_panel_title(
+            label=str(representative["label"]),
+            interaction_p_holm=float(
+                representative["interaction_p_holm"]
+            ),
+        )
+    )
     axis.set_xlabel("Normalized cycle order")
     axis.set_ylabel("Change from first cycle")
     axis.legend(frameon=False)
