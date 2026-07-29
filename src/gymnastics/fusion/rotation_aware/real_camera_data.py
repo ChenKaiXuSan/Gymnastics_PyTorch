@@ -8,6 +8,7 @@ camera-guided ablations used by the Unity benchmark.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -161,6 +162,13 @@ def _frame_path(
     )
 
 
+@lru_cache(maxsize=200_000)
+def _cached_keypoints_2d(path: str) -> np.ndarray:
+    points = np.asarray(load_keypoints_2d(Path(path)), dtype=np.float64)
+    points.setflags(write=False)
+    return points
+
+
 def _load_view_pixels(
     sam3d_person_root: str | Path,
     person_id: str,
@@ -174,7 +182,7 @@ def _load_view_pixels(
         path = _frame_path(sam3d_person_root, person_id, view, int(frame_index))
         if not path.is_file():
             raise FileNotFoundError(f"Missing SAM3D frame: {path}")
-        points = np.asarray(load_keypoints_2d(path), dtype=np.float64)
+        points = np.array(_cached_keypoints_2d(str(path)), copy=True)
         points = cv2.undistortPoints(
             points.reshape(-1, 1, 2),
             np.asarray(camera_matrix, dtype=np.float64),
