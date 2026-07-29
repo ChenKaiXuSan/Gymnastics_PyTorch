@@ -346,6 +346,24 @@ def write_camera_guided_report(
             f"{float(row['ci95_high_delta_mpjpe_mm']):.3f}] | "
             f"{row['improved_cells']}/6 | {row['comparison']} |"
         )
+    by_ablation = {
+        str(row["ablation"]): row for row in by_method
+    }
+    g0_mpjpe = float(by_ablation["G0"]["macro_mpjpe_mm"])
+    g4_mpjpe = float(by_ablation["G4"]["macro_mpjpe_mm"])
+    g5_mpjpe = float(by_ablation["G5"]["macro_mpjpe_mm"])
+    g4_delta = g4_mpjpe - g0_mpjpe
+    g4_percent = 100.0 * g4_delta / g0_mpjpe
+    if g4_mpjpe < g0_mpjpe and g4_mpjpe < g5_mpjpe:
+        interpretation = (
+            "G4 improves over both G0 and the wrong-camera G5 control, "
+            "so this result supports a correct-camera geometry claim."
+        )
+    else:
+        interpretation = (
+            "G4 does not beat the wrong-camera G5 control, so this result "
+            "does not support a correct-camera geometry claim."
+        )
     lines.extend(
         (
             "",
@@ -353,8 +371,35 @@ def write_camera_guided_report(
             "Intervals resample six fold/seed cells and are descriptive because "
             "Unity contains one avatar and one physical rig.",
             "",
+            "## Interpretation",
+            "",
+            f"G4 changes held-out MPJPE by {g4_delta:.3f} mm "
+            f"({g4_percent:.3f}%) relative to G0. {interpretation}",
+            "",
         )
     )
+    static_rows: dict[str, list[float]] = {}
+    for row in run_rows:
+        if row.get("split_kind") != "static_ood":
+            continue
+        static_rows.setdefault(str(row["ablation"]), []).append(
+            float(row["mpjpe_mm"])
+        )
+    if static_rows:
+        lines.extend(
+            (
+                "## Static out-of-distribution diagnostic",
+                "",
+                "| Method | MPJPE (mm) |",
+                "|---|---:|",
+            )
+        )
+        for ablation, values in sorted(
+            static_rows.items(),
+            key=lambda item: float(np.mean(item[1])),
+        ):
+            lines.append(f"| {ablation} | {float(np.mean(values)):.3f} |")
+        lines.append("")
     report_path.write_text("\n".join(lines), encoding="utf-8")
     provenance_path = output_root / "provenance.json"
     provenance_path.write_text(

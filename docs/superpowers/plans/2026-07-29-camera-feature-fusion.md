@@ -376,3 +376,35 @@ differences, camera-fit audit, negative-control result, limitations, and paths
 to every report artifact. Do not modify the manuscript until the evidence
 supports a mainline change.
 
+## Execution notes (2026-07-29)
+
+- Completed the full two-fold, three-seed G0--G5 matrix: 36 checkpoints,
+  36 provenance records, and 72 held-out/static inference files; no failed
+  cells.
+- The first matrix exposed a Unity transfer failure in A6: the raw residual
+  reached approximately `-6.2e7`, saturating every valid coordinate at the
+  `tanh` bound. All six outputs were therefore byte-identical. Those artifacts
+  are retained under
+  `local/runs/unity_benchmark/camera_feature_fusion_saturation_audit`.
+- Added a zero-initialized, independently bounded camera-motion residual bypass
+  and a regression test proving it retains gradients when the original A6 head
+  is saturated. G0 remains the original A6 behavior.
+- Final held-out continuous MPJPE ranking (mm):
+  G5 175.903, G4 175.905, G3 175.909, G2 175.932, G1 175.934, G0 176.088.
+- G4 minus G0 was `-0.183 mm` (`-0.104%`), with descriptive paired-cell 95%
+  interval `[-0.197, -0.168] mm` and improvement in 6/6 fold/seed cells.
+  Angle MAE changed from 45.223 degrees (G0) to 45.252 degrees (G4).
+- The wrong-camera G5 control was 0.001 mm better than G4 in the macro result
+  and better in 5/6 paired cells. The static diagnostic was likewise
+  indistinguishable (G5 271.221 mm, G4 271.222 mm). Therefore the experiment
+  does not support a correct-camera geometry claim; the small improvement is
+  consistent with the added residual capacity.
+- Camera-fit audits were valid: left-to-right inlier ratio 0.637 and held-out
+  reprojection 2.084 px; right-to-left inlier ratio 0.620 and held-out
+  reprojection 1.967 px.
+- Primary report:
+  `local/runs/unity_benchmark/camera_feature_fusion/evaluation/camera_feature_report.md`.
+  Machine-readable tables are beside it in `by_method.csv`,
+  `comparisons_vs_g0.csv`, and `metrics_by_sequence.csv`.
+- This result should remain a separate negative/diagnostic study and should not
+  replace the paper mainline.

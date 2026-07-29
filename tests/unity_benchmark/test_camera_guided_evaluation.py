@@ -70,5 +70,6 @@ def test_report_writes_ranked_markdown_and_csv_tables(tmp_path: Path) -> None:
     report = outputs["report"].read_text(encoding="utf-8")
     assert "G4" in report
     assert "negative control" in report
+    assert "supports a correct-camera geometry claim" in report
     assert outputs["by_method"].is_file()
     assert outputs["comparisons_vs_g0"].is_file()

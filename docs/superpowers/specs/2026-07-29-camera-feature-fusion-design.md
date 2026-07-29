@@ -72,11 +72,16 @@ camera global/joint encoder
 camera-motion FiLM (G4/G5) or additive conditioning (G1-G3)
           |
 existing temporal TCN and bounded residual
+          +
+independently bounded camera-motion residual bypass
 ```
 
 The camera encoder is zero-initialized at its final projection so loading an A6
 checkpoint initially reproduces the source model exactly. G0 has no camera
 parameters. Camera-enabled checkpoints record the feature schema and ablation.
+The direct camera-motion residual is also zero-initialized. It preserves the
+exact A6 initialization while retaining a gradient path when the transferred
+A6 `tanh` residual is saturated under domain shift.
 
 ## Swap behavior
 
@@ -116,4 +121,3 @@ Secondary outcomes:
 - Only private pseudo-reference improves: treat the result as evaluation
   coupling, not accuracy evidence.
 - Fitted-camera methods remain a separate calibrated-input block in the paper.
-
