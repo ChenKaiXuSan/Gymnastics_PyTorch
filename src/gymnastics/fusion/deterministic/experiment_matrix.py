@@ -19,6 +19,11 @@ DEFAULT_SAM3D_ROOT = Path("/home/data/xchen/gymnastics/sam3d_body_results")
 DEFAULT_TRIANGULATED_ROOT = Path("/home/data/xchen/gymnastics/sam3d_triangulated/person")
 DEFAULT_SPLIT_ROOT = Path("local/runs/split_cycle")
 DEFAULT_OUT_DIR = Path("local/runs/fuse_experiments")
+DEFAULT_EXTRINSICS_PATH = Path(
+    "local/runs/analysis/extrinsics/estimated_extrinsics.json"
+)
+DEFAULT_SKELETON_PATH = Path("configs/fusion/skeleton_mhr70.yaml")
+DEFAULT_ALIGNED_CACHE_ROOT = Path("local/runs/fuse_rotation_aware/cache")
 
 PELVIS_INDICES = (9, 10)
 BODY_IDX = {"lhip": 9, "rhip": 10, "lsho": 5, "rsho": 6}
@@ -33,7 +38,7 @@ IDX = {
     "rpinky_tip": 37,
 }
 STABLE_SIM3_JOINTS = (5, 6, 9, 10, 11, 12, 13, 14, 15, 16)
-ALL_METHODS = (
+NO_EXTRINSIC_METHODS = (
     "avg_body_current",
     "avg_world_face_ref",
     "root_face_stable",
@@ -44,6 +49,14 @@ ALL_METHODS = (
     "sim3_face_stable_smooth_transform",
     "sim3_face_stable_smooth_kpt",
 )
+EXTRINSIC_METHODS = (
+    "extrinsic_r_average",
+    "extrinsic_r_quality_average",
+)
+# Backward-compatible name used by the FreeMan benchmark, whose pose-pair
+# schema does not currently carry camera extrinsics.
+ALL_METHODS = NO_EXTRINSIC_METHODS
+AVAILABLE_METHODS = NO_EXTRINSIC_METHODS + EXTRINSIC_METHODS
 
 
 @dataclass(frozen=True)
@@ -258,6 +271,136 @@ def load_split_alignment_offset(split_root: Path, person_id: str) -> Tuple[int, 
     return int(metadata["offset_side_to_face"]), metadata
 
 
+def load_extrinsic_rotation(
+    path: Path,
+    person_id: str,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Load and validate the calibrated face-to-side rotation for one person.
+
+    The extrinsics file follows the triangulation convention
+    ``X_side = R X_face + t`` for column vectors. Root-relative SAM3D poses only
+    use ``R``; the camera translation is deliberately excluded.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"Missing estimated extrinsics: {path}")
+    document = json.loads(path.read_text(encoding="utf-8"))
+    persons = document.get("persons")
+    if not isinstance(persons, Mapping):
+        raise ValueError(f"Estimated extrinsics has no persons mapping: {path}")
+    entry = persons.get(str(person_id))
+    if not isinstance(entry, Mapping):
+        raise KeyError(f"Estimated extrinsics has no entry for person {person_id}: {path}")
+    rotation = np.asarray(entry.get("R"), dtype=np.float64)
+    is_rotation = (
+        rotation.shape == (3, 3)
+        and np.isfinite(rotation).all()
+        and np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-4)
+        and np.isclose(np.linalg.det(rotation), 1.0, atol=1e-4)
+    )
+    if not is_rotation:
+        raise ValueError(
+            f"Estimated extrinsics for person {person_id} does not contain a valid rotation"
+        )
+    metadata = dict(entry)
+    metadata["person_id"] = str(person_id)
+    metadata["source_path"] = str(path)
+    return rotation.astype(np.float32), metadata
+
+
+def load_aligned_cycle_cache(
+    cache_root: Path,
+    person_id: str,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
+    """Load immutable split-cycle face/side arrays from the aligned cache."""
+    person_root = cache_root / f"person_{person_id}"
+    pointer_path = person_root / "manifest.json"
+    if not pointer_path.exists():
+        raise FileNotFoundError(f"Missing aligned-cache manifest: {pointer_path}")
+    pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+    generation = pointer.get("generation")
+    if generation is None:
+        data_root = person_root
+        manifest = pointer
+    else:
+        if not isinstance(generation, str) or not generation:
+            raise ValueError(f"Invalid aligned-cache generation: {pointer_path}")
+        data_root = person_root / ".generations" / generation
+        manifest_path = data_root / "manifest.json"
+        if not manifest_path.exists():
+            raise FileNotFoundError(
+                f"Missing aligned-cache generation manifest: {manifest_path}"
+            )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("generation") != generation:
+            raise ValueError(
+                f"Aligned-cache generation mismatch for person {person_id}"
+            )
+    trials = manifest.get("trials")
+    if (
+        not isinstance(trials, list)
+        or not trials
+        or not all(isinstance(trial, str) and trial for trial in trials)
+    ):
+        raise ValueError(
+            f"Aligned-cache manifest has no valid trials for person {person_id}"
+        )
+
+    face_chunks: List[np.ndarray] = []
+    side_chunks: List[np.ndarray] = []
+    face_map_chunks: List[np.ndarray] = []
+    side_map_chunks: List[np.ndarray] = []
+    for trial in trials:
+        path = data_root / f"{trial}.npz"
+        if not path.exists():
+            raise FileNotFoundError(f"Missing aligned-cache trial: {path}")
+        with np.load(path, allow_pickle=False) as data:
+            required = {"face", "side", "face_map", "side_map"}
+            if not required.issubset(data.files):
+                raise ValueError(
+                    f"Aligned-cache trial is missing {sorted(required - set(data.files))}: {path}"
+                )
+            face = np.asarray(data["face"], dtype=np.float32)
+            side = np.asarray(data["side"], dtype=np.float32)
+            face_map = np.asarray(data["face_map"], dtype=np.int32)
+            side_map = np.asarray(data["side_map"], dtype=np.int32)
+        if (
+            face.shape != side.shape
+            or face.ndim != 3
+            or face.shape[-1] != 3
+            or face_map.shape != (len(face),)
+            or side_map.shape != (len(face),)
+        ):
+            raise ValueError(f"Invalid aligned-cache trial shapes: {path}")
+        face_chunks.append(face)
+        side_chunks.append(side)
+        face_map_chunks.append(face_map)
+        side_map_chunks.append(side_map)
+
+    source = manifest.get("source")
+    if not isinstance(source, Mapping) or "offset_side_to_face" not in source:
+        raise ValueError(
+            f"Aligned-cache manifest has no split offset for person {person_id}"
+        )
+    metadata = {
+        "cache_root": str(cache_root),
+        "person_id": str(person_id),
+        "generation": generation,
+        "source_hash": manifest.get("source_hash"),
+        "config_hash": manifest.get("config_hash"),
+        "offset_side_to_face": int(source["offset_side_to_face"]),
+        "trials": list(trials),
+        "trial_lengths": [int(len(chunk)) for chunk in face_chunks],
+        "sequence_scope": "split_cycles_concatenated",
+    }
+    return (
+        np.concatenate(face_chunks),
+        np.concatenate(side_chunks),
+        np.concatenate(face_map_chunks),
+        np.concatenate(side_map_chunks),
+        metadata,
+    )
+
+
 def build_aligned_timeline(
     face_by_frame: Mapping[int, np.ndarray],
     side_by_frame: Mapping[int, np.ndarray],
@@ -364,6 +507,120 @@ def root_align_to_reference(side: np.ndarray, face: np.ndarray) -> np.ndarray:
     side_root = np.nanmean(side[:, PELVIS_INDICES, :], axis=1, keepdims=True)
     face_root = np.nanmean(face[:, PELVIS_INDICES, :], axis=1, keepdims=True)
     return (side + (face_root - side_root)).astype(np.float32)
+
+
+def align_side_with_extrinsic_rotation(
+    side: np.ndarray,
+    face: np.ndarray,
+    rotation_face_to_side: np.ndarray,
+) -> np.ndarray:
+    """Rotate root-relative side poses into face axes and restore face pelvis.
+
+    For the column-vector calibration convention ``X_side = R X_face + t``,
+    the equivalent row-vector direction mapping from side to face is
+    ``X_side @ R``. Translation is inappropriate for the root-relative SAM3D
+    poses and is therefore replaced by pelvis centring/restoration.
+    """
+    side = np.asarray(side, dtype=np.float32)
+    face = np.asarray(face, dtype=np.float32)
+    rotation = np.asarray(rotation_face_to_side, dtype=np.float32)
+    if side.shape != face.shape or side.ndim != 3 or side.shape[-1] != 3:
+        raise ValueError("face and side must have matching shape [T, J, 3]")
+    if rotation.shape != (3, 3):
+        raise ValueError("rotation_face_to_side must have shape [3, 3]")
+    side_root = np.nanmean(side[:, PELVIS_INDICES, :], axis=1, keepdims=True)
+    face_root = np.nanmean(face[:, PELVIS_INDICES, :], axis=1, keepdims=True)
+    return ((side - side_root) @ rotation + face_root).astype(np.float32)
+
+
+def fuse_extrinsic_rotation(
+    face: np.ndarray,
+    side: np.ndarray,
+    rotation_face_to_side: np.ndarray,
+) -> np.ndarray:
+    """Equally average face and externally rotation-aligned side poses."""
+    side_aligned = align_side_with_extrinsic_rotation(
+        side, face, rotation_face_to_side
+    )
+    return (0.5 * (face + side_aligned)).astype(np.float32)
+
+
+def fuse_quality_weighted(
+    face: np.ndarray,
+    side_aligned: np.ndarray,
+    face_quality: np.ndarray,
+    side_quality: np.ndarray,
+    *,
+    eps: float = 1e-8,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Fuse two aligned sequences using normalized non-negative frame scores."""
+    face_quality = np.asarray(face_quality, dtype=np.float32)
+    side_quality = np.asarray(side_quality, dtype=np.float32)
+    expected = (face.shape[0],)
+    if face.shape != side_aligned.shape:
+        raise ValueError("face and side_aligned must have matching shapes")
+    if face_quality.shape != expected or side_quality.shape != expected:
+        raise ValueError(f"quality arrays must have shape {expected}")
+    scores = np.stack(
+        [
+            np.where(np.isfinite(face_quality), np.maximum(face_quality, 0.0), 0.0),
+            np.where(np.isfinite(side_quality), np.maximum(side_quality, 0.0), 0.0),
+        ],
+        axis=1,
+    )
+    totals = scores.sum(axis=1, keepdims=True)
+    weights = np.divide(
+        scores,
+        totals,
+        out=np.full_like(scores, 0.5),
+        where=totals > eps,
+    )
+    fused = (
+        face * weights[:, None, [0]]
+        + side_aligned * weights[:, None, [1]]
+    )
+    return fused.astype(np.float32), weights.astype(np.float32)
+
+
+def rotation_aware_quality_scores(
+    points: np.ndarray,
+    skeleton: Any,
+) -> np.ndarray:
+    """Reuse the fixed quality feature from the rotation-aware mainline."""
+    import torch
+
+    from gymnastics.fusion.rotation_aware.features import compute_quality_features
+    from gymnastics.fusion.rotation_aware.trunk import extract_trunk_features
+
+    tensor = torch.from_numpy(np.asarray(points, dtype=np.float32)).unsqueeze(0)
+    valid = torch.isfinite(tensor).all(dim=-1)
+    tensor = torch.nan_to_num(tensor)
+    trunk = extract_trunk_features(tensor, valid, skeleton, dt=1.0)
+    quality = compute_quality_features(tensor, valid, trunk, skeleton)
+    return quality.score[0].cpu().numpy().astype(np.float32)
+
+
+def rotation_aware_quality_scores_by_trial(
+    points: np.ndarray,
+    skeleton: Any,
+    trial_lengths: Sequence[int],
+) -> np.ndarray:
+    """Compute quality with the same per-cycle temporal scope as the mainline."""
+    lengths = [int(length) for length in trial_lengths]
+    if not lengths or any(length <= 0 for length in lengths):
+        raise ValueError("trial_lengths must contain positive values")
+    if sum(lengths) != len(points):
+        raise ValueError("trial_lengths must sum to the sequence length")
+    chunks: List[np.ndarray] = []
+    start = 0
+    for length in lengths:
+        chunks.append(
+            rotation_aware_quality_scores(
+                points[start : start + length], skeleton
+            )
+        )
+        start += length
+    return np.concatenate(chunks).astype(np.float32)
 
 
 def fuse_weighted(face: np.ndarray, side_aligned: np.ndarray, weights: np.ndarray) -> np.ndarray:
@@ -718,17 +975,58 @@ def process_person(
     out_root: Path,
     save_frame_npz: bool,
     alignment: str = DEFAULT_ALIGNMENT,
+    extrinsics_path: Path = DEFAULT_EXTRINSICS_PATH,
+    quality_skeleton: Any | None = None,
+    aligned_cache_root: Path | None = None,
 ) -> Tuple[List[PersonMetric], List[JointMetric]]:
-    face_by_frame = load_sam3d_world_by_frame(sam3d_root, person_id, "face")
-    side_by_frame = load_sam3d_world_by_frame(sam3d_root, person_id, "side")
-    split_offset, split_metadata = load_split_alignment_offset(split_root, person_id)
-    face, side, face_map, side_map, offset = build_aligned_timeline(
-        face_by_frame,
-        side_by_frame,
-        offset_override=split_offset,
-    )
+    if aligned_cache_root is None:
+        face_by_frame = load_sam3d_world_by_frame(sam3d_root, person_id, "face")
+        side_by_frame = load_sam3d_world_by_frame(sam3d_root, person_id, "side")
+        split_offset, split_metadata = load_split_alignment_offset(
+            split_root, person_id
+        )
+        face, side, face_map, side_map, offset = build_aligned_timeline(
+            face_by_frame,
+            side_by_frame,
+            offset_override=split_offset,
+        )
+        sequence_scope = "full_overlap_timeline"
+        time_alignment = "split_alignment_record"
+    else:
+        face, side, face_map, side_map, split_metadata = (
+            load_aligned_cycle_cache(aligned_cache_root, person_id)
+        )
+        offset = int(split_metadata["offset_side_to_face"])
+        sequence_scope = str(split_metadata["sequence_scope"])
+        time_alignment = "immutable_split_cycle_cache"
     triangulated_person_root = triangulated_root / f"person_{person_id}"
     has_triangulated = triangulated_person_root.exists() and any(triangulated_person_root.glob("cycle_*"))
+
+    needs_extrinsics = any(method in EXTRINSIC_METHODS for method in methods)
+    extrinsic_rotation = None
+    extrinsic_metadata: Dict[str, Any] | None = None
+    if needs_extrinsics:
+        extrinsic_rotation, extrinsic_metadata = load_extrinsic_rotation(
+            extrinsics_path, person_id
+        )
+    face_quality = None
+    side_quality = None
+    if "extrinsic_r_quality_average" in methods:
+        if quality_skeleton is None:
+            raise ValueError(
+                "quality_skeleton is required for extrinsic_r_quality_average"
+            )
+        trial_lengths = split_metadata.get("trial_lengths")
+        if isinstance(trial_lengths, list):
+            face_quality = rotation_aware_quality_scores_by_trial(
+                face, quality_skeleton, trial_lengths
+            )
+            side_quality = rotation_aware_quality_scores_by_trial(
+                side, quality_skeleton, trial_lengths
+            )
+        else:
+            face_quality = rotation_aware_quality_scores(face, quality_skeleton)
+            side_quality = rotation_aware_quality_scores(side, quality_skeleton)
 
     sim3_all = None
     sim3_stable = None
@@ -739,10 +1037,12 @@ def process_person(
 
     for method in methods:
         extra: Dict[str, Any] = {
-            "time_alignment": "split_alignment_record",
+            "time_alignment": time_alignment,
+            "sequence_scope": sequence_scope,
             "offset_side_to_face": int(offset),
             "split_alignment": split_metadata,
             "fusion_method": method,
+            "uses_camera_extrinsics": method in EXTRINSIC_METHODS,
         }
         if method == "avg_body_current":
             fused_world = current_body_average(face, side)
@@ -808,6 +1108,41 @@ def process_person(
             extra["smooth_window"] = 5
             extra["scale_mean"] = float(np.mean(sim3_stable_scales))
             fused_world = smooth_sequence(0.5 * (face + sim3_stable), win=5)
+        elif method == "extrinsic_r_average":
+            assert extrinsic_rotation is not None
+            assert extrinsic_metadata is not None
+            extra["extrinsics"] = extrinsic_metadata
+            extra["extrinsic_alignment"] = (
+                "side_to_face_rotation_only_after_pelvis_centering"
+            )
+            extra["camera_translation_used"] = False
+            fused_world = fuse_extrinsic_rotation(
+                face, side, extrinsic_rotation
+            )
+        elif method == "extrinsic_r_quality_average":
+            assert extrinsic_rotation is not None
+            assert extrinsic_metadata is not None
+            assert face_quality is not None
+            assert side_quality is not None
+            side_aligned = align_side_with_extrinsic_rotation(
+                side, face, extrinsic_rotation
+            )
+            fused_world, frame_weights = fuse_quality_weighted(
+                face, side_aligned, face_quality, side_quality
+            )
+            extra["extrinsics"] = extrinsic_metadata
+            extra["extrinsic_alignment"] = (
+                "side_to_face_rotation_only_after_pelvis_centering"
+            )
+            extra["camera_translation_used"] = False
+            extra["quality_source"] = "rotation_aware_fixed_quality_features"
+            extra["quality_temporal_scope"] = (
+                "per_split_cycle"
+                if isinstance(split_metadata.get("trial_lengths"), list)
+                else "full_overlap_timeline"
+            )
+            extra["mean_face_weight"] = float(np.mean(frame_weights[:, 0]))
+            extra["mean_side_weight"] = float(np.mean(frame_weights[:, 1]))
         else:
             raise ValueError(f"Unsupported method: {method}")
 
@@ -872,8 +1207,34 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--triangulated-root", type=Path, default=DEFAULT_TRIANGULATED_ROOT)
     parser.add_argument("--split-root", type=Path, default=DEFAULT_SPLIT_ROOT)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+    parser.add_argument(
+        "--extrinsics-path",
+        type=Path,
+        default=DEFAULT_EXTRINSICS_PATH,
+        help="Estimated per-person camera extrinsics JSON.",
+    )
+    parser.add_argument(
+        "--skeleton-path",
+        type=Path,
+        default=DEFAULT_SKELETON_PATH,
+        help="Skeleton definition used by the fixed quality score.",
+    )
+    parser.add_argument(
+        "--aligned-cache-root",
+        type=Path,
+        default=None,
+        help=(
+            "Optional immutable split-cycle cache. When supplied, fusion is "
+            "restricted to the cached evaluation cycles and skips raw frame NPZ reads."
+        ),
+    )
     parser.add_argument("--person", nargs="*", default=None, help="Optional person ids, e.g. 27 29")
-    parser.add_argument("--methods", nargs="*", default=list(ALL_METHODS), choices=ALL_METHODS)
+    parser.add_argument(
+        "--methods",
+        nargs="*",
+        default=list(NO_EXTRINSIC_METHODS),
+        choices=AVAILABLE_METHODS,
+    )
     parser.add_argument("--save-frame-npz", action="store_true", help="Also save old per-frame npz format.")
     parser.add_argument(
         "--alignment",
@@ -893,13 +1254,29 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    quality_skeleton = None
+    if "extrinsic_r_quality_average" in args.methods:
+        from gymnastics.fusion.rotation_aware.config import load_skeleton_spec
+
+        quality_skeleton = load_skeleton_spec(args.skeleton_path)
     all_person_metrics: List[PersonMetric] = []
     all_joint_metrics: List[JointMetric] = []
     config = {
         "sam3d_root": str(args.sam3d_root),
         "triangulated_root": str(args.triangulated_root),
         "split_root": str(args.split_root),
+        "extrinsics_path": str(args.extrinsics_path),
+        "skeleton_path": str(args.skeleton_path),
+        "aligned_cache_root": (
+            None
+            if args.aligned_cache_root is None
+            else str(args.aligned_cache_root)
+        ),
         "methods": list(args.methods),
+        "method_groups": {
+            "without_camera_extrinsics": list(NO_EXTRINSIC_METHODS),
+            "with_camera_extrinsics": list(EXTRINSIC_METHODS),
+        },
         "stable_sim3_joints": list(STABLE_SIM3_JOINTS),
         "save_frame_npz": bool(args.save_frame_npz),
         "alignment": str(args.alignment),
@@ -920,6 +1297,9 @@ def main() -> None:
             out_root=args.out_dir,
             save_frame_npz=args.save_frame_npz,
             alignment=args.alignment,
+            extrinsics_path=args.extrinsics_path,
+            quality_skeleton=quality_skeleton,
+            aligned_cache_root=args.aligned_cache_root,
         )
         all_person_metrics.extend(person_metrics)
         all_joint_metrics.extend(joint_metrics)
