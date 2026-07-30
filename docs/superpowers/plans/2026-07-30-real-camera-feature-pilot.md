@@ -365,3 +365,95 @@ git add configs/fusion/real_camera_pilot.yaml \
   docs/superpowers/plans/2026-07-30-real-camera-feature-pilot.md
 git commit -m "feat: run real-data fitted-camera pilot"
 ```
+
+---
+
+## Execution Record — 2026-07-30
+
+Status: **completed; preregistered camera claim not supported**.
+
+### Executed matrix
+
+- Fold: `local/runs/cohort_cycle/folds/fold_00.json`
+- People: 96 train / 27 validation / 14 test
+- Cycles: 654 train / 181 validation / 93 test
+- Cells: G0--G5 x seeds 0, 1, 2 = 18
+- G0: unchanged A6 source weights, zero optimizer steps
+- G1--G5: 10 epochs, batch size 32, AdamW `1e-4`, only
+  `camera_conditioner.*` and `camera_delta_head.*` trainable
+- Evaluation: person-pooled MPJPE after per-frame similarity alignment to
+  triangulated pseudo-GT; all reported distances below are millimetres
+- Outputs: `local/runs/fitted_camera_real/fold_00`
+
+The A6 complete-cycle ROM term was not re-optimized during camera adaptation.
+The already learned A6 rotation prior remained frozen, while the added camera
+branch was trained with the window-level source objectives. This avoids the
+batch-size-32 mismatch that would otherwise update an arbitrary 44/654 complete
+cycles per epoch.
+
+### Final ranking
+
+| Rank | Cell | Mean person MPJPE (mm) | Median (mm) | SD of seed means (mm) |
+|---:|---|---:|---:|---:|
+| 1 | G0 | 60.5777 | 58.0508 | 0.8337 |
+| 2 | G1 | 60.8000 | 58.1869 | 0.5970 |
+| 3 | G2 | 60.8043 | 58.1890 | 0.6021 |
+| 4 | G3 | 60.8411 | 58.1853 | 0.4909 |
+| 5 | G4 | 60.8499 | 58.1773 | 0.4885 |
+| 6 | G5 | 60.8504 | 58.1792 | 0.4875 |
+
+G0 is the best cell. The 60.58 mm fold-0 number is not directly comparable to
+the 64.05 mm all-137-person main-table result because this pilot evaluates only
+the 14 held-out fold-0 people and averages three source seeds.
+
+### Paired comparisons
+
+| Cell | Baseline | Mean delta MPJPE (mm) | Person-clustered bootstrap 95% CI (mm) | Improved people |
+|---|---|---:|---:|---:|
+| G1 | G0 | +0.2223 | [+0.1734, +0.2716] | 0/14 |
+| G2 | G0 | +0.2267 | [+0.1771, +0.2763] | 0/14 |
+| G3 | G0 | +0.2635 | [+0.2061, +0.3186] | 0/14 |
+| G4 | G0 | +0.2723 | [+0.1953, +0.3458] | 0/14 |
+| G5 | G0 | +0.2728 | [+0.1959, +0.3463] | 0/14 |
+| G4 | G5 | -0.0005 | [-0.0010, -0.00005] | 9/14 |
+
+Correct-camera G4 is only 0.0005 mm better than wrong-camera G5, while both are
+about 0.27 mm worse than G0. The difference is numerically negligible and does
+not rescue the primary comparison. Therefore the fitted-camera claim fails the
+predeclared requirement that G4 beat both G0 and G5 in a meaningful way.
+
+### Interpretation
+
+The added branch consistently perturbs an already strong frozen A6 solution.
+The near identity of G4 and G5 shows that the trained residual is effectively
+insensitive to whether the supplied camera rotation is correct. Plausible
+contributors are:
+
+1. the frozen A6 representation already captures the useful two-view and torso
+   rotation information;
+2. per-person camera fits are noisy (median held-out reprojection error
+   6.2677 px);
+3. window-level self-supervision has no explicit geometric objective forcing
+   the branch to use epipolar or ray-angle features.
+
+This experiment should be reported as a negative ablation or appendix result,
+not promoted to the paper mainline. A follow-up would need an explicit
+geometry-consistency loss, confidence gating, and preferably independently
+calibrated camera labels.
+
+### Integrity and completeness audit
+
+- 18 checkpoints and 18 provenance records
+- 1,674 inference sequences (18 x 93)
+- 252 person rows (18 x 14)
+- 738 non-camera checkpoint tensors verified bit-identical to their matching
+  A6 source tensors
+- all primary cycle/person/method MPJPE values finite
+- every run records
+  `triangulated_3d_available_to_training: false` and
+  `test_people_available_to_training: false`
+- compact observation cache contains 928/928 cycles; the selective loader was
+  verified exactly equal to the standard SAM3D 2D loader (`max_abs = 0`)
+
+Primary report:
+`local/runs/fitted_camera_real/fold_00/evaluation/real_camera_feature_report.md`.
