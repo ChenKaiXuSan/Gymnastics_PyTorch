@@ -1,0 +1,43 @@
+\begin{figure}
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[
+  node distance=5mm and 7mm,
+  box/.style={draw=EvalGray, rounded corners=2pt, align=center, minimum height=9mm, text width=24mm, fill=white},
+  face/.style={box, draw=FaceBlue, very thick},
+  side/.style={box, draw=SideOrange, very thick},
+  fuse/.style={box, draw=FuseGreen, very thick},
+  arrow/.style={-{Latex[length=2mm]}, thick, draw=EvalGray},
+  note/.style={font=\scriptsize, align=center}
+]
+\node[face] (face) {Face canonical pose};
+\node[side, below=of face] (side) {Side canonical pose};
+\node[box, right=of face] (sharedf) {Shared view encoder};
+\node[box, right=of side] (shareds) {Shared view encoder};
+\node[box, right=10mm of sharedf, yshift=-7mm] (sym) {Mean and absolute difference};
+\node[box, below=of sym] (cross) {Symmetric disagreement encoder};
+\node[fuse, right=of sym, yshift=-7mm] (tcn) {Six-block dilated residual TCN};
+\node[fuse, right=of tcn] (delta) {Bounded joint residual};
+\node[box, above=of delta] (base) {Quality-weighted base};
+\node[fuse, right=of delta, yshift=7mm] (out) {Fused canonical pose};
+
+\draw[arrow] (face) -- (sharedf);
+\draw[arrow] (side) -- (shareds);
+\draw[arrow] (sharedf) -- (sym);
+\draw[arrow] (shareds) -- (sym);
+\draw[arrow] (face.east) to[bend left=12] (cross.west);
+\draw[arrow] (side.east) to[bend right=12] (cross.west);
+\draw[arrow] (sym) -- (tcn);
+\draw[arrow] (cross) -- (tcn);
+\draw[arrow] (tcn) -- (delta);
+\draw[arrow] (face.north east) to[bend left=22] (base.west);
+\draw[arrow] (side.south east) to[bend right=24] (base.west);
+\draw[arrow] (base) -- (out);
+\draw[arrow] (delta) -- (out);
+\end{tikzpicture}
+}
+\caption{Fusion architecture. Both semantic views pass through one shared
+encoder. Only symmetric combinations enter the residual TCN. The learned output
+is a bounded correction to a detached quality-weighted base.}
+\label{fig:architecture}
+\end{figure}

@@ -1,0 +1,92 @@
+\section{Results}
+\label{sec:results}
+
+\subsection{Deterministic private-data matrix}
+
+\input{tables/deterministic_baselines}
+
+The regenerated matrix contains one finite person-level result for each of nine
+methods and 137 people (1,233 rows). The numerically smallest mean
+pseudo-reference distance, 0.0635 repository units, belongs to the
+pseudo-reference-fitted joint-weight diagnostic and is excluded from eligible
+comparisons. Body-frame averaging is the lowest leakage-free method at 0.0640.
+Relative to world-coordinate averaging (0.1221), canonical body-frame averaging
+reduces the mean by 47.54\%. Stable-joint Sim3 averaging is close at 0.0646,
+whereas all-joint Sim3 is 0.0738.
+
+\begin{figure}
+\centering
+\includegraphics[width=\linewidth]{figures/deterministic_mpjpe.pdf}
+\caption{Mean person-level distance to the same-video triangulated
+pseudo-reference and fixed-seed 95\% bootstrap confidence interval for the
+deterministic matrix. Units are repository coordinate units.}
+\label{fig:deterministic}
+\end{figure}
+
+The strongest leakage-free intervals overlap. Accordingly, the deterministic
+evidence supports canonicalization as the dominant operation, but does not
+establish universal superiority of one eligible weighting or smoothing rule.
+World-coordinate and root-aligned averages are nearly identical because the
+evaluator removes root translation before scoring.
+
+\subsection{Primary held-out learned comparison}
+
+\input{tables/learned_results}
+
+On the held-out test set ($N=14$), A6 reaches 60.78~mm after the declared
+sequence-level similarity alignment. Arithmetic averaging A2 differs from A6
+by $+0.07$~mm (95\% CI $-0.50$ to $+0.59$,
+$p_{\mathrm{Holm}}=1.000$), and A5 differs by $+0.02$~mm
+(95\% CI $-0.38$ to $+0.43$, $p_{\mathrm{Holm}}=1.000$). These
+data do not distinguish the three methods in position error. A3 is
+$0.26$~mm worse (95\% CI $0.17$--$0.35$), and A7 is $0.54$~mm
+worse (95\% CI $0.38$--$0.69$); both paired Holm-adjusted
+$p=0.0011$. A8 and A9 degrade substantially to 92.02 and 94.11~mm.
+
+All A2--A9 outputs are view-swap invariant to the reported precision. A6 has
+A3-relative ROM and peak-$\omega$ retention of 1.000 and bone CV of 0.0190.
+A7 does not reproduce the apparent all-person ROM increase on the held-out
+people: its A3-relative ROM and peak-$\omega$ ratios are 0.948 and 0.821.
+Thus, A6 remains the mainline because it is the complete prespecified,
+auditable constrained objective, not because it wins positional accuracy.
+
+The 137-person learned inference remains useful as a descriptive all-person
+diagnostic, but it combines training, validation, and test people and is not a
+generalization estimate. In particular, its apparent A7 motion-retention
+advantage is not used to override the held-out result.
+
+\subsection{Validation-only robustness diagnostics}
+
+The fixed-corruption manifest contains 27 validation people and seven
+corruption families. A6 has larger aggregate clean-to-corrupted displacement
+than A4 and A5 (0.120 versus approximately 0.09 repository units); this metric
+measures output movement under a challenge, not recovery toward independent
+truth. Table~\ref{tab:robustness-results} details A3 and A6 by family.
+
+\input{tables/robustness_results}
+
+For dropout families A6 moves more than A3, whereas shared coordinate shifts
+move both outputs similarly. A temporal-offset sweep over all 137 people is
+also descriptive: shifting the side map by $\pm2$ and $\pm4$ frames moves A6
+by 0.046 and 0.078 repository units, essentially matching the deterministic
+mean. The learned model therefore inherits rather than resolves the upstream
+global-offset dependence.
+
+\subsection{Limited Unity native-3D evaluation}
+
+\input{tables/unity_benchmark}
+
+The independent synthetic reference changes the interpretation. Among
+uncalibrated direct-3D methods, the world-coordinate average obtains
+166.537~mm, whereas zero-shot A6 obtains 178.506~mm. A6 therefore provides no
+external-transfer improvement in this setting. Calibrated triangulation from
+SAM3D 2D evidence is much lower at 30.259~mm and 15.198$^\circ$ angle MAE.
+
+With Unity native 3D supervision, the calibrated 3D extrinsic gate averages
+153.645~mm over two folds and three seeds, a 6.74\% improvement over its
+matched direct-average baseline (164.748~mm). Learnable triangulation averages
+28.058~mm, 1.88\% below its matched fixed-triangulation baseline
+(28.596~mm). These supervised rows answer different questions and are not
+evidence that the private no-GT learner generalizes. The Unity benchmark itself
+contains only one avatar/environment and a fixed camera pair, so it defines a
+failure boundary rather than a population-level benchmark claim.

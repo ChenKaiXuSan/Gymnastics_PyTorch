@@ -1,0 +1,100 @@
+\documentclass[a4paper,fleqn]{cas-sc}
+
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{microtype}
+\usepackage{siunitx}
+\usepackage{tabularx}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,shapes.geometric}
+
+\definecolor{FaceBlue}{HTML}{0072B2}
+\definecolor{SideOrange}{HTML}{E69F00}
+\definecolor{FuseGreen}{HTML}{009E73}
+\definecolor{EvalGray}{HTML}{666666}
+\definecolor{PendingRed}{HTML}{A51C30}
+\newcommand{\resultpending}[1]{\textcolor{PendingRed}{\textbf{[Pending: #1]}}}
+\newcommand{\pendingcell}{\textcolor{PendingRed}{\textbf{Pending}}}
+\newcommand{\submissionpending}[1]{\textcolor{PendingRed}{\textbf{[Submission item: #1]}}}
+\newcommand{\methodname}{Rotation-Aware Self-Supervised Fusion}
+
+\begin{document}
+\let\WriteBookmarks\relax
+\def\floatpagepagefraction{1}
+\def\textpagefraction{.001}
+
+\shorttitle{Rotation-Aware Two-View 3D Pose Fusion}
+\shortauthors{K. Chen}
+
+\title[mode=title]{Rotation-Aware Self-Supervised Fusion of Temporally Aligned Two-View 3D Human Poses}
+
+\author[1]{Kaixu Chen}
+\cormark[1]
+\ead{chenkaixusan@gmail.com}
+\credit{Conceptualization, Methodology, Software, Validation, Formal analysis, Investigation, Data curation, Visualization, Writing -- original draft, Writing -- review and editing}
+\affiliation[1]{organization={CCS}}
+\cortext[1]{Corresponding author}
+
+\begin{abstract}
+Monocular three-dimensional pose estimates from different views retain
+view-dependent coordinate, depth, and occlusion errors. We study
+post-estimation fusion of two temporally aligned 3D keypoint streams without
+camera parameters or 3D reference poses during training. The proposed A6
+framework canonicalizes both streams and applies a view-swap-invariant temporal
+network that predicts a bounded residual over a quality-weighted mean.
+Reproducible corruptions, cross-view consensus, skeletal structure, temporal
+dynamics, and complete-cycle rotation provide self-supervision. On 137 people,
+body-frame averaging reduced mean distance to a same-video triangulated
+pseudo-reference by 47.54\% relative to world-coordinate averaging. On the
+held-out test set ($N=14$), A6 obtained 60.78~mm after sequence-level
+similarity alignment; it was statistically indistinguishable from arithmetic
+averaging (60.85~mm) and A5 (60.80~mm). A6 is therefore retained as the complete
+constrained objective, not as a positional-accuracy winner. Limited external
+testing against Unity native 3D (199 samples, one avatar/environment) found no
+zero-shot improvement for A6 over direct 3D averaging (178.506 versus
+166.537~mm); calibrated 2D triangulation was substantially better
+(30.259~mm), but represents a different input regime. Person-disjoint
+out-of-fold A6 inference additionally yielded 928 cycles from 80
+elderly-labeled and 57 student-labeled participants. Centered mixed models found
+cohort differences in angular speed and log dimensionless jerk, but
+source-matched sensitivity showed materially smaller or absent effects in other
+pose streams. These observational, model-derived descriptors are not causal
+ageing or clinical findings.
+\end{abstract}
+
+\begin{highlights}
+\item Fusion uses two monocular 3D pose streams without camera parameters.
+\item Pelvis-thorax rotations guide a swap-invariant residual temporal model.
+\item Self-supervision combines recovery, structure, motion, and cycle losses.
+\item Evaluation separates held-out, descriptive, and Unity evidence populations.
+\item Person-disjoint A6 outputs support cohort and repeated-cycle analysis.
+\end{highlights}
+
+\begin{keywords}
+3D human pose \sep multi-view fusion \sep self-supervised learning \sep
+temporal convolution \sep trunk rotation \sep markerless motion analysis
+\end{keywords}
+
+\maketitle
+
+\input{sections/01_introduction}
+\input{sections/02_related_work}
+\input{sections/03_problem_formulation}
+\input{sections/04_method}
+\input{sections/05_experimental_protocol}
+\input{sections/06_results}
+\input{sections/06b_cohort_cycle_analysis}
+\input{sections/07_discussion}
+\input{sections/08_limitations}
+\input{sections/09_conclusion}
+\input{sections/declarations}
+
+\printcredits
+
+\bibliographystyle{cas-model2-names}
+\bibliography{references}
+
+\end{document}

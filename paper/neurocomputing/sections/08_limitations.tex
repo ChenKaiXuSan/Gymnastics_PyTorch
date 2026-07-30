@@ -1,0 +1,60 @@
+\section{Limitations}
+\label{sec:limitations}
+
+\paragraph{Private pseudo-reference.}
+The private triangulated evaluator uses 2D evidence from the same videos as the
+monocular 3D inputs. Its errors can be correlated with candidate errors, and
+sequence-level Sim3 plus hip centering removes some failure modes before
+scoring. Private MPJPE is agreement with one upstream construction, not
+absolute 3D accuracy.
+
+\paragraph{Small single-seed held-out study.}
+The primary learned test contains only 14 people and one training seed. Paired
+tests control person reuse across methods but do not estimate optimization
+variance or broad population uncertainty. The 137-person learned values include
+training and validation participants and are descriptive only.
+
+\paragraph{Limited synthetic external validation.}
+Unity provides native 3D independent of the private pseudo-reference, but only
+199 samples, three sequences, one avatar/environment, and one fixed camera
+pair. It cannot establish population generality. Its negative A6 result and the
+advantage of calibrated triangulation should be replicated on diverse real
+multi-view benchmarks.
+
+\paragraph{Observational cohort labels and unmeasured confounding.}
+Elderly and student are dataset group labels, not randomized exposures.
+Individual age, sex, health, training history, body size, and other covariates
+are unavailable. Person-disjoint inference prevents direct train/test leakage
+but does not make the comparison causal. The reported coefficients cannot be interpreted as ageing effects,
+normative values, impairment markers, or clinical evidence.
+
+\paragraph{Pose-source and estimand sensitivity.}
+The A6 speed and jerk coefficients are much larger than the same centered
+mixed-model coefficients from face, side, or deterministic features.
+Person-median A6 comparisons are also not corrected-significant. This
+instability limits the application to hypothesis generation until independent
+kinematics and repeated cross-fit seeds are available.
+
+\paragraph{Dependence on upstream errors.}
+Both views originate from one monocular estimator and skeletal model.
+Canonicalization cannot correct shared joint-definition, anthropometric, or
+hallucination errors. High-consensus identity may reinforce common bias, and
+synthetic corruptions cannot span the full real error distribution.
+
+\paragraph{Alignment, views, and movement specificity.}
+The loader honors one global side-to-face offset and does not model drift,
+dropped frames, rolling shutter, or nonlinear local misalignment. Only one
+face/side pair and one gymnastics movement family are studied. The architecture
+is symmetric to view order but does not support a variable number of cameras.
+
+\paragraph{Coordinate and anatomical interpretation.}
+The output is restored to an uncalibrated face reference. Pelvis and thorax
+frames depend directly on estimated hips and shoulders, and A3-relative
+retention is not a comparison to physical motion. The method does not estimate
+validated clinical joint angles, forces, or moments.
+
+\paragraph{Model and governance choices.}
+Loss weights, residual bounds, and corruption probabilities are manually
+specified. Ethics approval or exemption, participant consent wording,
+institutional postal address, and release conditions for code and derived data
+remain author-governance items that must be verified before submission.

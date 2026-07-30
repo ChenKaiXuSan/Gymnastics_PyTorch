@@ -1,0 +1,28 @@
+\begin{table*}[t]
+\centering
+\caption{Person-level agreement with the triangulated pseudo-reference for the
+verified deterministic experiment matrix. Values are in repository coordinate
+units. The confidence interval is a fixed-seed percentile bootstrap over people
+and does not establish absolute 3D accuracy. Lower MPJPE is better. The
+pseudo-reference-fitted joint-weight row is a legacy diagnostic and is not an
+eligible label-free comparator.}
+\label{tab:deterministic-baselines}
+\small
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{r l r S[table-format=1.4] S[table-format=1.4] S[table-format=1.4] c c}
+\toprule
+Rank & Method & $N$ & {Mean} & {SD} & {Median} & {IQR} & {95\% CI of mean} \\
+\midrule
+1 & Sim3 + pseudo-reference-fitted joint weights (leaky diagnostic) & 137 & 0.0635 & 0.0160 & 0.0611 & [0.0521, 0.0706] & [0.0609, 0.0662] \\
+2 & \textbf{Body-frame average (recommended leakage-free)} & 137 & 0.0640 & 0.0161 & 0.0623 & [0.0532, 0.0717] & [0.0615, 0.0668] \\
+3 & Sim3 (stable joints) + average & 137 & 0.0646 & 0.0159 & 0.0616 & [0.0536, 0.0730] & [0.0621, 0.0673] \\
+4 & Sim3 + body-part weights & 137 & 0.0649 & 0.0162 & 0.0621 & [0.0540, 0.0736] & [0.0622, 0.0676] \\
+5 & Sim3 + side smoothing + average & 137 & 0.0655 & 0.0159 & 0.0628 & [0.0545, 0.0739] & [0.0629, 0.0682] \\
+6 & Sim3 + average + output smoothing & 137 & 0.0663 & 0.0159 & 0.0640 & [0.0556, 0.0746] & [0.0637, 0.0690] \\
+7 & Sim3 (all joints) + average & 137 & 0.0738 & 0.0195 & 0.0725 & [0.0601, 0.0828] & [0.0707, 0.0771] \\
+8 & World-coordinate average & 137 & 0.1221 & 0.0184 & 0.1210 & [0.1082, 0.1325] & [0.1190, 0.1252] \\
+9 & Root alignment + average & 137 & 0.1222 & 0.0184 & 0.1210 & [0.1082, 0.1326] & [0.1191, 0.1252] \\
+\bottomrule
+\end{tabular}
+}
+\end{table*}

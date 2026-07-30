@@ -1,0 +1,23 @@
+\begin{table}[t]
+\centering
+\caption{Per-family robustness under the fixed corruption manifest (27-person
+manifest subset, single seed). Each value is the person-level mean displacement
+of a method's output from its own clean output, on the frames the family
+corrupts (repository coordinate units); smaller means the output moves less under
+that corruption.}
+\label{tab:robustness-results}
+\small
+\begin{tabular}{l c c}
+\toprule
+Challenge & A3 & A6 \\
+\midrule
+Joint dropout & 0.0629 & 0.0873 \\
+Temporal block dropout & 0.0619 & 0.0873 \\
+Impulse noise & 0.0605 & 0.0605 \\
+Random-walk drift & 0.0445 & 0.0445 \\
+Thorax rotation bias & 0.0312 & 0.0312 \\
+Frozen segment & 0.0643 & 0.0643 \\
+Integer time shift & 0.0348 & 0.0348 \\
+\bottomrule
+\end{tabular}
+\end{table}

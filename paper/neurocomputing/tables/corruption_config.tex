@@ -1,0 +1,19 @@
+\begin{table}[t]
+\centering
+\caption{Default synthetic-corruption configuration in canonical units.}
+\label{tab:corruptions}
+\small
+\begin{tabular}{l l}
+\toprule
+Corruption & Default \\
+\midrule
+Independent joint dropout & probability 0.05 \\
+Temporal block dropout & joint probability 0.25; 16 frames \\
+Impulse noise & probability 0.02; scale 0.10 \\
+Random-walk drift & joint probability 0.10; step scale 0.01 \\
+Thorax rotation bias & frame probability 0.10; $\pm12^{\circ}$ \\
+Frozen segment & joint probability 0.10; 12 frames \\
+Integer time shift & joint probability 0.10; at most 4 frames \\
+\bottomrule
+\end{tabular}
+\end{table}
