@@ -1,0 +1,140 @@
+\section{Experimental protocol}
+\label{sec:experiments}
+
+\subsection{Dataset and evidence populations}
+
+The private dataset contains paired face- and side-view gymnastics videos.
+Each video is processed independently by the fixed SAM 3D Body estimator to
+obtain 70 MHR keypoints. Split-cycle records provide one side-to-face offset and
+cycle bounds. A separate pipeline triangulates SAM3D 2D keypoints from the same
+videos; this same-video construction is used only as a pseudo-reference.
+
+The frozen learned split contains 96 training, 27 validation, and 14 held-out
+test people. Model optimization uses only the training split. The validation
+split controls checkpoint selection and the fixed-corruption diagnostics. The
+primary learned generalization result is the held-out test set ($N=14$).
+Predictions over all 137 complete people are a descriptive all-person
+diagnostic and are not used as the primary accuracy estimate. The downstream
+cohort experiment instead uses ten person-disjoint outer folds so that every
+person receives an out-of-fold A6 prediction. Table~\ref{tab:data-status}
+separates these evidence populations.
+
+\input{tables/dataset_inventory}
+
+\subsection{Comparison methods and ablations}
+
+The deterministic matrix contains nine alignment, weighting, and smoothing
+variants. The pseudo-reference-fitted per-joint weighting row is retained only
+as a leakage diagnostic because it reads the evaluation target when deriving
+its weights. A0--A3 in Table~\ref{tab:ablation-design} are deterministic outputs
+from the learned pipeline; A4--A6 progressively activate spatial,
+rotation/temporal, and complete-cycle losses at fixed architecture and split.
+A6 is the prespecified method mainline because it is the complete constrained
+objective. A7--A9 are post hoc trunk-twist ablations and not replacements for
+the mainline.
+
+\input{tables/ablation_matrix}
+
+\subsection{Training configuration}
+
+The model has 128 hidden channels, 128-frame training windows with stride 32,
+evaluation stride 64, batch size 32, and a per-joint residual bound of 0.05
+normalized trial units. Training uses Adam at $10^{-3}$ for 100 epochs and one
+declared seed (0); across-seed variance is therefore not estimated. Checkpoint
+selection uses only bounded self-supervised validation scores. The checkpoint,
+configuration, split hash, immutable cache identities, code commit, and
+corruption-manifest hash are archived. Table~\ref{tab:corruptions} lists the
+fixed corruption settings.
+
+\input{tables/corruption_config}
+
+\subsection{Private-data metrics}
+
+\paragraph{Pseudo-reference agreement.}
+Candidate and triangulated trials are matched through saved frame maps. The
+external evaluator estimates one static similarity transform for the complete
+sequence, applies it to the candidate, centers candidate and pseudo-reference
+at the hip midpoint, and then computes MPJPE, median error, and the 95th
+percentile over valid matched joints. Thus, ``similarity aligned'' means one sequence-level Sim3,
+not an independent per-frame Procrustes fit. The
+triangulated stream is an evaluation-only pseudo-reference and does not
+establish absolute accuracy.
+
+\paragraph{Reference-independent and base-relative diagnostics.}
+View-swap error compares $F_{\phi}(f,s)$ and $F_{\phi}(s,f)$. Bone coefficient
+of variation, rigidity, joint jerk, and trunk angular jerk characterize
+structure and temporal behavior. The fixed-corruption score measures movement
+of the corrupted output from its corresponding clean output on the validation
+manifest. ROM and peak-angular-velocity ratios use the deterministic
+quality-weighted A3 output stored as the inference reference. We therefore call
+them \emph{A3-relative retention}; their denominator is not the triangulated
+pseudo-reference. A value near one means preservation of the A3 baseline, not
+biomechanical validity.
+
+\subsection{Unity native-3D protocol}
+
+Limited external validation uses 199 rendered samples from three sequences in
+one Unity avatar/environment and a fixed two-camera configuration. Sixteen
+mapped body joints (Unity16) are scored against Unity native 3D after one
+sequence-level Sim3. The private A4--A9 checkpoints are applied zero-shot.
+Direct 3D fusion rows use the two monocular SAM3D 3D streams without camera
+parameters. The triangulation row instead uses SAM3D 2D observations and exact
+Unity camera geometry. These input regimes are reported separately.
+
+Two calibrated Unity-supervised comparators are additionally summarized over
+two direction-held-out folds and three seeds: a gate over the two 3D streams
+with exact extrinsics, and learnable triangulation from 2D evidence. They are
+not pooled with the zero-shot ranking because they use Unity native 3D during
+training.
+
+\subsection{Private learned statistical analysis}
+
+The person is the unit of inference. The learned table reports person-level
+mean and SD on the 14 held-out people. Every non-A6 configuration is paired
+against A6 on the same people; the mean paired difference receives a
+person-bootstrap 95\% confidence interval and a two-sided Wilcoxon signed-rank
+test, with Holm correction across the nine comparisons. Single-seed results do
+not estimate optimization variance.
+
+\subsection{Person-disjoint cohort and repeated-cycle analysis}
+\label{sec:cohort-cycle-methods}
+
+The cohort analysis contains 80 elderly-labeled and 57 student-labeled
+participants and 928 eligible cycles. Ten cohort-stratified outer folds split
+people, not cycles. No participant-level age, health, training-history, or
+anthropometric covariates are available; the labels define observational groups.
+Each cycle is resampled to 101 phase points after direction alignment. Eight
+prespecified descriptors are axial rotation ROM, 95th-percentile angular speed,
+peak-rotation phase, 95th-percentile trunk tilt, 95th-percentile wrist wrapping,
+cycle duration, log dimensionless angular jerk, and leave-one-cycle-out
+whole-body repeatability.
+
+For each descriptor, the primary cycle-level mixed model includes cohort,
+normalized cycle position, their interaction, and outer-fold fixed effects.
+Cycle position is centered at 0.5, so the cohort coefficient is the
+elderly-minus-student contrast at the mid-repetition reference rather than at
+the first detected cycle. Person-specific random intercepts and, when
+nonsingular, random cycle-position slopes model repeated observations. Angular
+speed, duration, and repeatability are log transformed. A matched sensitivity
+model omits outer-fold fixed effects. Holm correction is applied separately to
+the eight cohort coefficients and eight interactions.
+
+Within-person dispersion is each person's median absolute deviation (MAD);
+cohorts are compared with 10,000 person-label permutations and person-bootstrap
+confidence intervals, with a separate eight-outcome Holm family. Phase curves
+for axial angle, angular speed, trunk tilt, and wrist wrapping use 10,000
+cluster permutations. The minimum cluster $p$-value from each descriptor is
+further Holm-corrected across the four descriptor families. Pose-source
+sensitivity applies the same centered cycle-level mixed model to OOF A6,
+face-only, side-only, and deterministic body-frame features. Person-median
+permutations are retained as a separate secondary estimand rather than mixed
+with the cycle-level model.
+
+\subsection{Reproducibility and leakage controls}
+
+Training and inference resolve only monocular keypoints, split records, and
+immutable cache generations. The split and corruption hashes are embedded in
+checkpoints. Only the evaluation adapter resolves triangulated data. Hiding the
+triangulated directory therefore cannot change preparation, training,
+validation scores, checkpoint selection, or inference; it only removes the
+optional pseudo-reference agreement columns.

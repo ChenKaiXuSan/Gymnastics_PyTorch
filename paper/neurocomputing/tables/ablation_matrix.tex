@@ -1,0 +1,29 @@
+\begin{table*}[t]
+\centering
+\caption{Mainline comparison and ablation design. A4--A9 use the same network;
+checkmarks indicate active loss groups. A7--A9 add trunk-twist objectives on top
+of A6 (per-view-peak ROM anchor, an optional rotation-parameterised twist
+residual, and a per-view observed twist-rate anchor).}
+\label{tab:ablation-design}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabularx}{\linewidth}{c X c c c c c}
+\toprule
+ID & Method & \makecell{Learned\\residual} &
+\makecell{Recovery, identity,\\and structure} &
+\makecell{Rotation and\\temporal} & \makecell{Complete-cycle\\ROM} &
+\makecell{Trunk\\twist} \\
+\midrule
+A0 & Face stream only & -- & -- & -- & -- & -- \\
+A1 & Side stream in face reference & -- & -- & -- & -- & -- \\
+A2 & Canonical arithmetic mean & -- & -- & -- & -- & -- \\
+A3 & Deterministic quality-weighted mean & -- & -- & -- & -- & -- \\
+A4 & Learned spatial-objective fusion & \checkmark & \checkmark & -- & -- & -- \\
+A5 & Learned rotation-temporal fusion & \checkmark & \checkmark & \checkmark & -- & -- \\
+A6 & Full rotation-aware self-supervised fusion & \checkmark & \checkmark & \checkmark & \checkmark & -- \\
+A7 & A6 + per-view-peak ROM anchor & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark \\
+A8 & A7 + rotation-parameterised twist residual & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark \\
+A9 & A8 + observed twist-rate anchor & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark \\
+\bottomrule
+\end{tabularx}
+\end{table*}

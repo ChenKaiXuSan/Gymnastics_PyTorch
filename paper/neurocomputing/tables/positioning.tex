@@ -1,0 +1,24 @@
+\begin{table*}[t]
+\centering
+\caption{Methodological positioning. ``Two 3D streams'' means that complete
+per-view 3D poses, rather than images or 2D keypoints, are the fusion inputs.}
+\label{tab:positioning}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabularx}{\linewidth}{p{0.18\linewidth} p{0.15\linewidth}
+  >{\centering\arraybackslash}p{0.11\linewidth}
+  >{\centering\arraybackslash}p{0.11\linewidth}
+  >{\centering\arraybackslash}p{0.11\linewidth} X}
+\toprule
+Method family & Fusion input & \makecell{Camera\\parameters} &
+\makecell{3D labels\\for training} & \makecell{Two views\\at inference} & Primary output \\
+\midrule
+Learnable triangulation \citep{Iskakov2019Learnable} & Images/2D heatmaps & Required & Commonly used & Yes & Geometric 3D pose \\
+Uncalibrated triangulation \citep{Jiang2023Probabilistic} & Images/2D features & Estimated distribution & Used by embedded estimator & Yes & Camera-aware 3D pose \\
+Cross-View Self-Fusion \citep{Kim2022CrossViewSelfFusion} & Multi-view 2D poses & Not required & No & No & Trained monocular estimator \\
+MetaPose \citep{Usman2022MetaPose} & Multi-view 2D keypoints & Estimated & No & Yes & Camera and 3D pose \\
+SelfPose3D \citep{Srivastav2024SelfPose3D} & Calibrated images and 2D pseudo-poses & Required & No manual labels & Yes & Multi-person 3D pose \\
+Proposed method & Two 3D streams & Not used & No & Yes & Fused temporal 3D pose \\
+\bottomrule
+\end{tabularx}
+\end{table*}

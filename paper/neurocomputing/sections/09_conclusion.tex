@@ -1,0 +1,27 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+This work formulates two-view 3D pose fusion after monocular estimation. A6
+combines pelvis-centered canonicalization, a transparent quality-weighted base,
+a view-swap-invariant bounded temporal residual, and self-supervised recovery,
+skeletal, temporal, rotation, and complete-cycle constraints without reading
+triangulated targets during training or selection.
+
+The evidence supports a narrower conclusion than positional superiority.
+Canonicalization accounts for most improvement against the private same-video
+pseudo-reference. On 14 held-out people, A6 is statistically
+indistinguishable from arithmetic averaging and A5. It remains the method
+mainline as the complete auditable constrained objective. On limited Unity
+native 3D, A6 does not improve zero-shot direct-3D transfer, while calibrated
+2D triangulation is substantially more accurate. This negative result marks the
+boundary of uncalibrated post-estimation fusion rather than weakening the
+importance of geometry.
+
+OOF A6 features support a person-disjoint application over 928 cycles, but the
+elderly--student speed and jerk coefficients are materially pose-source- and
+estimand-sensitive, and no cohort-specific repetition trend survives
+correction. The cohort analysis is therefore exploratory and observational.
+The method is best interpreted as an auditable motion-representation layer;
+diverse independent capture, repeated seeds, measured participant covariates,
+and completed governance documentation are required before absolute,
+biomechanical, causal, or clinical claims.

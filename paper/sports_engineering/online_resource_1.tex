@@ -1,0 +1,220 @@
+% Online Resource 1 for the Sports Engineering submission candidate
+\documentclass[pdflatex,sn-mathphys-num]{sn-jnl}
+
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{multirow}
+
+\raggedbottom
+
+\begin{document}
+
+\title{Online Resource 1: Detailed ablations and robustness analyses for
+calibration-free two-view 3D pose fusion}
+
+\author*[1]{\fnm{Kaixu} \sur{Chen}}\email{chenkaixusan@gmail.com}
+\affil*[1]{\orgname{CCS}}
+
+\maketitle
+
+\section{Purpose}
+
+This Online Resource reports prespecified and post hoc ablations, synthetic
+corruption settings, robustness diagnostics and secondary cohort results for
+the accompanying article. It preserves the separation between training
+evidence and evaluation evidence: triangulated poses were resolved only by the
+evaluation layer and were never used for model training, validation or
+checkpoint selection.
+
+\section{Ablation definitions}
+
+\begin{table}[h]
+\caption{Ablation design. A4--A9 share the same network. Checkmarks indicate
+active loss groups. A7--A9 are post hoc trunk-twist variants and do not replace
+the prespecified complete model A6.}
+\label{tab:ablation}
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{clp{0.46\linewidth}}
+\toprule
+ID & Method & Active components\\
+\midrule
+A0 & Face stream only & Deterministic single-view output\\
+A1 & Side stream in face reference & Deterministic single-view output\\
+A2 & Canonical arithmetic mean & Deterministic mean\\
+A3 & Deterministic quality mean & Fixed quality weighting\\
+A4 & Spatial-objective fusion & Learned residual; recovery, identity and skeletal losses\\
+A5 & Rotation-temporal fusion & A4 plus rotation and temporal losses\\
+A6 & Complete self-supervised fusion & A5 plus complete-cycle ROM loss\\
+A7 & A6 + per-view-peak ROM anchor & A6 plus post hoc trunk-twist anchor\\
+A8 & A7 + rotation-parameterized residual & A7 plus post hoc twist residual\\
+A9 & A8 + observed twist-rate anchor & A8 plus post hoc rate anchor\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Complete held-out learned comparison}
+
+\begin{table}[h]
+\caption{Held-out comparison ($N=14$). Mean per-joint position error is
+reported after one sequence-level similarity alignment to the same-video
+triangulated pseudo-reference. Differences are method minus A6 with
+participant-bootstrap 95\% confidence intervals and Holm-adjusted paired
+Wilcoxon $p$ values. Rotation range of motion (ROM) and peak angular speed are
+A3-relative retention ratios, not comparisons with independent kinematics.}
+\label{tab:complete-heldout}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{clccc}
+\toprule
+ID & Method & Error (mm) & Difference [95\% CI] &
+$p_{\rm Holm}$\\
+\midrule
+A0 & Face only & $77.92\pm12.52$ & +17.14 [13.69, 21.34] & 0.0011\\
+A1 & Side only & $75.84\pm13.93$ & +15.07 [10.23, 19.48] & 0.0018\\
+A2 & Arithmetic mean & $60.85\pm8.98$ & +0.07 [$-0.50$, 0.59] & 1.0000\\
+A3 & Quality mean & $61.03\pm8.84$ & +0.26 [0.17, 0.35] & 0.0011\\
+A4 & Spatial objectives & $62.81\pm8.86$ & +2.04 [1.71, 2.36] & 0.0011\\
+A5 & Rotation/temporal & $60.80\pm8.96$ & +0.02 [$-0.38$, 0.43] & 1.0000\\
+A6 & Complete model & $60.78\pm8.72$ & -- & --\\
+A7 & Per-view-peak ROM & $61.31\pm8.87$ & +0.54 [0.38, 0.69] & 0.0011\\
+A8 & Twist residual & $92.02\pm9.59$ & +31.25 [27.78, 34.88] & 0.0011\\
+A9 & Twist-rate anchor & $94.11\pm9.14$ & +33.34 [30.00, 36.77] & 0.0011\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+All A2--A9 outputs were view-order invariant to the reported precision.
+A3-relative (ROM, peak-speed) retention was A0 (1.156, 1.018), A1 (1.050,
+1.654), A2 (1.101, 0.917), A3 (1.000, 1.000), A4 (0.949, 0.828), A5
+(0.943, 0.644), A6 (1.000, 1.000), A7 (0.948, 0.821), A8 (1.218, 2.187) and
+A9 (0.997, 2.615). The A8 and A9 variants demonstrate that relaxing the
+conservative correction can increase coordinate error and over-amplify peak
+angular speed.
+
+\section{Deterministic comparison}
+
+\begin{table}[h]
+\caption{Agreement with the private triangulated pseudo-reference over 137
+participants. Units are repository coordinates. The pseudo-reference-fitted
+row is a leakage diagnostic and is not an eligible label-free method.}
+\label{tab:deterministic}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{p{0.47\linewidth}rcc}
+\toprule
+Method & Mean & Standard deviation & 95\% CI of mean\\
+\midrule
+Pseudo-reference-fitted joint weights (leaky) & 0.0635 & 0.0160 & [0.0609, 0.0662]\\
+Body-frame average & 0.0640 & 0.0161 & [0.0615, 0.0668]\\
+Similarity alignment, stable joints & 0.0646 & 0.0159 & [0.0621, 0.0673]\\
+Similarity alignment, body-part weights & 0.0649 & 0.0162 & [0.0622, 0.0676]\\
+Similarity alignment, side smoothing & 0.0655 & 0.0159 & [0.0629, 0.0682]\\
+Similarity alignment, output smoothing & 0.0663 & 0.0159 & [0.0637, 0.0690]\\
+Similarity alignment, all joints & 0.0738 & 0.0195 & [0.0707, 0.0771]\\
+World-coordinate average & 0.1221 & 0.0184 & [0.1190, 0.1252]\\
+Root alignment and average & 0.1222 & 0.0184 & [0.1191, 0.1252]\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Synthetic corruptions and robustness}
+
+\begin{table}[h]
+\caption{Synthetic-corruption configuration in canonical units.}
+\label{tab:corruptions}
+\centering
+\small
+\begin{tabular}{ll}
+\toprule
+Corruption & Setting\\
+\midrule
+Independent joint dropout & probability 0.05\\
+Temporal block dropout & joint probability 0.25; 16 frames\\
+Impulse noise & probability 0.02; scale 0.10\\
+Random-walk drift & joint probability 0.10; step scale 0.01\\
+Thorax rotation bias & frame probability 0.10; $\pm12^\circ$\\
+Frozen segment & joint probability 0.10; 12 frames\\
+Integer time shift & joint probability 0.10; at most 4 frames\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\caption{Output displacement under the fixed corruption manifest (27
+validation participants, one seed). Lower values indicate less movement from
+each method's own clean output, not recovery toward independent ground truth.}
+\label{tab:robustness}
+\centering
+\small
+\begin{tabular}{lcc}
+\toprule
+Challenge & A3 & A6\\
+\midrule
+Joint dropout & 0.0629 & 0.0873\\
+Temporal block dropout & 0.0619 & 0.0873\\
+Impulse noise & 0.0605 & 0.0605\\
+Random-walk drift & 0.0445 & 0.0445\\
+Thorax rotation bias & 0.0312 & 0.0312\\
+Frozen segment & 0.0643 & 0.0643\\
+Integer time shift & 0.0348 & 0.0348\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A6 had greater aggregate clean-to-corrupted displacement than A4 and A5
+(0.120 versus approximately 0.09 repository units). A temporal-offset sweep
+over all 137 participants moved A6 by 0.046 and 0.078 units at offsets of
+$\pm2$ and $\pm4$ frames, respectively, essentially matching the deterministic
+mean. The learned model therefore did not resolve dependence on the upstream
+global offset.
+
+\section{Additional external comparisons}
+
+Two Unity-supervised comparators were evaluated over two direction-held-out
+folds and three seeds. An exact-extrinsic gate over the two 3D streams averaged
+153.645~mm and 41.090$^\circ$, a 6.74\% improvement over its matched direct
+average. Learnable triangulation averaged 28.058~mm and 14.555$^\circ$, 1.88\%
+below its matched fixed-triangulation baseline. These rows use Unity native 3D
+during training and answer a different question from zero-shot private-model
+transfer.
+
+\section{Complete cohort outcomes}
+
+\begin{table}[h]
+\caption{Out-of-fold cohort and repeated-cycle analysis. Cohort effects are
+elderly-minus-student mixed-model coefficients at normalized cycle position
+0.5. MAD effects are participant-level median differences.}
+\label{tab:cohort}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{p{0.28\linewidth}p{0.30\linewidth}cc}
+\toprule
+Outcome & Cohort effect [95\% CI] & $p_{\rm Holm}$ &
+MAD effect ($p_{\rm Holm}$)\\
+\midrule
+Axial rotation ROM & 0.2475 [$-0.0242$, 0.5192] & 0.2966 & $-0.0016$ (1.0000)\\
+Log angular speed (P95) & 0.3006 [0.1136, 0.4876] & 0.0114 & 0.0314 (0.4459)\\
+Peak rotation phase & $-0.0013$ [$-0.0568$, 0.0542] & 1.0000 & 0.0000 (1.0000)\\
+Trunk tilt (P95) & 0.0042 [0.0002, 0.0082] & 0.2514 & $-0.0002$ (1.0000)\\
+Wrist wrapping (P95) & 0.0289 [$-0.0626$, 0.1204] & 1.0000 & $-0.0073$ (1.0000)\\
+Log cycle duration & $-0.0127$ [$-0.0256$, 0.0002] & 0.2677 & 0.0083 (1.0000)\\
+Log dimensionless jerk & 0.4233 [0.2336, 0.6130] & 0.0001 & 0.0377 (0.0208)\\
+Log whole-body repeatability & $-0.0145$ [$-0.1055$, 0.0765] & 1.0000 & $-0.0003$ (1.0000)\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+All eight cohort-by-cycle-position interactions had
+$p_{\rm Holm}=1.000$. No axial-angle or angular-speed phase cluster survived
+correction across descriptor families. Secondary phase-localized differences
+occurred for trunk tilt and wrist wrapping, but are hypothesis-generating and
+not anatomical validation. Omitting outer-fold fixed effects produced similar
+coefficients for log angular speed (0.2972) and log jerk (0.4161).
+
+\end{document}

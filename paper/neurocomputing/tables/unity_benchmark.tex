@@ -1,0 +1,23 @@
+\begin{table*}[t]
+\centering
+\caption{Limited external evaluation against Unity native 3D (199 samples,
+three sequences, one avatar/environment, Unity16 joints). All rows use one
+sequence-level Sim3 before scoring. The calibrated 2D and uncalibrated direct 3D
+input regimes use different evidence and supervision and must not be pooled into
+a single ranking.}
+\label{tab:unity-benchmark}
+\small
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{l l r r l}
+\toprule
+Input regime & Method & MPJPE (mm) & Angle MAE ($^\circ$) & Replication \\
+\midrule
+Uncalibrated direct 3D, zero-shot & World-coordinate average & 166.537 & 47.497 & -- \\
+Uncalibrated direct 3D, zero-shot & A6 & 178.506 & 45.983 & -- \\
+Calibrated 3D, Unity-supervised & Extrinsic gate & 153.645 & 41.090 & 2 folds $\times$ 3 seeds \\
+Calibrated 2D $\rightarrow$ 3D, zero-shot & Triangulation (SAM3D 2D) & 30.259 & 15.198 & -- \\
+Calibrated 2D $\rightarrow$ 3D, Unity-supervised & Learnable triangulation & 28.058 & 14.555 & 2 folds $\times$ 3 seeds \\
+\bottomrule
+\end{tabular}
+}
+\end{table*}

@@ -1,0 +1,93 @@
+\section{Introduction}
+\label{sec:introduction}
+
+Three-dimensional human pose estimation from ordinary video has become an
+accessible alternative to specialized motion-capture laboratories. Modern
+single-image systems can recover a dense articulated body representation under
+varied appearance and imaging conditions; SAM 3D Body, for example, predicts a
+full-body mesh based on the Momentum Human Rig representation
+\citep{Yang2026SAM3DBody}. Nevertheless, a monocular 3D reconstruction remains
+view dependent. Depth ambiguity, self-occlusion, motion blur, truncation, and
+imperfect scale recovery affect frontal and lateral observations differently.
+When two cameras observe the same movement, their predictions therefore contain
+both complementary information and incompatible errors.
+
+Most multi-view 3D pose research resolves this problem before or during 3D
+estimation. Calibrated approaches combine image features or 2D heatmaps and
+triangulate a common 3D pose \citep{Iskakov2019Learnable,Qiu2019CrossView,
+Remelli2020Lightweight}. More recent methods relax calibration or 3D-label
+requirements, but they still begin from images or 2D observations and jointly
+infer cameras, 2D poses, or 3D locations
+\citep{Kim2022CrossViewSelfFusion,Usman2022MetaPose,Jiang2023Probabilistic,
+Srivastav2024SelfPose3D}. These formulations do not directly address a common
+downstream situation: two complete monocular 3D pose streams already exist, the
+camera geometry is unavailable or unreliable, and the desired output is a
+single temporally coherent 3D sequence.
+
+Naive averaging is inadequate in this setting. The two streams may use
+different translations, orientations, and scales, and a method that minimizes
+coordinate noise can suppress the rapid trunk rotation that is central to the
+movement under study. This distinction matters for gymnastics and other
+rotation-dominant actions, where a visually smooth sequence is not necessarily
+a faithful sequence. A useful fusion method must therefore reduce view-specific
+artifacts while preserving angular range and peak motion.
+
+This paper formulates \emph{post-estimation two-view 3D pose fusion}. The method
+receives temporally aligned face-view and side-view 3D keypoints and produces a
+full fused sequence without camera parameters, manually labeled 3D poses, or a
+triangulated target during training. Each view is canonicalized in a
+pelvis-centered, trial-scaled body frame. Pelvis-to-thorax relative rotations,
+wrapped axial angle, angular derivatives, per-view reliability, and symmetric
+cross-view disagreement are then supplied to a view-swap-invariant temporal
+network. The network predicts a bounded correction to a deterministic
+quality-weighted mean. Training uses seeded synthetic corruptions together with
+consensus, skeletal, temporal, and complete-cycle rotation constraints.
+
+The study is motivated by the following research question: \emph{Can two
+temporally aligned monocular 3D pose streams be fused without camera calibration
+or 3D supervision so that cross-view artifacts decrease without attenuating the
+trunk-rotation dynamics of a complete movement cycle?} We evaluate two distinct
+properties rather than collapsing them into one claim. First, agreement with a
+triangulated stream is reported as agreement with a shared upstream
+pseudo-reference. Second, reference-independent diagnostics quantify corruption
+recovery, skeletal consistency, view-swap invariance, temporal smoothness, and
+rotation preservation. Because no independent motion-capture measurements are
+available, the study does not claim absolute positional or biomechanical
+accuracy. A limited synthetic benchmark against Unity native 3D separately
+tests transfer outside the private videos and exposes the boundary between
+uncalibrated direct-3D fusion and calibrated 2D triangulation.
+
+A secondary application question asks whether person-disjoint A6 outputs can
+support two complementary comparisons: differences between the
+elderly-labeled and student-labeled participant groups, and differences among
+repeated cycles within the same person. This analysis is observational. The
+cohort labels do not identify causal ageing effects, and the fused descriptors
+are not clinical measurements.
+
+The contributions are as follows:
+\begin{itemize}
+  \item We define a practical post-estimation fusion problem in which two
+  monocular 3D pose streams, rather than images or 2D heatmaps, are the inputs.
+  \item We introduce a rotation-aware, view-swap-invariant residual temporal
+  model that combines canonical 3D coordinates with explicit pelvis--thorax
+  rotation and deterministic quality features.
+  \item We construct a self-supervised objective from reproducible corruptions,
+  reliable cross-view consensus, skeletal structure, adaptive temporal dynamics,
+  and complete-cycle axial range, while isolating triangulated poses from model
+  training and checkpoint selection.
+  \item We provide an auditable evaluation protocol that keeps the deterministic
+  results, the 14-person held-out learned comparison, descriptive all-person
+  diagnostics, and Unity native-3D evidence separate.
+  \item We demonstrate a downstream person-disjoint analysis that separates
+  adjusted cohort contrasts, within-person cycle variability, and repetition
+  trends, with pose-source and limited seed sensitivity checks.
+\end{itemize}
+
+The primary learned comparison uses the frozen 14-person test split; the
+96-person training and 27-person validation sets are not reused for its
+generalization claim. Inference over all 137 people is descriptive only.
+Downstream A6 analysis uses ten person-disjoint outer folds and is qualified by
+the same centered mixed-model estimand applied to single-view and deterministic
+pose sources. These boundaries keep pseudo-reference agreement, limited
+synthetic external validity, motion preservation, and observational group
+comparisons distinct.

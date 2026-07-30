@@ -1,0 +1,87 @@
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Canonicalization explains most private-data improvement}
+
+The strongest reproducible private-data result is deterministic. Removing
+inter-view translation, orientation, and scale mismatch nearly halves
+pseudo-reference distance relative to world-coordinate averaging. Several
+leakage-free canonical methods then lie within a narrow range with overlapping
+intervals. This supports coordinate normalization as the dominant operation,
+not a claim that a particular learned weighting is universally superior.
+
+The 14-person held-out test reinforces that boundary. A6, A5, and arithmetic
+averaging are statistically indistinguishable in MPJPE. A6 should therefore be
+read as an auditable constrained extension: it makes the self-supervised
+recovery, skeletal, temporal, rotation, complete-cycle, and swap-invariance
+assumptions explicit while bounding departure from A3. It has no demonstrated
+positional advantage.
+
+\subsection{Rotation diagnostics require the correct denominator}
+
+Smoothness and coordinate error do not uniquely characterize rotation. The
+method explicitly represents pelvis--thorax rotation and complete-cycle range
+to reveal attenuation or overshoot. However, the reported ROM and
+peak-angular-velocity retention ratios are relative to A3, not to triangulated
+motion. They show how far a learned variant departs from its deterministic
+base. On the held-out test, A7 retains less A3 range and peak speed than A6;
+the descriptive all-person A7 increase does not reproduce. The freer A8/A9
+residuals markedly worsen MPJPE and over-amplify peak angular velocity. These
+findings support retaining conservative A6 constraints, but not calling A3 or
+A6 biomechanically accurate.
+
+\subsection{Unity exposes an external-transfer boundary}
+
+Unity native 3D is independent of the private triangulated pseudo-reference,
+although it is synthetic and limited to one avatar/environment. A6 performs
+worse than direct world-coordinate averaging under zero-shot direct-3D input.
+The result rejects an external positional-transfer claim for the current
+learner. It also shows that a normalization that agrees with a private
+same-video pseudo-reference need not preserve Unity coordinates after the
+declared evaluation alignment.
+
+Calibrated 2D triangulation is far more accurate in Unity than any direct
+monocular-3D fusion row. This is not a contradiction: projection geometry and
+2D evidence contain information unavailable after two monocular 3D predictions
+have already been produced. The modest gains from Unity-supervised extrinsic
+gating and learnable triangulation further show what becomes possible once
+camera geometry and native 3D supervision are authorized. These different
+regimes should guide deployment choices rather than be pooled into one ranking.
+
+\subsection{The cohort application is representation-sensitive}
+
+Centering cycle position makes the primary cohort coefficient representative of
+the observed repetitions rather than conditional on the first detected cycle.
+Angular speed and log jerk remain corrected-significant with and without
+outer-fold fixed effects, while no cohort-by-repetition interaction survives.
+Log jerk also has greater within-person MAD in the elderly-labeled cohort.
+
+The source-matched analysis is a stronger qualification than the original
+person-median comparison because it uses the same cycle-level mixed-model
+estimand for every pose stream. A6 produces substantially larger cohort
+coefficients than face, side, or deterministic fusion, especially for log
+jerk. The result may combine movement execution, cohort composition,
+pose-estimation error, and A6 representation effects. Without individual ages,
+health, training history, anthropometry, or independent kinematics, these
+mechanisms cannot be separated. The appropriate contribution is an auditable
+hypothesis-generation workflow, not an ageing or clinical conclusion.
+
+\subsection{Relation to calibrated motion analysis}
+
+The proposed method addresses a downstream regime in which two complete
+monocular 3D streams already exist and camera parameters are unavailable.
+Learnable triangulation and camera-aware fusion instead use images or 2D
+evidence to recover geometrically grounded 3D pose
+\citep{Iskakov2019Learnable,Qiu2019CrossView,Remelli2020Lightweight}. Systems
+such as OpenCap additionally use calibrated capture, Mocap-trained modeling,
+musculoskeletal constraints, and laboratory validation
+\citep{Uhlrich2023OpenCap}. A fused face-reference sequence from the present
+pipeline is therefore suitable for comparative sequence descriptors and
+downstream modeling, but not for validated joint angles, forces, or moments.
+
+Future validation should add diverse public multi-view data or synchronized
+independent capture. Human3.6M, MPI-INF-3DHP, and TotalCapture offer increasing
+variation or independent modalities
+\citep{Ionescu2014Human36M,Mehta2017MPIINF3DHP,Trumble2017TotalCapture}.
+Applying the same post-estimation protocol would test whether the negative
+Unity transfer result generalizes across people, cameras, and movements.

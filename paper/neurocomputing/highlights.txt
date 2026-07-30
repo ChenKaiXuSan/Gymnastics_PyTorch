@@ -1,0 +1,5 @@
+Fusion uses two monocular 3D pose streams without camera parameters.
+Pelvis-thorax rotations guide a swap-invariant residual temporal model.
+Self-supervision combines recovery, structure, motion, and cycle losses.
+Evaluation separates pseudo-reference agreement from rotation preservation.
+Person-disjoint A6 outputs support cohort and repeated-cycle analysis.

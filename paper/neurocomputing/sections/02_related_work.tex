@@ -1,0 +1,87 @@
+\section{Related work}
+\label{sec:related}
+
+\subsection{Monocular and temporal 3D pose estimation}
+
+Monocular 3D pose estimation must resolve depth from incomplete visual
+evidence. Temporal models reduce framewise ambiguity by exploiting motion
+context. VideoPose3D demonstrated that dilated temporal convolutions can model
+long sequences of 2D keypoints efficiently, including in a semi-supervised
+setting \citep{Pavllo2019VideoPose3D}. Temporal attention and multi-scale
+dilations have likewise been used to reduce jitter and exploit longer context
+\citep{Liu2020TemporalAttention}. Our method also uses dilated temporal
+convolutions, but it does not lift a 2D sequence. It receives two existing 3D
+streams and learns how to combine their complementary reliability.
+
+SAM 3D Body provides the upstream representation in this study
+\citep{Yang2026SAM3DBody}. Its MHR output includes body, hand, and foot joints,
+giving a 70-joint sequence after inference. We treat this estimator as fixed.
+Consequently, the proposed contribution is neither a new body model nor a new
+image-to-pose network; it is a downstream fusion layer whose failure modes and
+claims must remain conditional on the upstream estimator.
+
+\subsection{Calibrated multi-view fusion and triangulation}
+
+Classical multi-view pose pipelines recover 3D points from synchronized 2D
+correspondences and camera projection matrices. Learnable triangulation adds
+confidence weighting or volumetric aggregation to this geometry
+\citep{Iskakov2019Learnable}. Cross-view fusion can also be introduced at the
+image-feature or 2D-pose stage before a structured 3D recovery step
+\citep{Qiu2019CrossView}. Camera-disentangled representations reduce the cost of
+volumetric processing while retaining calibrated geometric lifting
+\citep{Remelli2020Lightweight}. Generalizable triangulation addresses changes in
+camera arrangement \citep{Bartol2022Generalizable}, and probabilistic
+triangulation models uncertain camera pose for nominally uncalibrated scenes
+\citep{Jiang2023Probabilistic}.
+
+These methods estimate 3D structure from multi-view image evidence. By contrast,
+our inputs are already 3D, and the method neither receives projection matrices
+nor reprojects to images. The two problem classes are complementary. In this
+study, conventional triangulation is retained only as an evaluation
+pseudo-reference, not as a target used by the fusion learner.
+
+\subsection{Self-supervised multi-view learning}
+
+Multi-view consistency is a strong source of supervision when 3D labels are
+scarce. Cross-View Self-Fusion refines 2D observations across uncalibrated views
+and trains a monocular lifting network; only one view is needed at inference
+\citep{Kim2022CrossViewSelfFusion}. MetaPose jointly estimates camera and pose
+from multiple 2D keypoint sets without 3D supervision
+\citep{Usman2022MetaPose}. SelfPose3D uses calibrated multi-view images and 2D
+pseudo-poses to learn multi-person 3D localization and pose without manual 2D or
+3D labels \citep{Srivastav2024SelfPose3D}.
+
+Our use of ``self-supervised fusion'' is therefore narrower. Two views remain
+required at inference, and the output is the final fused 3D keypoint sequence.
+No camera is estimated. The supervision comes from controlled perturbation of
+the observed 3D streams, high-confidence agreement between them, and explicit
+sequence structure. This avoids training on the triangulated evaluation stream,
+but it does not make the two monocular inputs statistically independent.
+
+\subsection{Rotation representation and applied motion analysis}
+
+Rotation-aware processing requires care because common low-dimensional rotation
+parameterizations contain discontinuities. Continuous neural rotation
+representations have been studied explicitly \citep{Zhou2019Rotation}. Rather
+than regress an unconstrained rotation parameterization, our network predicts
+bounded keypoint residuals and derives a proper $\mathrm{SO}(3)$
+pelvis--thorax rotation from the resulting skeleton. Circular differences are
+used for the signed axial angle so that the $-\pi/\pi$ boundary does not create a
+spurious error.
+
+Applied markerless systems such as OpenCap use calibrated smartphone video,
+triangulated 2D keypoints, a Mocap-trained marker model, musculoskeletal
+constraints, and laboratory validation \citep{Uhlrich2023OpenCap}. That pipeline
+supports biomechanical outputs that are outside the scope of this work. We
+study uncalibrated pose-stream fusion and return 3D keypoints only. The method is
+intended for robust motion representation and comparative analysis, not for
+clinical kinetics or validated joint moments.
+
+\input{tables/positioning}
+
+Table~\ref{tab:positioning} summarizes the resulting methodological boundary.
+The closest prior work shares multi-view self-supervision, but differs in input
+space, inference-time view count, and output objective. The novel claim is thus
+the combination of post-estimation 3D fusion, explicit rotation preservation,
+and label-free temporal training, not any single component such as a temporal
+convolution, canonical frame, or skeletal loss.

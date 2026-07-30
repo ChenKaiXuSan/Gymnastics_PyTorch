@@ -1,0 +1,70 @@
+\section{Problem formulation}
+\label{sec:problem}
+
+\subsection{Inputs and temporal correspondence}
+
+For a movement trial, let
+\begin{equation}
+  \mathbf{X}^{f},\mathbf{X}^{s}\in\mathbb{R}^{T\times J\times 3}
+\end{equation}
+denote the face-view and side-view monocular 3D keypoints after temporal
+alignment, where $T$ is the number of overlapping frames and $J=70$ is the MHR
+joint count. Binary masks
+$\mathbf{M}^{f},\mathbf{M}^{s}\in\{0,1\}^{T\times J}$ identify finite, observed
+keypoints. Frame time is represented by timestamps $\tau_t$ and physical
+intervals $\Delta t_t=\tau_t-\tau_{t-1}$.
+
+The two camera streams are not assumed to begin simultaneously. An upstream
+cycle-segmentation stage estimates a side-to-face frame offset
+$o_{s\rightarrow f}$ and stores both the offset and the face/side frame ranges
+of every cycle. The fusion loader uses this stored offset exactly. It constructs
+the overlapping frame maps and then intersects both maps with the recorded cycle
+bounds. It does not estimate a second dynamic-time-warping offset and does not
+fall back to a different synchronization rule. Therefore, timing is an explicit
+input contract rather than a latent correction expected from the network.
+
+\subsection{Desired output}
+
+The fusion function
+\begin{equation}
+  \widehat{\mathbf{X}} =
+  F_{\phi}(\mathbf{X}^{f},\mathbf{M}^{f},
+           \mathbf{X}^{s},\mathbf{M}^{s},\boldsymbol{\tau})
+\end{equation}
+returns one $T\times J\times3$ sequence and a validity mask. The final export is
+expressed in a face-reference coordinate frame for compatibility with the
+existing analysis pipeline. ``Face reference'' means that the fused canonical
+pose is restored with the face stream's per-frame origin, orientation, and trial
+scale. It is not a calibrated world coordinate system.
+
+We impose four design requirements. First, fusion should be invariant to
+interchanging the semantic input order:
+\begin{equation}
+ F_{\phi}(\mathbf{X}^{f},\mathbf{X}^{s})
+ \approx F_{\phi}(\mathbf{X}^{s},\mathbf{X}^{f}).
+ \label{eq:swap}
+\end{equation}
+Second, if one joint is valid in only one view, the valid observation should pass
+through rather than be averaged with a missing value. Third, learned corrections
+should be bounded so a weak pseudo-target cannot move the output arbitrarily far
+from the observations. Fourth, fusion should preserve the signed pelvis--thorax
+rotation, its range over a complete cycle, and rapid but plausible angular
+changes.
+
+\subsection{Supervision boundary}
+
+Training may use only the two aligned SAM3D streams, their masks and timestamps,
+the split-cycle metadata, and deterministic transformations or corruptions
+derived from those variables. It may not read triangulated 3D poses, an
+evaluation MPJPE, or any label derived from the triangulation output. Validation
+and checkpoint selection use self-supervised measures only. The triangulated
+stream is opened by a separate evaluation adapter after inference.
+
+This boundary prevents direct target leakage but does not convert the
+triangulated sequence into independent truth: it is produced from 2D keypoints
+extracted from the same two videos. Accordingly, we call its distance measure
+\emph{pseudo-reference agreement}. Absolute 3D accuracy would require an
+independent reference such as synchronized marker-based motion capture or an
+external benchmark with appropriate ground truth.
+
+\input{figures/pipeline}

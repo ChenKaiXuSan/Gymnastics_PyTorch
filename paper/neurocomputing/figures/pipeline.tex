@@ -1,0 +1,33 @@
+\begin{figure}
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[
+  node distance=6mm and 7mm,
+  box/.style={draw=EvalGray, rounded corners=2pt, align=center, minimum height=10mm, text width=25mm, fill=white},
+  face/.style={box, draw=FaceBlue, very thick},
+  side/.style={box, draw=SideOrange, very thick},
+  fuse/.style={box, draw=FuseGreen, very thick},
+  eval/.style={box, draw=EvalGray, dashed},
+  arrow/.style={-{Latex[length=2mm]}, thick, draw=EvalGray}
+]
+\node[face] (facevideo) {Face-view video};
+\node[side, below=of facevideo] (sidevideo) {Side-view video};
+\node[box, right=of facevideo, yshift=-8mm] (sam) {Fixed SAM 3D Body};
+\node[box, right=of sam] (split) {Stored offset and cycle maps};
+\node[fuse, right=of split] (method) {Rotation-aware self-supervised fusion};
+\node[box, right=of method] (output) {Fused 70-joint sequence};
+\node[eval, below=13mm of method] (triangulation) {Triangulated pseudo-reference\\evaluation only};
+
+\draw[arrow] (facevideo) -- (sam);
+\draw[arrow] (sidevideo) -- (sam);
+\draw[arrow] (sam) -- (split);
+\draw[arrow] (split) -- (method);
+\draw[arrow] (method) -- (output);
+\draw[arrow, dashed] (triangulation) -- node[right, font=\scriptsize, align=left] {opened after\\inference} (output);
+\end{tikzpicture}
+}
+\caption{Study boundary. The learned fusion path consumes only two monocular 3D
+pose streams and split-cycle timing metadata. The triangulated stream is isolated
+from training and checkpoint selection.}
+\label{fig:pipeline}
+\end{figure}

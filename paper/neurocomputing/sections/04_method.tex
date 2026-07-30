@@ -1,0 +1,255 @@
+\section{Rotation-aware self-supervised fusion}
+\label{sec:method}
+
+\subsection{Method overview}
+
+The method separates deterministic geometry from learned correction. Each
+complete trial is first canonicalized independently for the face and side
+streams. From the canonical poses we compute per-view pose, trunk-rotation, and
+quality features together with symmetric cross-view disagreement. A fixed
+quality-weighted fusion provides a conservative base pose. A shared view
+encoder and a non-causal temporal convolutional network then predict a bounded
+per-joint residual. Figure~\ref{fig:architecture} shows this data flow.
+
+\input{figures/architecture}
+
+\subsection{Pelvis-centered canonicalization}
+
+For each view $v\in\{f,s\}$ and frame $t$, the pelvis origin
+$\mathbf{o}^{v}_{t}$ is obtained from the configured pelvis joint or midpoint.
+The lateral axis is the normalized right-to-left hip direction. The initial
+vertical direction points from pelvis to thorax and is orthogonalized against
+the lateral axis. Their cross product gives the third axis, after which the
+lateral axis is reconstructed to ensure a right-handed orthonormal frame. We
+write the resulting local-to-view rotation as
+\begin{equation}
+  \mathbf{R}^{v}_{p,t}=
+  [\mathbf{e}^{v}_{x,t},\mathbf{e}^{v}_{y,t},\mathbf{e}^{v}_{z,t}]
+  \in\mathrm{SO}(3).
+\end{equation}
+Degenerate frames retain the most recent observable transform for continuity,
+while their frame-valid flag remains false so they cannot silently create
+supervision.
+
+A robust trial scale is defined independently in each stream as the median
+valid pelvis--thorax distance,
+\begin{equation}
+  a^v=\operatorname{median}_{t\in\mathcal{V}^{v}}
+  \lVert\mathbf{x}^{v}_{t,\mathrm{thorax}}-
+  \mathbf{x}^{v}_{t,\mathrm{pelvis}}\rVert_2.
+\end{equation}
+Canonical keypoints are
+\begin{equation}
+  \widetilde{\mathbf{x}}^{v}_{t,j}=
+  \frac{(\mathbf{x}^{v}_{t,j}-\mathbf{o}^{v}_{t})
+  \mathbf{R}^{v}_{p,t}}{a^v}.
+  \label{eq:canonical}
+\end{equation}
+This invertible transform removes view-specific root translation, orientation,
+and scale without estimating camera geometry. It differs from a global Sim3 fit
+\citep{Umeyama1991Similarity}: the body frame is recomputed from anatomical
+roles at each valid time step, while scale is stabilized over the whole trial.
+
+\subsection{Rotation and temporal features}
+
+A thorax frame $\mathbf{R}^{v}_{h,t}$ is built analogously from the shoulder or
+acromion lateral direction and a thorax-to-neck vertical hint. The relative
+pelvis--thorax rotation is
+\begin{equation}
+  \mathbf{R}^{v}_{ph,t}=
+  (\mathbf{R}^{v}_{p,t})^{\top}\mathbf{R}^{v}_{h,t}.
+\end{equation}
+The signed axial rotation about the local long axis is derived from the proper
+rotation matrix:
+\begin{equation}
+  \theta^{v}_{t}=\operatorname{atan2}
+  \left(R^{v}_{ph,t,13}-R^{v}_{ph,t,31},
+        R^{v}_{ph,t,11}+R^{v}_{ph,t,33}\right).
+  \label{eq:theta}
+\end{equation}
+Circular differences compute angular velocity and acceleration,
+\begin{align}
+  \omega^{v}_{t} & =
+  \frac{\operatorname{atan2}(\sin(\theta^{v}_{t}-\theta^{v}_{t-1}),
+  \cos(\theta^{v}_{t}-\theta^{v}_{t-1}))}{\Delta t_t},\\
+  \alpha^{v}_{t} & =
+  \frac{\omega^{v}_{t}-\omega^{v}_{t-1}}{\Delta t_t}.
+\end{align}
+Joint velocity is computed with the same physical time intervals. Every
+derivative has a validity mask requiring both adjacent observations and a
+positive finite interval.
+
+\subsection{Deterministic quality and disagreement}
+
+Frame quality is intentionally fixed and detached from gradient computation.
+For each stream, robust median-absolute-deviation scores measure unusual
+shoulder width, hip width, torso length, per-bone rigidity, and angular
+acceleration. A binary penalty identifies a degenerate trunk frame, and
+$\rho^v_t$ is the fraction of valid joints. With unit penalty weights in the
+current configuration,
+\begin{equation}
+ q^v_t=\operatorname{clip}_{[0,1]}
+ \frac{\rho^v_t}{1+d^{v}_{\mathrm{shoulder},t}+
+ d^{v}_{\mathrm{hip},t}+d^{v}_{\mathrm{torso},t}+
+ d^{v}_{\mathrm{rigid},t}+d^{v}_{\alpha,t}+d^{v}_{\mathrm{deg},t}}.
+ \label{eq:quality}
+\end{equation}
+Thus, quality represents internal consistency and observation coverage, not a
+learned claim that one camera is globally superior.
+
+Symmetric cross-view features contain absolute canonical coordinate
+differences, validity disagreement, circular axial-angle disagreement,
+geodesic rotation distance, and absolute centroid displacement. For rotations
+$\mathbf{R}^{f}_{ph,t}$ and $\mathbf{R}^{s}_{ph,t}$, the geodesic feature is
+\begin{equation}
+ d_{R,t}=\arccos\left(
+ \frac{\operatorname{tr}((\mathbf{R}^{f}_{ph,t})^{\top}
+ \mathbf{R}^{s}_{ph,t})-1}{2}\right).
+\end{equation}
+All arguments are clipped to their valid numeric domain, and invalid features
+are zeroed only after their masks are retained.
+
+\subsection{Quality-weighted base pose}
+
+For joint $j$, detached weights are
+$w^v_{t,j}=q^v_t M^v_{t,j}$. The deterministic base is
+\begin{equation}
+ \mathbf{B}_{t,j}=
+ \frac{w^f_{t,j}\widetilde{\mathbf{x}}^f_{t,j}+
+       w^s_{t,j}\widetilde{\mathbf{x}}^s_{t,j}}
+      {w^f_{t,j}+w^s_{t,j}+\epsilon}.
+ \label{eq:base}
+\end{equation}
+When only one view is valid, its point passes through. When both quality values
+are zero but both points are valid, equal weighting is used. This base is
+strictly view-symmetric and gives the learned model a stable identity solution.
+
+\subsection{Swap-invariant residual TCN}
+
+The shared per-view encoder receives, for each joint, canonical position,
+velocity, position and velocity validity, and frame quality (nine values). A
+second shared branch receives the flattened $3\times3$ pelvis--thorax rotation,
+$\sin\theta$, $\cos\theta$, $\omega$, $\alpha$, and trunk validity (14 values).
+Their 128-dimensional outputs are added and activated. Because the same encoder
+weights process both views, the ordered pair can be replaced by symmetric
+statistics
+\begin{equation}
+ \mathbf{z}^{+}=\tfrac{1}{2}(\mathbf{z}^{f}+\mathbf{z}^{s}),
+ \qquad
+ \mathbf{z}^{\Delta}=|\mathbf{z}^{f}-\mathbf{z}^{s}|.
+\end{equation}
+The 13-dimensional disagreement vector is encoded separately, concatenated with
+$\mathbf{z}^{+}$ and $\mathbf{z}^{\Delta}$, and projected back to 128 channels.
+
+Temporal reasoning is performed independently for each joint by six
+same-length, non-causal residual TCN blocks with kernel size three and dilations
+$1,2,4,8,16,32$. Each block contains two masked convolutions and GELU
+activations. This architecture follows the efficient long-context principle of
+temporal convolutional models \citep{Bai2018TCN,Pavllo2019VideoPose3D}. A linear
+head predicts a raw residual, which is bounded as
+\begin{equation}
+ \Delta\mathbf{x}_{t,j}=\delta^{\max}_{j}
+ \tanh(\mathbf{h}_{t,j}),\qquad
+ \widehat{\mathbf{x}}_{t,j}=\mathbf{B}_{t,j}+
+ \Delta\mathbf{x}_{t,j}.
+ \label{eq:residual}
+\end{equation}
+The current limit is $\delta^{\max}_{j}=0.05$ in normalized trial units for all
+joints. Residuals are enabled only when both views are valid, preserving the
+single-view fallback. Shared encoders, absolute disagreement, symmetric
+aggregation, and the symmetric base make view swapping invariant by
+construction up to numerical and window-overlap effects.
+
+\subsection{Self-supervised target construction}
+
+Clean inputs generate a conservative pseudo-target only where evidence is
+usable. If both views are within a canonical distance of 0.10, their
+quality-weighted average is accepted as high-consensus evidence. If one view's
+quality exceeds the other's by a factor of 1.5, the stronger view is selected.
+A valid single-view point is retained when its counterpart is missing. Large
+disagreements without a quality advantage are excluded. We denote the resulting
+target and mask by $\mathbf{Y}$ and $\mathbf{M}^{Y}$. This rule limits the
+ability of a weak disagreement to become a training label, although shared
+systematic error can remain.
+
+Seven seeded corruption families are independently applied to both streams:
+joint dropout, temporal block dropout, impulsive noise, random-walk drift,
+upper-body rotation bias about the thorax, frozen segments, and integer frame
+shifts. Clean streams are never overwritten. A stable hash of the global seed
+and window identifier makes every perturbation independent of batch order and
+replayable during validation.
+
+\subsection{Training objectives}
+
+The full A6 model minimizes nine masked objectives:
+\begin{equation}
+ \mathcal{L}=\sum_{k=1}^{9}\lambda_k\mathcal{L}_k,
+ \label{eq:total-loss}
+\end{equation}
+with unit weights except the minimal-residual term, whose weight is 0.05.
+
+\paragraph{Corruption recovery and consensus identity.}
+On synthetically altered coordinates, $\mathcal{L}_{\mathrm{rec}}$ is the mean
+squared distance from $\widehat{\mathbf{X}}$ to the clean pseudo-target
+$\mathbf{Y}$. On uncorrupted high-consensus coordinates,
+$\mathcal{L}_{\mathrm{id}}$ applies the same error. Together they teach recovery
+without rewarding unnecessary motion away from reliable observations.
+
+\paragraph{Rotation consistency.}
+The circular axial loss is
+\begin{equation}
+ \mathcal{L}_{\theta}=\mathbb{E}
+ [\operatorname{atan2}(\sin(\widehat{\theta}-\theta^{Y}),
+ \cos(\widehat{\theta}-\theta^{Y}))^2].
+\end{equation}
+The complementary $\mathrm{SO}(3)$ chordal proxy is
+\begin{equation}
+ \mathcal{L}_{R}=\tfrac{1}{4}\mathbb{E}
+ [\lVert\widehat{\mathbf{R}}_{ph}-\mathbf{R}^{Y}_{ph}\rVert_F^2].
+\end{equation}
+The first protects signed axial motion; the second penalizes disagreement in the
+complete relative orientation.
+
+\paragraph{Skeletal structure.}
+For every configured bone, the robust trial baseline is computed from clean
+observations. $\mathcal{L}_{\mathrm{bone}}$ penalizes squared relative deviation
+of fused bone length from that baseline. $\mathcal{L}_{\mathrm{rigid}}$ compares
+the temporal rate of fused and target bone lengths, discouraging local expansion
+or contraction without enforcing one universal body shape.
+
+\paragraph{Adaptive temporal acceleration.}
+Irregular timestamp intervals are respected in a centered finite-difference
+acceleration. The fused-to-target acceleration error is weighted by
+$(1+\lVert\mathbf{a}^{Y}\rVert_2)^{-1}$. Consequently, stationary or slowly
+changing intervals receive stronger smoothing pressure than genuine rapid
+motion. This term is denoted $\mathcal{L}_{\mathrm{acc}}$.
+
+\paragraph{Minimal correction and complete-cycle range.}
+$\mathcal{L}_{\Delta}=\mathbb{E}\lVert\Delta\mathbf{x}\rVert_2^2$ favors the
+deterministic base when other evidence is inconclusive. For a complete valid
+cycle, circular angles are unwrapped within each contiguous run and
+\begin{equation}
+ \mathcal{L}_{\mathrm{ROM}}=
+ \left[(\max\widehat{\theta}-\min\widehat{\theta})-
+       (\max\theta^{Y}-\min\theta^{Y})\right]^2.
+\end{equation}
+This term is evaluated on unpadded whole cycles so a fixed training window does
+not define the movement range.
+
+\subsection{Training, selection, and inference}
+
+Complete trials are canonicalized before windows are sampled, preventing scale
+from depending on crop position. Training uses 128-frame windows with stride 32;
+validation and inference use stride 64. A separate complete-cycle loader
+computes $\mathcal{L}_{\mathrm{ROM}}$ without retaining all window activations.
+The configured model has 128 hidden channels and is optimized for 100 epochs with
+Adam at a learning rate of $10^{-3}$ and batch size 32.
+
+Checkpoint selection maximizes the mean of five bounded self-supervised scores:
+fixed-corruption recovery, trial-level bone coefficient of variation,
+rotation consistency, high-consensus identity, and complete-cycle ROM
+retention. No triangulated distance participates. At inference, overlapping
+windows are reconstructed with a positive Hann-like taper. The canonical fused
+sequence is then inverted with the face transform from Eq.~\eqref{eq:canonical}
+and saved together with validity, frame maps, timestamps, quality, trunk angle,
+and provenance metadata.
