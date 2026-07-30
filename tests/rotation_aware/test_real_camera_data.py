@@ -16,6 +16,7 @@ from gymnastics.fusion.rotation_aware.dataset import (
 from gymnastics.fusion.rotation_aware.real_camera_data import (
     CameraWindowDataset,
     load_real_camera_trials,
+    prepare_real_camera_observation_cache,
 )
 from gymnastics.fusion.rotation_aware.schema import PosePairTrial
 
@@ -218,3 +219,33 @@ def test_missing_mapped_sam3d_frame_is_rejected(tmp_path: Path) -> None:
             side_calibration_path=side_calibration,
             ablation="G4",
         )
+
+
+def test_compact_observation_cache_removes_repeated_frame_npz_reads(
+    tmp_path: Path,
+) -> None:
+    sam3d, audit, face_calibration, side_calibration = _fixture(tmp_path)
+    compact = tmp_path / "compact"
+    prepare_real_camera_observation_cache(
+        raw_trials=[_trial()],
+        sam3d_person_root=sam3d,
+        face_calibration_path=face_calibration,
+        side_calibration_path=side_calibration,
+        output_root=compact,
+    )
+    for path in sam3d.glob("*/*/*.npz"):
+        path.unlink()
+
+    result = load_real_camera_trials(
+        raw_trials=[_trial()],
+        skeleton=SPEC,
+        sam3d_person_root=sam3d,
+        camera_audit_path=audit,
+        face_calibration_path=face_calibration,
+        side_calibration_path=side_calibration,
+        observation_cache_root=compact,
+        ablation="G4",
+    )
+
+    assert result[0].camera_features is not None
+    assert result[0].camera_features.joint_features.shape == (4, 70, 8)

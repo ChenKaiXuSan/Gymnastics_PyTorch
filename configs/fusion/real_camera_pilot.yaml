@@ -8,6 +8,7 @@ paths:
   side_calibration: local/runs/calibration_vis/IMG_2676/calibration_parameters.npz
   triangulated_root: /home/data/xchen/gymnastics/sam3d_triangulated/person
   output_root: local/runs/fitted_camera_real/fold_00
+  observation_cache: local/runs/fitted_camera_real/fold_00/input_cache
 
 source_checkpoints:
   0: local/runs/fuse_rotation_aware/runs/all137_a6_e100_seed0/checkpoints/best.pt

@@ -7,11 +7,14 @@ camera-guided ablations used by the Unity benchmark.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from functools import lru_cache
 import json
+import pickle
 from pathlib import Path
+import struct
 from typing import Any, Mapping, Sequence
+import zipfile
 
 import cv2
 import numpy as np
@@ -27,11 +30,66 @@ from gymnastics.fusion.rotation_aware.inference import CanonicalTrial, canonical
 from gymnastics.fusion.rotation_aware.schema import PosePairTrial
 from gymnastics.triangulation.sam3d_from_split_cycle import (
     load_calibration,
-    load_keypoints_2d,
 )
 
 
 CAMERA_ABLATIONS = frozenset({"G0", "G1", "G2", "G3", "G4", "G5"})
+
+
+class _FoundKeypoints2D(Exception):
+    def __init__(self, points: np.ndarray) -> None:
+        super().__init__("found pred_keypoints_2d")
+        self.points = points
+
+
+class _ArrayStateProxy:
+    """Avoid allocating unrelated arrays while scanning a trusted SAM3D pickle."""
+
+    def __setstate__(self, state: object) -> None:
+        if not isinstance(state, tuple) or len(state) != 5:
+            return
+        _, shape, dtype, fortran_order, raw = state
+        if tuple(shape) != (70, 2) or not isinstance(raw, bytes):
+            return
+        points = np.frombuffer(raw, dtype=np.dtype(dtype)).copy().reshape(
+            (70, 2), order="F" if fortran_order else "C"
+        )
+        raise _FoundKeypoints2D(points.astype(np.float32, copy=False))
+
+
+def _array_state_proxy(*args: object) -> _ArrayStateProxy:
+    return _ArrayStateProxy()
+
+
+class _EarlyArrayUnpickler(pickle.Unpickler):
+    def find_class(self, module: str, name: str) -> Any:
+        if name == "_reconstruct" and module in {
+            "numpy.core.multiarray",
+            "numpy._core.multiarray",
+        }:
+            return _array_state_proxy
+        return super().find_class(module, name)
+
+
+def _load_keypoints_2d_early(path: Path) -> np.ndarray:
+    """Read the early 2D array without inflating later mesh/frame payloads."""
+
+    with zipfile.ZipFile(path) as archive:
+        members = [name for name in archive.namelist() if name.endswith("output.npy")]
+        if len(members) != 1:
+            raise ValueError(f"Expected one output.npy member in {path}")
+        with archive.open(members[0]) as handle:
+            if handle.read(6) != b"\x93NUMPY":
+                raise ValueError(f"Invalid NPY member in {path}")
+            major, _minor = struct.unpack("BB", handle.read(2))
+            size_bytes = 2 if major == 1 else 4
+            header_size = int.from_bytes(handle.read(size_bytes), "little")
+            handle.read(header_size)
+            try:
+                _EarlyArrayUnpickler(handle).load()
+            except _FoundKeypoints2D as found:
+                return found.points
+    raise KeyError(f"pred_keypoints_2d with shape (70,2) not found in {path}")
 
 
 @dataclass(frozen=True)
@@ -162,13 +220,6 @@ def _frame_path(
     )
 
 
-@lru_cache(maxsize=200_000)
-def _cached_keypoints_2d(path: str) -> np.ndarray:
-    points = np.asarray(load_keypoints_2d(Path(path)), dtype=np.float64)
-    points.setflags(write=False)
-    return points
-
-
 def _load_view_pixels(
     sam3d_person_root: str | Path,
     person_id: str,
@@ -182,7 +233,7 @@ def _load_view_pixels(
         path = _frame_path(sam3d_person_root, person_id, view, int(frame_index))
         if not path.is_file():
             raise FileNotFoundError(f"Missing SAM3D frame: {path}")
-        points = np.array(_cached_keypoints_2d(str(path)), copy=True)
+        points = np.asarray(_load_keypoints_2d_early(path), dtype=np.float64)
         points = cv2.undistortPoints(
             points.reshape(-1, 1, 2),
             np.asarray(camera_matrix, dtype=np.float64),
@@ -191,6 +242,96 @@ def _load_view_pixels(
         ).reshape(-1, 2)
         frames.append(points)
     return np.stack(frames, axis=0)
+
+
+def prepare_real_camera_observation_cache(
+    *,
+    raw_trials: Sequence[PosePairTrial | CanonicalTrial],
+    sam3d_person_root: str | Path,
+    face_calibration_path: str | Path,
+    side_calibration_path: str | Path,
+    output_root: str | Path,
+    workers: int = 8,
+) -> tuple[Path, ...]:
+    """Compact the required undistorted 2D observations once per cycle."""
+
+    if workers < 1:
+        raise ValueError("workers must be positive")
+    face_calibration = load_calibration(Path(face_calibration_path))
+    side_calibration = load_calibration(Path(side_calibration_path))
+
+    def prepare_one(value: PosePairTrial | CanonicalTrial) -> Path:
+        trial = value.trial if isinstance(value, CanonicalTrial) else value
+        target = (
+            Path(output_root)
+            / f"person_{trial.person_id}"
+            / f"{trial.trial_id}.npz"
+        )
+        if target.is_file():
+            with np.load(target, allow_pickle=False) as data:
+                if (
+                    np.array_equal(data["face_map"], trial.face_map)
+                    and np.array_equal(data["side_map"], trial.side_map)
+                    and data["pixels"].shape == (len(trial.face_map), 2, 70, 2)
+                ):
+                    return target
+        face_pixels = _load_view_pixels(
+            sam3d_person_root,
+            trial.person_id,
+            "face",
+            np.asarray(trial.face_map, dtype=np.int64),
+            face_calibration["K"],
+            face_calibration["dist"],
+        )
+        side_pixels = _load_view_pixels(
+            sam3d_person_root,
+            trial.person_id,
+            "side",
+            np.asarray(trial.side_map, dtype=np.int64),
+            side_calibration["K"],
+            side_calibration["dist"],
+        )
+        pixels = np.stack([face_pixels, side_pixels], axis=1).astype(np.float32)
+        valid = np.isfinite(pixels).all(axis=-1) & (
+            np.linalg.norm(pixels, axis=-1) > 0
+        )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_suffix(".npz.tmp")
+        with temporary.open("wb") as handle:
+            np.savez_compressed(
+                handle,
+                pixels=pixels,
+                valid=valid,
+                face_map=trial.face_map,
+                side_map=trial.side_map,
+            )
+        temporary.replace(target)
+        return target
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        return tuple(executor.map(prepare_one, raw_trials))
+
+
+def _cached_observations(
+    observation_cache_root: str | Path,
+    trial: PosePairTrial,
+) -> tuple[np.ndarray, np.ndarray]:
+    path = (
+        Path(observation_cache_root)
+        / f"person_{trial.person_id}"
+        / f"{trial.trial_id}.npz"
+    )
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing compact camera observation cache: {path}")
+    with np.load(path, allow_pickle=False) as data:
+        if not np.array_equal(data["face_map"], trial.face_map) or not np.array_equal(
+            data["side_map"], trial.side_map
+        ):
+            raise ValueError(f"Observation cache frame maps changed: {path}")
+        return (
+            np.asarray(data["pixels"], dtype=np.float64),
+            np.asarray(data["valid"], dtype=bool),
+        )
 
 
 def load_real_camera_trials(
@@ -202,6 +343,7 @@ def load_real_camera_trials(
     face_calibration_path: str | Path,
     side_calibration_path: str | Path,
     ablation: str,
+    observation_cache_root: str | Path | None = None,
 ) -> list[RealCameraTrial]:
     """Attach per-person fitted-camera features to canonical real trials."""
 
@@ -257,24 +399,29 @@ def load_real_camera_trials(
                 bone_cv_pct=person_fit.bone_cv_pct,
             )
 
-        face_pixels = _load_view_pixels(
-            sam3d_person_root,
-            person_id,
-            "face",
-            np.asarray(raw.face_map, dtype=np.int64),
-            face_calibration["K"],
-            face_calibration["dist"],
-        )
-        side_pixels = _load_view_pixels(
-            sam3d_person_root,
-            person_id,
-            "side",
-            np.asarray(raw.side_map, dtype=np.int64),
-            side_calibration["K"],
-            side_calibration["dist"],
-        )
-        pixels = np.stack([face_pixels, side_pixels], axis=1)
-        valid = np.isfinite(pixels).all(axis=-1) & (np.linalg.norm(pixels, axis=-1) > 0)
+        if observation_cache_root is None:
+            face_pixels = _load_view_pixels(
+                sam3d_person_root,
+                person_id,
+                "face",
+                np.asarray(raw.face_map, dtype=np.int64),
+                face_calibration["K"],
+                face_calibration["dist"],
+            )
+            side_pixels = _load_view_pixels(
+                sam3d_person_root,
+                person_id,
+                "side",
+                np.asarray(raw.side_map, dtype=np.int64),
+                side_calibration["K"],
+                side_calibration["dist"],
+            )
+            pixels = np.stack([face_pixels, side_pixels], axis=1)
+            valid = np.isfinite(pixels).all(axis=-1) & (
+                np.linalg.norm(pixels, axis=-1) > 0
+            )
+        else:
+            pixels, valid = _cached_observations(observation_cache_root, raw)
         features = build_camera_feature_sequence(
             pixels=pixels,
             valid=valid,

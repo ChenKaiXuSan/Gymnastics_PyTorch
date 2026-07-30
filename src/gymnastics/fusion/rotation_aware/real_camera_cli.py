@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import replace
 import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -14,7 +13,11 @@ import yaml
 from .config import load_skeleton_spec
 from .data import load_cached_trial, resolve_cache_manifest
 from .inference import canonicalize_trial
-from .real_camera_data import RealCameraTrial, load_real_camera_trials
+from .real_camera_data import (
+    RealCameraTrial,
+    load_real_camera_trials,
+    prepare_real_camera_observation_cache,
+)
 from .real_camera_training import (
     RealCameraRun,
     RealCameraTrainingConfig,
@@ -30,6 +33,8 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--config", type=Path, required=True)
     train.add_argument("--seed", type=int, action="append")
     train.add_argument("--device", default="cpu")
+    prepare = subparsers.add_parser("prepare-inputs")
+    prepare.add_argument("--config", type=Path, required=True)
     evaluate = subparsers.add_parser("evaluate")
     evaluate.add_argument("--config", type=Path, required=True)
     report = subparsers.add_parser("report")
@@ -59,9 +64,15 @@ def _paths(config: Mapping[str, Any]) -> dict[str, Path]:
         "side_calibration",
         "triangulated_root",
         "output_root",
+        "observation_cache",
     )
     paths = {name: Path(str(values[name])) for name in required}
-    missing = [str(path) for name, path in paths.items() if name != "output_root" and not path.exists()]
+    generated = {"output_root", "observation_cache"}
+    missing = [
+        str(path)
+        for name, path in paths.items()
+        if name not in generated and not path.exists()
+    ]
     if missing:
         raise FileNotFoundError(f"Configured inputs do not exist: {missing}")
     return paths
@@ -109,6 +120,7 @@ def _camera_trials(
         camera_audit_path=paths["camera_audit"],
         face_calibration_path=paths["face_calibration"],
         side_calibration_path=paths["side_calibration"],
+        observation_cache_root=paths["observation_cache"],
         ablation=ablation,
     )
 
@@ -273,6 +285,37 @@ def _train_matrix(
             )
 
 
+def _prepare_inputs(config: Mapping[str, Any]) -> None:
+    paths = _paths(config)
+    split = _split(paths["fold"])
+    trials = [
+        trial
+        for people in split.values()
+        for trial in _raw_trials(paths["cache_root"], people)
+    ]
+    print(
+        json.dumps(
+            {"event": "prepare_inputs_start", "cycles": len(trials)},
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    outputs = prepare_real_camera_observation_cache(
+        raw_trials=trials,
+        sam3d_person_root=paths["sam3d_person_root"],
+        face_calibration_path=paths["face_calibration"],
+        side_calibration_path=paths["side_calibration"],
+        output_root=paths["observation_cache"],
+    )
+    print(
+        json.dumps(
+            {"event": "prepare_inputs_complete", "cycles": len(outputs)},
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+
+
 def _camera_audit_summary(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
         payload = json.load(handle)
@@ -330,7 +373,9 @@ def _evaluate(config: Mapping[str, Any]) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     config = _config(args.config)
-    if args.command == "train-matrix":
+    if args.command == "prepare-inputs":
+        _prepare_inputs(config)
+    elif args.command == "train-matrix":
         _train_matrix(config, selected_seeds=args.seed, device=args.device)
     elif args.command == "evaluate":
         _evaluate(config)
@@ -346,4 +391,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
