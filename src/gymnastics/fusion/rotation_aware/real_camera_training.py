@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import hashlib
 import json
 from pathlib import Path
@@ -19,7 +18,6 @@ from .camera import CameraConditioningConfig, CameraFeatureBundle
 from .config import SkeletonSpec, load_skeleton_spec
 from .corruptions import CorruptionConfig
 from .dataset import (
-    PosePairCompleteCycleDataset,
     PosePairWindowDataset,
     SplitManifest,
     WindowConfig,
@@ -30,7 +28,6 @@ from .losses import LossConfig
 from .model import RotationAwareFusionModel
 from .real_camera_data import (
     CAMERA_ABLATIONS,
-    CameraCompleteCycleDataset,
     CameraWindowDataset,
     RealCameraTrial,
 )
@@ -242,7 +239,7 @@ def _loaders(
     expanded: ExpandedFrozenModel,
     config: RealCameraTrainingConfig,
     seed: int,
-) -> tuple[DataLoader, DataLoader, DataLoader, DataLoader]:
+) -> tuple[DataLoader, DataLoader]:
     train_people = _people(train_trials)
     val_people = _people(val_trials)
     window_config = WindowConfig(
@@ -264,18 +261,6 @@ def _loaders(
         split="val",
         config=window_config,
     )
-    train_cycle_base = PosePairCompleteCycleDataset(
-        [trial.canonical_trial.trial for trial in train_trials],
-        skeleton=expanded.skeleton,
-        manifest=SplitManifest(train=train_people, val=(), test=()),
-        split="train",
-    )
-    val_cycle_base = PosePairCompleteCycleDataset(
-        [trial.canonical_trial.trial for trial in val_trials],
-        skeleton=expanded.skeleton,
-        manifest=SplitManifest(train=(), val=val_people, test=()),
-        split="val",
-    )
     generator = torch.Generator().manual_seed(int(seed))
     common = {"collate_fn": collate_pose_pair_windows, "num_workers": 0}
     return (
@@ -288,19 +273,6 @@ def _loaders(
         ),
         DataLoader(
             CameraWindowDataset(val_base, val_trials),
-            batch_size=1,
-            shuffle=False,
-            **common,
-        ),
-        DataLoader(
-            CameraCompleteCycleDataset(train_cycle_base, train_trials),
-            batch_size=1,
-            shuffle=True,
-            generator=generator,
-            **common,
-        ),
-        DataLoader(
-            CameraCompleteCycleDataset(val_cycle_base, val_trials),
             batch_size=1,
             shuffle=False,
             **common,
@@ -341,6 +313,9 @@ def train_real_camera_cell(
         "triangulated_3d_available_to_training": False,
         "camera_fit_scope": "per_person_transductive_input_operation",
         "training_inputs": ["sam3d_3d", "sam3d_2d", "fitted_camera"],
+        "camera_adaptation_objective": (
+            "window_self_supervision_with_frozen_A6_rotation_prior"
+        ),
         "trainable_parameter_prefixes": list(
             expanded.trainable_parameter_prefixes
         ),
@@ -370,8 +345,11 @@ def train_real_camera_cell(
         _atomic_json(run.provenance_path, provenance)
         return run
 
-    train_loader, val_loader, train_cycles, val_cycles = _loaders(
+    train_loader, val_loader = _loaders(
         train_trials, val_trials, expanded, config, seed
+    )
+    adaptation_loss = replace(
+        expanded.loss_config, complete_cycle_rom_weight=0.0
     )
     trainable = [
         parameter
@@ -394,9 +372,8 @@ def train_real_camera_cell(
             train_loader,
             optimizer,
             expanded.skeleton,
-            loss_config=expanded.loss_config,
+            loss_config=adaptation_loss,
             corruption_config=expanded.corruption_config,
-            complete_cycle_loader=train_cycles,
             seed=seed,
             epoch=epoch,
             device=config.device,
@@ -405,9 +382,8 @@ def train_real_camera_cell(
             expanded.model,
             val_loader,
             expanded.skeleton,
-            loss_config=expanded.loss_config,
+            loss_config=adaptation_loss,
             corruption_config=expanded.corruption_config,
-            complete_cycle_loader=val_cycles,
             seed=seed,
             device=config.device,
         )
@@ -434,7 +410,7 @@ def train_real_camera_cell(
             "hidden_channels": expanded.hidden_channels,
             "camera_config": asdict(camera_conditioning_config(ablation)),
         },
-        "loss_config": asdict(expanded.loss_config),
+        "loss_config": asdict(adaptation_loss),
         "corruption_config": asdict(expanded.corruption_config),
         "provenance": provenance,
         "trainable_parameter_prefixes": list(
@@ -647,4 +623,3 @@ def infer_real_camera_cell(
         )
         outputs.append(target)
     return tuple(outputs)
-
