@@ -189,6 +189,14 @@ def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
     temporary.replace(path)
 
 
+def _external_metrics_in_millimeters(row: Mapping[str, Any]) -> dict[str, Any]:
+    converted = dict(row)
+    for name in ("mpjpe", "median", "p95"):
+        if _finite(converted.get(name)):
+            converted[name] = 1000.0 * float(converted[name])
+    return converted
+
+
 def write_real_camera_report(
     summary: CameraEvaluationSummary,
     path: str | Path,
@@ -216,7 +224,7 @@ def write_real_camera_report(
         "",
         "## Ranking",
         "",
-        "| Rank | Method | Mean person MPJPE | Median | Seed SD |",
+        "| Rank | Method | Mean person MPJPE (mm) | Median (mm) | Seed SD (mm) |",
         "|---:|---|---:|---:|---:|",
     ]
     for rank, row in enumerate(ranking, start=1):
@@ -333,7 +341,11 @@ def evaluate_real_camera_runs(
             )
             for row in report.person_metrics:
                 person_rows.append(
-                    {**row, "seed": run.seed, "method": run.ablation}
+                    {
+                        **_external_metrics_in_millimeters(row),
+                        "seed": run.seed,
+                        "method": run.ablation,
+                    }
                 )
             for sequence in sequences:
                 cycle_report = evaluate_person_trials(
@@ -345,7 +357,9 @@ def evaluate_real_camera_runs(
                 )
                 cycle_rows.append(
                     {
-                        **cycle_report.person_metrics[0],
+                        **_external_metrics_in_millimeters(
+                            cycle_report.person_metrics[0]
+                        ),
                         "trial_id": sequence.trial_id,
                         "seed": run.seed,
                         "method": run.ablation,
@@ -366,4 +380,3 @@ def evaluate_real_camera_runs(
         camera_audit=camera_audit,
     )
     return summary
-
