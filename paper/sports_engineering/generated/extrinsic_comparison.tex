@@ -1,0 +1,18 @@
+\begin{table*}[t]
+\caption{Camera-assisted deterministic comparison over all 137 participants.
+The difference is method minus the calibration-free body-frame average, with a
+participant-bootstrap 95\% confidence interval. $p$ values are Holm-adjusted
+paired Wilcoxon tests. Evaluation uses a same-video pseudo-reference.}
+\label{tab:extrinsic-comparison}
+\centering
+\small
+\begin{tabular}{lcccc}
+\toprule
+Method & MPJPE (mm) & Difference [95\% CI] & $p_{\rm Holm}$ & Improved people \\
+\midrule
+Body-frame average & 64.045 $\pm$ 16.092 & -- & -- & -- \\
+Extrinsic-R & 62.031 $\pm$ 16.571 & -2.015 [-2.385, -1.647] & 2.66e-16 & 118/137 \\
+Extrinsic-R quality & 63.251 $\pm$ 16.794 & -0.794 [-1.204, -0.395] & 0.000196 & 89/137 \\
+\bottomrule
+\end{tabular}
+\end{table*}
