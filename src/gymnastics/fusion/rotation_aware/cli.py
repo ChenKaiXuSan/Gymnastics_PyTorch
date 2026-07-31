@@ -207,6 +207,17 @@ def model_kwargs_for_training(training: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def model_metadata_for_training(training: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the architecture fields required to reproduce inference."""
+    kwargs = model_kwargs_for_training(training)
+    return {
+        "hidden_channels": kwargs["hidden_channels"],
+        "cross_attention": kwargs["cross_attention"],
+        "attention_heads": kwargs["attention_heads"],
+        "rotation_conditioning": kwargs["rotation_conditioning"],
+    }
+
+
 def _training_config_for_ablation(
     config: Mapping[str, Any], ablation: str
 ) -> dict[str, Any]:
@@ -230,6 +241,8 @@ def _training_config_for_ablation(
         raise ValueError("training epochs must be positive")
     training["epochs"] = epochs
     training["ablation"] = ablation
+    if ablation in CROSS_ATTENTION_ABLATIONS:
+        training["attention_heads"] = int(training.get("attention_heads", 4))
     return training
 
 
@@ -815,6 +828,7 @@ def _cmd_infer(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
             "epochs",
             "learning_rate",
             "hidden_channels",
+            "attention_heads",
             "seed",
             "protocol",
         )
@@ -899,9 +913,7 @@ def _cmd_infer(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
         "checkpoint_path": str(checkpoint),
         "checkpoint_sha256": _file_hash(checkpoint),
         "ablation": saved_ablation,
-        "model_config": {
-            "hidden_channels": int(saved_training.get("hidden_channels", 128))
-        },
+        "model_config": model_metadata_for_training(saved_training),
         "training_config_hash": str(provenance.get("training_config_hash", "")),
         "inference_config_hash": _hash(config),
         "inference_cache_manifests": consumed_cache_manifests,

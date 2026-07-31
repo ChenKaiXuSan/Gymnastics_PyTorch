@@ -6,6 +6,7 @@ import numpy as np
 from gymnastics.common.skeletons.mhr70 import mhr_names
 from gymnastics.fusion.rotation_aware.config import load_skeleton_spec
 from gymnastics.fusion.rotation_aware.evaluation import (
+    ABLATION_REGISTRY,
     MethodSequence,
     _circular_rom,
     _derivative,
@@ -19,6 +20,14 @@ from tests.rotation_aware.test_geometry import synthetic_mhr70_pose
 
 
 SPEC = load_skeleton_spec(Path("configs/fusion/skeleton_mhr70.yaml"))
+
+
+def test_registry_names_cross_attention_ablations() -> None:
+    assert (
+        ABLATION_REGISTRY["A10"]
+        == "rotation_conditioned_cross_view_attention"
+    )
+    assert ABLATION_REGISTRY["A11"] == "cross_view_attention_without_rotation"
 
 
 def _sequence(offset: float = 0.0) -> MethodSequence:
@@ -188,6 +197,32 @@ def test_discovery_reports_only_saved_new_baselines_as_available(
     assert status["A4"] == "available"
     assert next(item for item in sequences if item.method == "A4").swap_error == 3.0
     assert next(item for item in sequences if item.method == "A0").swap_error is None
+
+
+def test_discovery_preserves_cross_attention_ablation_label(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "inference" / "person_1" / "cycle_000"
+    root.mkdir(parents=True)
+    values = _sequence().kpts_world
+    np.savez_compressed(
+        root / "fused_sequence.npz",
+        kpts_world=values,
+        frame_valid=np.ones(len(values), dtype=bool),
+        joint_valid=np.ones(values.shape[:2], dtype=bool),
+        face_map=np.arange(len(values)),
+        side_map=np.arange(len(values)),
+        metadata=np.asarray(json.dumps({"ablation": "A11"})),
+        diagnostics=np.asarray(json.dumps({"A11": {"swap_error": 0.0}})),
+    )
+
+    sequences, status = discover_method_sequences(
+        tmp_path / "inference", tmp_path / "old", "1"
+    )
+
+    assert {sequence.method for sequence in sequences} == {"A11"}
+    assert status["A11"] == "available"
+    assert sequences[0].swap_error == 0.0
 
 
 def test_person_metrics_are_weighted_by_valid_points_and_masked_static_joints_have_no_jerk() -> (

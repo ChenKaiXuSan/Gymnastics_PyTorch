@@ -23,6 +23,7 @@ from gymnastics.fusion.rotation_aware.cli import (
     loss_config_for_ablation,
     main,
     make_parser,
+    model_metadata_for_training,
     model_kwargs_for_training,
     resolve_fold,
 )
@@ -275,6 +276,17 @@ def test_model_kwargs_distinguish_a10_and_a11_without_capacity_change() -> None:
         "twist_residual": False,
         "cross_attention": True,
         "attention_heads": 4,
+        "rotation_conditioning": False,
+    }
+
+
+def test_model_metadata_records_checkpoint_reconstruction_fields() -> None:
+    assert model_metadata_for_training(
+        {"ablation": "A11", "hidden_channels": 8, "attention_heads": 2}
+    ) == {
+        "hidden_channels": 8,
+        "cross_attention": True,
+        "attention_heads": 2,
         "rotation_conditioning": False,
     }
 

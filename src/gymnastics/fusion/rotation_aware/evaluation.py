@@ -24,7 +24,12 @@ ABLATION_REGISTRY = {
     "A7": "learned_rom_peak",
     "A8": "learned_twist_rom_peak",
     "A9": "learned_twist_rom_peak_rate",
+    "A10": "rotation_conditioned_cross_view_attention",
+    "A11": "cross_view_attention_without_rotation",
 }
+LEARNED_ABLATION_IDS = frozenset(
+    ablation for ablation in ABLATION_REGISTRY if ablation not in {"A0", "A1", "A2", "A3"}
+)
 
 
 @dataclass(frozen=True)
@@ -604,7 +609,7 @@ def discover_method_sequences(
             if not isinstance(diagnostics, dict):
                 diagnostics = {}
             learned_ablation = str(metadata.get("ablation", "A6"))
-            if learned_ablation not in {"A4", "A5", "A6", "A7", "A8", "A9"}:
+            if learned_ablation not in LEARNED_ABLATION_IDS:
                 learned_ablation = "A6"
             frames = np.array(data["frame_valid"])
             joints = np.array(data["joint_valid"]) if "joint_valid" in data else None
@@ -729,7 +734,7 @@ def discover_method_sequences(
                 sequence
                 for sequence in found
                 if sequence.method
-                in {"A4", "A5", "A6", "A7", "A8", "A9", "rotation_aware_self_supervised"}
+                in LEARNED_ABLATION_IDS | {"rotation_aware_self_supervised"}
                 and sequence.face_map is not None
                 and sequence.side_map is not None
             ]
