@@ -3,6 +3,7 @@ base_config: configs/benchmarks/unity.yaml
 paths:
   output_root: local/runs/unity_benchmark/supervised_finetune
   extrinsic_output_root: local/runs/unity_benchmark/extrinsic_learning
+  camera_feature_output_root: local/runs/unity_benchmark/camera_feature_fusion
   skeleton: configs/fusion/skeleton_mhr70.yaml
 
 matrix:
@@ -46,4 +47,18 @@ extrinsic:
   hidden_channels: 32
   max_delta_m: 0.05
   smooth_l1_beta_m: 0.02
+  device: cpu
+
+camera_feature:
+  ablations: [G0, G1, G2, G3, G4, G5]
+  folds: [left_to_right, right_to_left]
+  seeds: [0, 1, 2]
+  epochs: 100
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  batch_size: 1
+  window_length: 128
+  train_stride: 32
+  inference_stride: 64
+  threshold_px: 2.0
   device: cpu
