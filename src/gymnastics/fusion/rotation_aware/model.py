@@ -15,6 +15,7 @@ from .camera import (
     CameraFeatureBundle,
 )
 from .config import SkeletonSpec
+from .cross_attention import BidirectionalCrossViewAttention
 from .features import DisagreementFeatures, FeatureBundle
 from .geometry import apply_axial_twist
 from .trunk import extract_trunk_features
@@ -97,6 +98,8 @@ class SharedViewEncoder(nn.Module):
         trunk_omega: Tensor,
         trunk_alpha: Tensor,
         trunk_valid: Tensor,
+        *,
+        rotation_conditioning: bool = True,
     ) -> Tensor:
         pose = features.pose
         if pose.points.shape != points.shape or pose.valid.shape != valid.shape:
@@ -129,6 +132,8 @@ class SharedViewEncoder(nn.Module):
             ),
             dim=-1,
         )
+        if not rotation_conditioning:
+            trunk_features = torch.zeros_like(trunk_features)
         encoded = self.activation(self.joint(joint_features) + self.trunk(trunk_features).unsqueeze(2))
         return torch.where(effective_mask[..., None], encoded, torch.zeros_like(encoded))
 
@@ -146,6 +151,9 @@ class RotationAwareFusionModel(nn.Module):
         max_twist: float = 1.0,
         twist_gate_sharpness: float = 8.0,
         camera_config: CameraConditioningConfig | None = None,
+        cross_attention: bool = False,
+        attention_heads: int = 4,
+        rotation_conditioning: bool = True,
     ) -> None:
         super().__init__()
         if hidden_channels <= 0:
@@ -154,7 +162,15 @@ class RotationAwareFusionModel(nn.Module):
             raise ValueError("max_twist must be non-negative")
         self.spec = spec
         self.joint_count = len(spec.joint_names)
+        self.cross_attention = bool(cross_attention)
+        self.attention_heads = int(attention_heads)
+        self.rotation_conditioning = bool(rotation_conditioning)
         self.view_encoder = SharedViewEncoder(hidden_channels)
+        self.cross_view_attention = (
+            BidirectionalCrossViewAttention(hidden_channels, self.attention_heads)
+            if self.cross_attention
+            else None
+        )
         self.cross_encoder = nn.Sequential(
             nn.Linear(13, hidden_channels),
             nn.GELU(),
@@ -258,7 +274,13 @@ class RotationAwareFusionModel(nn.Module):
             raise ValueError(f"{name} FeatureBundle.pose.points must match the supplied effective points")
 
     @staticmethod
-    def _cross_features(cross: DisagreementFeatures, shape: tuple[int, int, int], dtype: torch.dtype) -> Tensor:
+    def _cross_features(
+        cross: DisagreementFeatures,
+        shape: tuple[int, int, int],
+        dtype: torch.dtype,
+        *,
+        rotation_conditioning: bool = True,
+    ) -> Tensor:
         batch, frames, joints = shape
         if cross.coordinate_abs_delta.shape != (batch, frames, joints, 3):
             raise ValueError("cross coordinate_abs_delta must have shape [B, T, J, 3]")
@@ -278,7 +300,7 @@ class RotationAwareFusionModel(nn.Module):
         def expand(value: Tensor) -> Tensor:
             return value.to(dtype=dtype).unsqueeze(2).expand(-1, -1, joints, -1)
 
-        return torch.cat(
+        features = torch.cat(
             (
                 cross.coordinate_abs_delta.to(dtype=dtype),
                 cross.coordinate_valid.to(dtype=dtype).unsqueeze(-1),
@@ -292,6 +314,13 @@ class RotationAwareFusionModel(nn.Module):
             ),
             dim=-1,
         )
+        if not rotation_conditioning:
+            conditioning_mask = torch.ones(
+                13, dtype=dtype, device=features.device
+            )
+            conditioning_mask[4:8] = 0
+            features = features * conditioning_mask
+        return features
 
     def forward(
         self,
@@ -331,32 +360,50 @@ class RotationAwareFusionModel(nn.Module):
         face_trunk = extract_trunk_features(face, valid_face, self.spec, dt=dt)
         side_trunk = extract_trunk_features(side, valid_side, self.spec, dt=dt)
         effective_mask = valid_face & valid_side
+        face_encoder_mask = valid_face if self.cross_attention else effective_mask
+        side_encoder_mask = valid_side if self.cross_attention else effective_mask
         face_encoded = self.view_encoder(
             face,
             valid_face,
-            effective_mask,
+            face_encoder_mask,
             face_features,
             face_trunk.rotation,
             face_trunk.angle,
             face_trunk.omega,
             face_trunk.alpha,
             face_trunk.rotation_valid,
+            rotation_conditioning=self.rotation_conditioning,
         )
         side_encoded = self.view_encoder(
             side,
             valid_side,
-            effective_mask,
+            side_encoder_mask,
             side_features,
             side_trunk.rotation,
             side_trunk.angle,
             side_trunk.omega,
             side_trunk.alpha,
             side_trunk.rotation_valid,
+            rotation_conditioning=self.rotation_conditioning,
         )
+        if self.cross_view_attention is not None:
+            face_encoded, side_encoded = self.cross_view_attention(
+                face_encoded,
+                side_encoded,
+                valid_face,
+                valid_side,
+            )
         symmetric_views = torch.cat(((face_encoded + side_encoded) * 0.5, (face_encoded - side_encoded).abs()), dim=-1)
         symmetric_views = torch.where(effective_mask[..., None], symmetric_views, torch.zeros_like(symmetric_views))
         cross_shape: tuple[int, int, int] = (int(face.shape[0]), int(face.shape[1]), int(face.shape[2]))
-        cross_encoded = self.cross_encoder(self._cross_features(cross, cross_shape, face.dtype))
+        cross_encoded = self.cross_encoder(
+            self._cross_features(
+                cross,
+                cross_shape,
+                face.dtype,
+                rotation_conditioning=self.rotation_conditioning,
+            )
+        )
         cross_encoded = torch.where(effective_mask[..., None], cross_encoded, torch.zeros_like(cross_encoded))
         fused_features = self.fuse_projection(torch.cat((symmetric_views, cross_encoded), dim=-1))
         fused_features = torch.where(effective_mask[..., None], fused_features, torch.zeros_like(fused_features))

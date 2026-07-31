@@ -198,6 +198,153 @@ def test_end_to_end_a8_twist_matrix_trains_infers_and_evaluates(tmp_path: Path) 
     assert metadata["ablation"] == "A8"
 
 
+@pytest.mark.parametrize(
+    ("ablation", "rotation_conditioning"),
+    [("A10", True), ("A11", False)],
+)
+def test_cross_attention_ablations_train_infer_and_evaluate(
+    tmp_path: Path,
+    ablation: str,
+    rotation_conditioning: bool,
+) -> None:
+    frames = 16
+    sam3d = tmp_path / "sam3d_body_results"
+    _write_sam3d(sam3d, "face", frames)
+    _write_sam3d(sam3d, "side", frames)
+    split_root = tmp_path / "split_cycle"
+    record = split_root / "person_1" / "alignment_record_1.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(
+        json.dumps(
+            {
+                "metadata": {"offset_side_to_face": 0, "fps": 60.0},
+                "cycles": [
+                    {
+                        "cycle_index": 0,
+                        "face_video_frames": {"start": 0, "end": frames},
+                        "side_video_frames": {"start": 0, "end": frames},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    fold = tmp_path / "fold_00.json"
+    fold.write_text(
+        json.dumps({"train": [{"person_id": "1"}], "val": [], "test": []}),
+        encoding="utf-8",
+    )
+    output = tmp_path / "outputs"
+    old_fuse_root = tmp_path / "legacy_fuse_outputs"
+    old_fuse_root.mkdir()
+    config = tmp_path / "rotation_aware.yaml"
+    config.write_text(
+        "\n".join(
+            (
+                "paths:",
+                f"  sam3d_root: {sam3d}",
+                f"  split_cycle_root: {split_root}",
+                f"  output_root: {output}",
+                "  skeleton: configs/fusion/skeleton_mhr70.yaml",
+                f"  fold_json: {fold}",
+                f"  old_fuse_root: {old_fuse_root}",
+                "window:",
+                "  length: 16",
+                "  train_stride: 8",
+                "  eval_stride: 8",
+                "training:",
+                "  epochs: 1",
+                "  batch_size: 2",
+                "  hidden_channels: 8",
+                "  attention_heads: 2",
+                "  seed: 0",
+                "  device: cpu",
+            )
+        ),
+        encoding="utf-8",
+    )
+    run_id = ablation.lower()
+
+    assert main(["prepare", "--config", str(config), "--person", "1"]) == 0
+    assert (
+        main(
+            [
+                "train",
+                "--config",
+                str(config),
+                "--run-id",
+                run_id,
+                "--ablation",
+                ablation,
+            ]
+        )
+        == 0
+    )
+    checkpoint = torch.load(
+        output / "runs" / run_id / "checkpoints" / "best.pt",
+        map_location="cpu",
+        weights_only=False,
+    )
+    assert checkpoint["training_config"]["cross_attention"] is True
+    assert (
+        checkpoint["training_config"]["rotation_conditioning"]
+        is rotation_conditioning
+    )
+    assert (
+        main(
+            [
+                "infer",
+                "--config",
+                str(config),
+                "--run-id",
+                run_id,
+                "--person",
+                "1",
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "evaluate",
+                "--config",
+                str(config),
+                "--run-id",
+                run_id,
+                "--person",
+                "1",
+            ]
+        )
+        == 0
+    )
+
+    sequence_path = (
+        output
+        / "inference"
+        / run_id
+        / "person_1"
+        / "cycle_000"
+        / "fused_sequence.npz"
+    )
+    with np.load(sequence_path, allow_pickle=False) as sequence:
+        metadata = json.loads(str(sequence["metadata"].item()))
+        assert np.isfinite(sequence["kpts_world"]).all()
+    assert metadata["ablation"] == ablation
+    assert metadata["model_config"] == {
+        "hidden_channels": 8,
+        "cross_attention": True,
+        "attention_heads": 2,
+        "rotation_conditioning": rotation_conditioning,
+    }
+
+    with (
+        output / "evaluation" / run_id / "metrics_by_person.csv"
+    ).open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert {row["method"] for row in rows} >= {ablation}
+
+
 def test_batch64_schedule_override_records_resolved_checkpoint_settings(
     tmp_path: Path, monkeypatch
 ) -> None:

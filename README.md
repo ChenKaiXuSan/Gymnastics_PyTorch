@@ -68,6 +68,14 @@ conda run -n gymnastic gymnastics fuse deterministic --methods avg_body_current
 # Run the rotation-aware paper method.
 conda run -n gymnastic gymnastics fuse rotation-aware --help
 
+# Train the rotation-conditioned and cross-view-only attention ablations.
+conda run -n gymnastic gymnastics fuse rotation-aware train \
+  --config configs/fusion/rotation_aware_cross_attention.yaml \
+  --run-id paper_a10_b64_e100_s0 --ablation A10
+conda run -n gymnastic gymnastics fuse rotation-aware train \
+  --config configs/fusion/rotation_aware_cross_attention.yaml \
+  --run-id paper_a11_b64_e100_s0 --ablation A11
+
 # Train/evaluate classifiers.
 conda run -n gymnastic gymnastics classify
 

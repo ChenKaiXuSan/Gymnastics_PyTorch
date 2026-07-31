@@ -187,8 +187,10 @@ The evaluation registry uses these labels:
 | A7 | A6 plus 改法4: per-view-peak ROM anchor (twist-fusion) |
 | A8 | A7 plus 改法2: opt-in rotation-parameterised trunk-twist residual |
 | A9 | A8 plus 改法3: per-view observed twist-rate anchor |
+| A10 | A6 plus rotation-conditioned bidirectional cross-view attention |
+| A11 | A10 architecture without explicit rotation inputs or rotation losses |
 
-A0-A3 are emitted alongside every learned inference run. A4-A9 are separate
+A0-A3 are emitted alongside every learned inference run. A4-A11 are separate
 trained runs, so evaluate them together by repeating `--run-id`:
 
 ```bash
@@ -201,6 +203,47 @@ This creates one combined evaluation directory named
 `evaluation/paper_a4+paper_a5+paper_a6/`. The evaluator can also read old
 comparison outputs from the configured `old_fuse_root` without writing to
 them.
+
+### Cross-view attention ablations (A10-A11)
+
+A10 exchanges same-frame joint tokens in both directions after the shared
+rotation-aware view encoder. The two directions share one attention module and
+the downstream fusion uses only their mean and absolute difference, retaining
+view-swap invariance. A11 has the same attention capacity but zeros the explicit
+trunk rotation, twist angle/rate/acceleration, angle-disagreement, and
+SO(3)-distance inputs. It also disables circular rotation, SO(3), and
+complete-cycle ROM losses.
+
+A11 still uses the common body-frame canonicalization. It must therefore be
+described as *cross-view attention without explicit body-rotation
+conditioning*, not as a method with no rotation operation anywhere.
+Triangulated 3D remains evaluation-only for both variants.
+
+```bash
+conda run -n gymnastic gymnastics fuse rotation-aware train \
+  --config configs/fusion/rotation_aware_cross_attention.yaml \
+  --run-id paper_a10_b64_e100_s0 --ablation A10
+
+conda run -n gymnastic gymnastics fuse rotation-aware train \
+  --config configs/fusion/rotation_aware_cross_attention.yaml \
+  --run-id paper_a11_b64_e100_s0 --ablation A11
+
+conda run -n gymnastic gymnastics fuse rotation-aware infer \
+  --config configs/fusion/rotation_aware_cross_attention.yaml \
+  --run-id paper_a10_b64_e100_s0
+
+conda run -n gymnastic gymnastics fuse rotation-aware infer \
+  --config configs/fusion/rotation_aware_cross_attention.yaml \
+  --run-id paper_a11_b64_e100_s0
+
+conda run -n gymnastic gymnastics fuse rotation-aware evaluate \
+  --config configs/fusion/rotation_aware_cross_attention.yaml \
+  --run-id paper_a10_b64_e100_s0 --run-id paper_a11_b64_e100_s0
+```
+
+The primary paired contrasts are A10 minus A6 (attention added while retaining
+rotation guidance) and A10 minus A11 (complete explicit rotation guidance added
+while retaining attention).
 
 ### Trunk-twist ablations (A7-A9)
 

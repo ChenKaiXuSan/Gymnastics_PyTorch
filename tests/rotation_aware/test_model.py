@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,10 @@ from gymnastics.fusion.rotation_aware.features import (
     compute_quality_features,
     extract_pose_features,
 )
-from gymnastics.fusion.rotation_aware.model import RotationAwareFusionModel
+from gymnastics.fusion.rotation_aware.model import (
+    RotationAwareFusionModel,
+    SharedViewEncoder,
+)
 from gymnastics.fusion.rotation_aware.trunk import extract_trunk_features
 from tests.rotation_aware.test_geometry import synthetic_mhr70_pose
 
@@ -216,6 +220,140 @@ def test_model_is_view_swap_invariant() -> None:
         torch.testing.assert_close(getattr(out_lr, field), getattr(out_rl, field), atol=1e-5, rtol=0)
     for field in ("valid", "fused_theta_valid", "fused_r_pt_valid"):
         assert torch.equal(getattr(out_lr, field), getattr(out_rl, field))
+
+
+def test_cross_attention_model_is_view_swap_invariant() -> None:
+    torch.manual_seed(17)
+    face, side, face_features, side_features, cross, valid_face, valid_side = _inputs()
+    model = RotationAwareFusionModel(
+        SPEC,
+        hidden_channels=16,
+        cross_attention=True,
+        attention_heads=4,
+    ).eval()
+
+    out_lr = model(
+        face,
+        side,
+        face_features,
+        side_features,
+        cross,
+        valid_face,
+        valid_side,
+    )
+    swapped_cross = compute_disagreement_features(
+        side,
+        face,
+        extract_trunk_features(side, valid_side, SPEC, dt=1.0),
+        extract_trunk_features(face, valid_face, SPEC, dt=1.0),
+        valid_side,
+        valid_face,
+    )
+    out_rl = model(
+        side,
+        face,
+        side_features,
+        face_features,
+        swapped_cross,
+        valid_side,
+        valid_face,
+    )
+
+    for field in ("fused_kpts", "base_kpts", "delta_kpts", "fused_theta", "fused_r_pt"):
+        torch.testing.assert_close(
+            getattr(out_lr, field), getattr(out_rl, field), atol=1e-5, rtol=0
+        )
+
+
+def test_rotation_conditioned_and_unconditioned_attention_have_equal_parameter_counts() -> None:
+    conditioned = RotationAwareFusionModel(
+        SPEC,
+        hidden_channels=16,
+        cross_attention=True,
+        rotation_conditioning=True,
+    )
+    unconditioned = RotationAwareFusionModel(
+        SPEC,
+        hidden_channels=16,
+        cross_attention=True,
+        rotation_conditioning=False,
+    )
+
+    assert sum(parameter.numel() for parameter in conditioned.parameters()) == sum(
+        parameter.numel() for parameter in unconditioned.parameters()
+    )
+
+
+def test_unconditioned_view_encoder_ignores_rotation_inputs() -> None:
+    face, _, face_features, _, _, valid_face, _ = _inputs()
+    batch, frames = face.shape[:2]
+    encoder = SharedViewEncoder(hidden_channels=16).eval()
+    frame_valid = valid_face.any(dim=-1)
+    identity = torch.eye(3).expand(batch, frames, 3, 3).clone()
+    zeros = torch.zeros(batch, frames)
+
+    first = encoder(
+        face,
+        valid_face,
+        valid_face,
+        face_features,
+        identity,
+        zeros,
+        zeros,
+        zeros,
+        frame_valid,
+        rotation_conditioning=False,
+    )
+    second = encoder(
+        face,
+        valid_face,
+        valid_face,
+        face_features,
+        -identity,
+        zeros + 1.0,
+        zeros + 2.0,
+        zeros + 3.0,
+        ~frame_valid,
+        rotation_conditioning=False,
+    )
+
+    torch.testing.assert_close(first, second)
+
+
+def test_unconditioned_cross_features_ignore_angle_and_rotation_channels() -> None:
+    face, _, _, _, cross, _, _ = _inputs()
+    shape = tuple(int(value) for value in face.shape[:3])
+    original = RotationAwareFusionModel._cross_features(
+        cross,
+        shape,
+        torch.float32,
+        rotation_conditioning=False,
+    )
+    changed = replace(
+        cross,
+        angle_abs_delta=cross.angle_abs_delta + 20.0,
+        angle_valid=~cross.angle_valid,
+        rotation_distance=cross.rotation_distance + 30.0,
+        rotation_valid=~cross.rotation_valid,
+    )
+    actual = RotationAwareFusionModel._cross_features(
+        changed,
+        shape,
+        torch.float32,
+        rotation_conditioning=False,
+    )
+
+    torch.testing.assert_close(original, actual)
+
+
+def test_default_model_does_not_create_cross_attention_state() -> None:
+    model = RotationAwareFusionModel(SPEC, hidden_channels=16)
+
+    assert not any(
+        name.startswith("cross_view_attention.") for name in model.state_dict()
+    )
+    assert model.cross_attention is False
+    assert model.rotation_conditioning is True
 
 
 def test_model_supports_dynamic_joint_count_and_per_joint_bounded_residuals() -> None:

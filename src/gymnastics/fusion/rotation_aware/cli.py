@@ -151,13 +151,17 @@ def resolve_fold(config: Mapping[str, Any], value: str | None) -> Path:
 # A7/A8 are the twist-fusion matrix: A7 = A6 + per-view-peak ROM anchor (改法4),
 # A8 = A7 + rotation-parameterised trunk-twist residual (改法2). Kept additive so
 # A4/A5/A6 are byte-identical.
-LEARNED_ABLATIONS = ("A4", "A5", "A6", "A7", "A8", "A9")
+LEARNED_ABLATIONS = ("A4", "A5", "A6", "A7", "A8", "A9", "A10", "A11")
 # Ablations whose model uses the opt-in twist residual (改法2).
 TWIST_ABLATIONS = frozenset({"A8", "A9"})
+# Ablations that exchange same-frame joint tokens between the two views.
+CROSS_ATTENTION_ABLATIONS = frozenset({"A10", "A11"})
+# A11 keeps the attention capacity but removes explicit rotation conditioning.
+ROTATION_UNCONDITIONED_ABLATIONS = frozenset({"A11"})
 
 
 def loss_config_for_ablation(ablation: str) -> LossConfig:
-    """Return the declared self-supervised objective set for A4--A8."""
+    """Return the declared self-supervised objective set for A4--A11."""
     full = LossConfig()
     if ablation == "A4":
         return replace(
@@ -169,7 +173,7 @@ def loss_config_for_ablation(ablation: str) -> LossConfig:
         )
     if ablation == "A5":
         return replace(full, complete_cycle_rom_weight=0.0)
-    if ablation == "A6":
+    if ablation in ("A6", "A10"):
         return full
     if ablation in ("A7", "A8"):
         # 改法4: full A6 objective plus the per-view-peak ROM anchor. A8 also flips
@@ -181,7 +185,46 @@ def loss_config_for_ablation(ablation: str) -> LossConfig:
         return replace(
             full, complete_cycle_rom_peak_weight=1.0, observed_twist_rate_weight=1.0
         )
+    if ablation == "A11":
+        return replace(
+            full,
+            circular_axial_rotation_weight=0.0,
+            so3_rotation_weight=0.0,
+            complete_cycle_rom_weight=0.0,
+        )
     raise ValueError(f"learned ablation must be one of {LEARNED_ABLATIONS}: {ablation}")
+
+
+def model_kwargs_for_training(training: Mapping[str, Any]) -> dict[str, Any]:
+    """Resolve one checkpoint-stable model architecture from training metadata."""
+    ablation = str(training.get("ablation", "A6"))
+    return {
+        "hidden_channels": int(training.get("hidden_channels", 128)),
+        "twist_residual": ablation in TWIST_ABLATIONS,
+        "cross_attention": bool(
+            training.get(
+                "cross_attention", ablation in CROSS_ATTENTION_ABLATIONS
+            )
+        ),
+        "attention_heads": int(training.get("attention_heads", 4)),
+        "rotation_conditioning": bool(
+            training.get(
+                "rotation_conditioning",
+                ablation not in ROTATION_UNCONDITIONED_ABLATIONS,
+            )
+        ),
+    }
+
+
+def model_metadata_for_training(training: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the architecture fields required to reproduce inference."""
+    kwargs = model_kwargs_for_training(training)
+    return {
+        "hidden_channels": kwargs["hidden_channels"],
+        "cross_attention": kwargs["cross_attention"],
+        "attention_heads": kwargs["attention_heads"],
+        "rotation_conditioning": kwargs["rotation_conditioning"],
+    }
 
 
 def _training_config_for_ablation(
@@ -207,6 +250,12 @@ def _training_config_for_ablation(
         raise ValueError("training epochs must be positive")
     training["epochs"] = epochs
     training["ablation"] = ablation
+    if ablation in CROSS_ATTENTION_ABLATIONS:
+        training["attention_heads"] = int(training.get("attention_heads", 4))
+        training["cross_attention"] = True
+        training["rotation_conditioning"] = (
+            ablation not in ROTATION_UNCONDITIONED_ABLATIONS
+        )
     return training
 
 
@@ -244,6 +293,7 @@ def _protocol_run_id_token(training: Mapping[str, Any]) -> str | None:
             ablation_lower=str(training["ablation"]).lower(),
             batch_size=int(training["batch_size"]),
             epochs=int(training["epochs"]),
+            seed=int(training.get("seed", 0)),
         )
     except (KeyError, ValueError) as error:
         raise ValueError("training.protocol run_id_token_template is invalid") from error
@@ -268,10 +318,17 @@ def _validate_protocol_run_id(run_id: str, training: Mapping[str, Any]) -> bool:
 
 
 def _validate_config_protocol_run_id(run_id: str, config: Mapping[str, Any]) -> None:
-    """Require one protected A4/A5/A6 schedule token before output-path access."""
+    """Require one declared schedule token before output-path access."""
     _validate_safe_run_id_component(run_id)
+    configured_training = config.get("training", {})
+    schedule = (
+        configured_training.get("epochs_by_ablation")
+        if isinstance(configured_training, Mapping)
+        else None
+    )
+    ablations = tuple(schedule) if isinstance(schedule, Mapping) else LEARNED_ABLATIONS
     matches = []
-    for ablation in ("A4", "A5", "A6"):
+    for ablation in ablations:
         training = _training_config_for_ablation(config, ablation)
         token = _protocol_run_id_token(training)
         if token is not None and _run_id_has_protocol_token(run_id, token):
@@ -630,11 +687,7 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
         batch_size=batch_size,
         generator=generator,
     )
-    model = RotationAwareFusionModel(
-        skeleton,
-        hidden_channels=int(training.get("hidden_channels", 128)),
-        twist_residual=str(training.get("ablation", "")) in TWIST_ABLATIONS,
-    )
+    model = RotationAwareFusionModel(skeleton, **model_kwargs_for_training(training))
     optimizer = torch.optim.Adam(
         model.parameters(), lr=float(training.get("learning_rate", 1e-3))
     )
@@ -796,6 +849,9 @@ def _cmd_infer(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
             "epochs",
             "learning_rate",
             "hidden_channels",
+            "attention_heads",
+            "cross_attention",
+            "rotation_conditioning",
             "seed",
             "protocol",
         )
@@ -814,9 +870,7 @@ def _cmd_infer(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
             raise ValueError("protected infer checkpoint is missing training.protocol")
     saved_ablation = str(saved_training.get("ablation", "A6"))
     model = RotationAwareFusionModel(
-        skeleton,
-        hidden_channels=int(saved_training.get("hidden_channels", 128)),
-        twist_residual=saved_ablation in TWIST_ABLATIONS,
+        skeleton, **model_kwargs_for_training(saved_training)
     )
     payload = load_checkpoint(checkpoint, model)
     if args.ablation and args.ablation != saved_ablation:
@@ -882,9 +936,7 @@ def _cmd_infer(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
         "checkpoint_path": str(checkpoint),
         "checkpoint_sha256": _file_hash(checkpoint),
         "ablation": saved_ablation,
-        "model_config": {
-            "hidden_channels": int(saved_training.get("hidden_channels", 128))
-        },
+        "model_config": model_metadata_for_training(saved_training),
         "training_config_hash": str(provenance.get("training_config_hash", "")),
         "inference_config_hash": _hash(config),
         "inference_cache_manifests": consumed_cache_manifests,
