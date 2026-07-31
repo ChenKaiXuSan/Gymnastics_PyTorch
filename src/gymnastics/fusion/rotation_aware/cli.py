@@ -201,9 +201,18 @@ def model_kwargs_for_training(training: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "hidden_channels": int(training.get("hidden_channels", 128)),
         "twist_residual": ablation in TWIST_ABLATIONS,
-        "cross_attention": ablation in CROSS_ATTENTION_ABLATIONS,
+        "cross_attention": bool(
+            training.get(
+                "cross_attention", ablation in CROSS_ATTENTION_ABLATIONS
+            )
+        ),
         "attention_heads": int(training.get("attention_heads", 4)),
-        "rotation_conditioning": ablation not in ROTATION_UNCONDITIONED_ABLATIONS,
+        "rotation_conditioning": bool(
+            training.get(
+                "rotation_conditioning",
+                ablation not in ROTATION_UNCONDITIONED_ABLATIONS,
+            )
+        ),
     }
 
 
@@ -243,6 +252,10 @@ def _training_config_for_ablation(
     training["ablation"] = ablation
     if ablation in CROSS_ATTENTION_ABLATIONS:
         training["attention_heads"] = int(training.get("attention_heads", 4))
+        training["cross_attention"] = True
+        training["rotation_conditioning"] = (
+            ablation not in ROTATION_UNCONDITIONED_ABLATIONS
+        )
     return training
 
 
@@ -829,6 +842,8 @@ def _cmd_infer(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
             "learning_rate",
             "hidden_channels",
             "attention_heads",
+            "cross_attention",
+            "rotation_conditioning",
             "seed",
             "protocol",
         )
