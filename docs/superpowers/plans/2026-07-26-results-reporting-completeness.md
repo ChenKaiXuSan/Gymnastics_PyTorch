@@ -133,13 +133,13 @@ Run all `tests/test_project_results.py` tests.
 ### Task 3: Manuscript Evidence Correction
 
 **Files:**
-- Modify: `paper/neurocomputing/sections/05_experimental_protocol.tex`
-- Modify: `paper/neurocomputing/sections/06_results.tex`
-- Modify: `paper/neurocomputing/sections/07_discussion.tex`
-- Modify: `paper/neurocomputing/sections/08_conclusion.tex`
-- Modify: `paper/neurocomputing/tables/learned_results.tex`
-- Modify: `paper/neurocomputing/artifacts/source_audit.md`
-- Modify: `paper/neurocomputing/SUBMISSION_CHECKLIST.md`
+- Modify: `paper/image_and_vision_computing/sections/05_experimental_protocol.tex`
+- Modify: `paper/image_and_vision_computing/sections/06_results.tex`
+- Modify: `paper/image_and_vision_computing/sections/07_discussion.tex`
+- Modify: `paper/image_and_vision_computing/sections/08_conclusion.tex`
+- Modify: `paper/image_and_vision_computing/tables/learned_results.tex`
+- Modify: `paper/image_and_vision_computing/artifacts/source_audit.md`
+- Modify: `paper/image_and_vision_computing/SUBMISSION_CHECKLIST.md`
 
 **Interfaces:**
 - Consumes: generated learned split and paired-comparison CSV files.
@@ -174,7 +174,7 @@ offset robustness, and independent external validation unchecked.
 Run:
 
 ```bash
-GYMNASTICS_SOURCE_ROOT=/home/workspace/kaixu/code/Gymnastics_PyTorch make -C paper/neurocomputing
+GYMNASTICS_SOURCE_ROOT=/home/workspace/kaixu/code/Gymnastics_PyTorch make -C paper/image_and_vision_computing
 ```
 
 Expected: LaTeX build succeeds with no unresolved references introduced by the

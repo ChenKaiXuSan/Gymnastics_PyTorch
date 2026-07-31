@@ -36,5 +36,5 @@ All active code belongs to the `gymnastics` package under `src/`.
 | `notebooks/` | Exploratory work that is not imported by production code. |
 | `scripts/` | Monitoring, bootstrap, and other operational commands. |
 | `third_party/` | Pinned upstream Git submodules. |
-| `paper/neurocomputing/` | Local manuscript sources and generated paper assets. |
+| `paper/image_and_vision_computing/` | Local manuscript sources and generated paper assets. |
 | `local/` | Ignored checkpoints, videos, runs, caches, and migration backups. |

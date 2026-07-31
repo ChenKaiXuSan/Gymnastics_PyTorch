@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Produce leakage-controlled A6 out-of-fold poses for all 137 participants, quantify elderly-cohort versus student-cohort motion and repeated-cycle differences, and integrate only generated, audited results into the Neurocomputing manuscript.
+**Goal:** Produce leakage-controlled A6 out-of-fold poses for all 137 participants, quantify elderly-cohort versus student-cohort motion and repeated-cycle differences, and integrate only generated, audited results into the Image and Vision Computing manuscript.
 
 **Architecture:** Add a self-contained `gymnastics.analysis.cohort_cycle` package and a `gymnastics cohort-cycle` CLI. Existing rotation-aware training and inference remain the only model execution path; the new package generates and audits folds, merges test-only publications, extracts prespecified features, runs statistics, and renders paper assets. Every stage consumes immutable machine-readable artifacts from the preceding stage, and paper prose never computes results.
 
@@ -388,7 +388,7 @@ git commit -m "feat: add hierarchical cohort cycle statistics"
 - Create: `src/gymnastics/analysis/cohort_cycle/report.py`
 - Test: `tests/cohort_cycle/test_report.py`
 - Modify: `src/gymnastics/analysis/cohort_cycle/cli.py`
-- Modify: `paper/neurocomputing/scripts/generate_paper_assets.py`
+- Modify: `paper/image_and_vision_computing/scripts/generate_paper_assets.py`
 
 - [ ] **Step 1: Write failing report tests**
 
@@ -411,11 +411,11 @@ conda run -n gymnastic python -m pytest tests/cohort_cycle/test_report.py -q
 
 Write:
 
-- `paper/neurocomputing/artifacts/cohort_cycle_core.csv`;
-- `paper/neurocomputing/artifacts/cohort_cycle_qc.csv`;
-- `paper/neurocomputing/tables/cohort_cycle_results.tex`;
-- `paper/neurocomputing/figures/cohort_cycle_analysis.pdf`;
-- supplementary fold, QC, sensitivity, exploratory, and diagnostics tables under `paper/neurocomputing/supplement/`.
+- `paper/image_and_vision_computing/artifacts/cohort_cycle_core.csv`;
+- `paper/image_and_vision_computing/artifacts/cohort_cycle_qc.csv`;
+- `paper/image_and_vision_computing/tables/cohort_cycle_results.tex`;
+- `paper/image_and_vision_computing/figures/cohort_cycle_analysis.pdf`;
+- supplementary fold, QC, sensitivity, exploratory, and diagnostics tables under `paper/image_and_vision_computing/supplement/`.
 
 The four-panel figure contains a cohort-effect forest plot, MAD comparison, model-estimated repetition trends, and phase curves with corrected clusters.
 
@@ -423,7 +423,7 @@ The four-panel figure contains a cohort-effect forest plot, MAD comparison, mode
 
 ```bash
 conda run -n gymnastic python -m pytest tests/cohort_cycle/test_report.py -q
-git add src/gymnastics/analysis/cohort_cycle tests/cohort_cycle paper/neurocomputing/scripts/generate_paper_assets.py
+git add src/gymnastics/analysis/cohort_cycle tests/cohort_cycle paper/image_and_vision_computing/scripts/generate_paper_assets.py
 git commit -m "feat: render cohort cycle paper assets"
 ```
 
@@ -578,17 +578,17 @@ conda run -n gymnastic gymnastics cohort-cycle assets --config configs/analysis/
 
 **Files:**
 
-- Create: `paper/neurocomputing/sections/06b_cohort_cycle_analysis.tex`
-- Modify: `paper/neurocomputing/manuscript.tex`
-- Modify: `paper/neurocomputing/sections/01_introduction.tex`
-- Modify: `paper/neurocomputing/sections/02_related_work.tex`
-- Modify: `paper/neurocomputing/sections/05_experimental_protocol.tex`
-- Modify: `paper/neurocomputing/sections/07_discussion.tex`
-- Modify: `paper/neurocomputing/sections/08_limitations.tex`
-- Modify: `paper/neurocomputing/sections/09_conclusion.tex`
-- Modify: `paper/neurocomputing/references.bib`
-- Modify: `paper/neurocomputing/scripts/check_manuscript.py`
-- Modify, only after final results: `paper/neurocomputing/manuscript.tex` abstract and `paper/neurocomputing/highlights.txt`
+- Create: `paper/image_and_vision_computing/sections/06b_cohort_cycle_analysis.tex`
+- Modify: `paper/image_and_vision_computing/manuscript.tex`
+- Modify: `paper/image_and_vision_computing/sections/01_introduction.tex`
+- Modify: `paper/image_and_vision_computing/sections/02_related_work.tex`
+- Modify: `paper/image_and_vision_computing/sections/05_experimental_protocol.tex`
+- Modify: `paper/image_and_vision_computing/sections/07_discussion.tex`
+- Modify: `paper/image_and_vision_computing/sections/08_limitations.tex`
+- Modify: `paper/image_and_vision_computing/sections/09_conclusion.tex`
+- Modify: `paper/image_and_vision_computing/references.bib`
+- Modify: `paper/image_and_vision_computing/scripts/check_manuscript.py`
+- Modify, only after final results: `paper/image_and_vision_computing/manuscript.tex` abstract and `paper/image_and_vision_computing/highlights.txt`
 - Test: `tests/cohort_cycle/test_manuscript_claims.py`
 
 - [ ] **Step 1: Add failing evidence/wording checks**
@@ -636,7 +636,7 @@ Move detailed A7--A9 negative controls, extended deterministic interpretation, f
 
 ```bash
 conda run -n gymnastic python -m pytest tests/cohort_cycle/test_manuscript_claims.py -q
-cd paper/neurocomputing
+cd paper/image_and_vision_computing
 make assets
 make check
 make pdf
@@ -647,7 +647,7 @@ Expected: no pending cohort values, undefined citations/references, unsupported 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add paper/neurocomputing tests/cohort_cycle/test_manuscript_claims.py
+git add paper/image_and_vision_computing tests/cohort_cycle/test_manuscript_claims.py
 git commit -m "paper: add OOF cohort and repeated cycle analysis"
 ```
 
@@ -697,7 +697,7 @@ Before declaring the paper complete, obtain the study's actual ethics approval a
 
 - [ ] **Step 5: Inspect the compiled deliverable**
 
-Open `paper/neurocomputing/build/manuscript.pdf`, verify the four-panel figure and table are legible, and record page/word counts in `final_audit.json`.
+Open `paper/image_and_vision_computing/build/manuscript.pdf`, verify the four-panel figure and table are legible, and record page/word counts in `final_audit.json`.
 
 - [ ] **Step 6: Review diff and repository state**
 

@@ -136,7 +136,7 @@ remain under ignored `local/` paths.
 - `scripts/`: operational scripts only.
 - `legacy/`: frozen historical code excluded from installation and default tests.
 - `third_party/`: pinned upstream repositories.
-- `paper/neurocomputing/`: local manuscript workspace; generated builds are not
+- `paper/image_and_vision_computing/`: local manuscript workspace; generated builds are not
   part of the Python package.
 
 ## Verification

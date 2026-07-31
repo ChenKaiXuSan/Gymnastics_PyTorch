@@ -18,42 +18,44 @@
 
 \begin{document}
 
-\title[Two-view 3D pose fusion for gymnastics analysis]
-{Calibration-free two-view 3D pose fusion for gymnastics motion analysis and repeated-cycle assessment}
+\title[Evaluating two-view 3D pose fusion]
+{Evaluating calibration-free two-view 3D pose fusion for exploratory repeated-cycle gymnastics analysis}
 
 \author*[1]{\fnm{Kaixu} \sur{Chen}}\email{chenkaixusan@gmail.com}
 \affil*[1]{\orgname{CCS}}
 
 \abstract{Markerless three-dimensional motion analysis from ordinary video is
 attractive for sports settings, but monocular estimates remain dependent on
-camera view, occlusion and depth ambiguity. We developed a post-estimation
-method that fuses temporally aligned face- and side-view three-dimensional pose
-streams without camera parameters or reference poses during training. Each
-stream is transformed to a pelvis-centred body frame; a view-order-invariant
-temporal network then predicts a bounded correction to a quality-weighted
-average using rotation, skeletal and temporal self-supervision. In 137
-participants performing a repeated gymnastics movement, body-frame averaging
-reduced mean distance to a same-video triangulated pseudo-reference by 47.54\%
-relative to world-coordinate averaging. On a held-out set of 14 participants,
-the complete learned model reached 60.78~mm mean per-joint position error after
-sequence-level similarity alignment, but was statistically indistinguishable
-from arithmetic averaging (60.85~mm) and the preceding learned ablation
-(60.80~mm). External testing on 199 Unity samples showed no zero-shot advantage
-over direct three-dimensional averaging (178.506 versus 166.537~mm), whereas
-calibrated two-dimensional triangulation reached 30.259~mm. Person-disjoint
-inference yielded 928 cycles from 80 elderly-labeled and 57 student-labeled
-participants. Mixed models identified cohort contrasts in angular speed and
-dimensionless jerk, but these contrasts were sensitive to the pose source.
-The workflow therefore supports auditable exploratory sequence analysis, not
-absolute biomechanical measurement or causal conclusions about ageing.}
+camera view, occlusion and depth ambiguity. We evaluated how reliably two
+temporally aligned monocular pose streams can be reused when camera calibration
+and independent three-dimensional labels are unavailable. Face- and side-view
+poses were transformed to a pelvis-centred body frame, after which a
+view-order-invariant temporal network predicted a bounded correction using
+rotation, skeletal and temporal self-supervision. In 137 participants
+performing a repeated gymnastics movement, body-frame averaging reduced mean
+distance to a same-video triangulated pseudo-reference by 47.54\% relative to
+world-coordinate averaging; several aligned deterministic variants performed
+similarly. On 14 held-out participants, the complete learned model reached
+60.78~mm mean per-joint position error after sequence-level similarity
+alignment and was statistically indistinguishable from arithmetic averaging
+(60.85~mm) and the preceding learned ablation (60.80~mm). External testing on
+199 Unity samples showed no zero-shot advantage over direct three-dimensional
+averaging (178.506 versus 166.537~mm), whereas calibrated two-dimensional
+triangulation reached 30.259~mm. Person-disjoint inference yielded 928 cycles
+from 80 elderly-labeled and 57 student-labeled participants. Cohort contrasts
+in angular speed and dimensionless jerk changed materially with the pose
+source. Coordinate canonicalization, rather than the learned correction,
+provided the clearest in-domain engineering gain. The resulting representation
+supports exploratory sequence analysis, not absolute biomechanical measurement
+or causal conclusions about ageing.}
 
 \keywords{markerless motion capture, self-supervised learning, data fusion,
 human movement, trunk rotation, repeated measures}
 
 \maketitle
 
-\noindent\textbf{Article counts:} 2,330 words in the main body; 2 figures; 3
-tables. Online Resource 1 contains 6 supplementary tables.
+\noindent\textbf{Article counts:} approximately 2,500 words in the main body; 2
+figures; 3 tables. Online Resource 1 contains 6 supplementary tables.
 
 \section{Introduction}\label{sec:introduction}
 
@@ -80,20 +82,23 @@ the images with a calibrated system may be impossible after field collection.
 
 The engineering problem is especially relevant to rotation-dominant movement.
 An output can be visually smooth and have low coordinate disagreement while
-attenuating the trunk rotation or peak angular speed of interest. Fusion should
-therefore resolve coordinate mismatch, limit view-specific artifacts and make
-its effect on movement dynamics auditable.
+attenuating the trunk rotation or peak angular speed of interest. Evaluation
+must therefore distinguish coordinate harmonization from learned correction
+and determine whether downstream movement findings remain stable when the pose
+representation changes.
 
-This study asks two questions. First, can two aligned monocular 3D pose streams
-be fused without camera parameters or 3D supervision while preserving
-complete-cycle rotation? Second, can person-disjoint fused sequences support an
-exploratory comparison between elderly-labeled and student-labeled participants
-at both the between-person and within-person cycle levels? We contribute:
-(1) an applied post-estimation fusion formulation; (2) a pelvis-centred,
+This study evaluates three linked questions. First, how much of the in-domain
+agreement with a same-video pseudo-reference follows from coordinate
+canonicalization rather than learned fusion? Second, does the complete
+self-supervised model satisfy its declared symmetry, residual and cycle-motion
+constraints while maintaining held-out agreement, and how far does it transfer
+to independent native 3D? Third, are between-cohort and within-person
+repeated-cycle findings stable across pose sources? We contribute: (1) an
+applied post-estimation fusion formulation; (2) a pelvis-centred,
 rotation-aware and view-order-invariant temporal model trained with
-self-supervision; (3) a leakage-controlled evaluation separating
+self-supervision; (3) a leakage-controlled evidence hierarchy separating
 same-video pseudo-reference agreement from limited external native-3D testing;
-and (4) a repeated-cycle analysis with mixed models and pose-source sensitivity.
+and (4) a downstream representation-sensitivity case study using mixed models.
 Because independent motion capture and participant-level demographic covariates
 are unavailable, the study does not claim absolute biomechanical accuracy,
 clinical validity or causal effects of ageing.
@@ -159,7 +164,7 @@ quality $q^v_t$ and joint-validity mask $M^v_{t,j}$, the conservative base pose
 is
 \begin{equation}
  \mathbf{B}_{t,j}=
- \frac{q^f_tM^f_{t,j}\widetilde{\mathbf{x}}^f_{t,j}
+ \frac{q^f_tM^f_{t,j}\widetilde{\mathbf{x}}^f_{t,j}+
        q^s_tM^s_{t,j}\widetilde{\mathbf{x}}^s_{t,j}}
       {q^f_tM^f_{t,j}+q^s_tM^s_{t,j}+\epsilon}.
  \label{eq:base}
@@ -183,6 +188,10 @@ correction bounded to 0.05 normalized trial units:
 The residual is disabled unless both views are valid. The fused canonical pose
 is finally mapped back using the face-view origin, orientation and scale; this
 is an uncalibrated face reference, not a physical world coordinate system.
+Here, \emph{auditable} denotes four inspectable properties: view-order
+invariance, a bounded residual, explicit missing-view pass-through and reported
+departure in cycle range and peak speed from the deterministic base. It does
+not imply biomechanical validity.
 
 \begin{figure}[t]
 \centering
@@ -238,7 +247,7 @@ Checkpoint selection averaged fixed-corruption recovery, bone variation,
 rotation consistency, identity and cycle-range scores; none used the
 triangulated pseudo-reference.
 
-\subsection{Evaluation design}
+\subsection{Evaluation hierarchy}
 
 The fixed person split contained 96 training, 27 validation and 14 held-out
 test participants. The 14-person set was the primary learned comparison.
@@ -250,10 +259,13 @@ two-sided Wilcoxon signed-rank test; Holm correction covered the nine planned
 comparisons. Results use one training seed and therefore do not quantify
 optimization variance.
 
-A deterministic analysis over all 137 participants compared world-coordinate,
-root-aligned, similarity-aligned and body-frame fusion variants. One legacy
-row whose joint weights were fitted to the evaluation pseudo-reference was
-retained only as a leakage diagnostic and was excluded from recommendations.
+A deterministic analysis over all 137 participants first isolated the effect of
+coordinate representation by comparing world-coordinate, root-aligned,
+similarity-aligned and body-frame fusion variants. The held-out learned
+comparison then tested whether residual learning added evidence beyond the
+canonical deterministic means. One legacy row whose joint weights were fitted
+to the evaluation pseudo-reference was retained only as a leakage diagnostic
+and was excluded from recommendations.
 
 Limited external testing used 199 rendered samples from three sequences, one
 Unity avatar/environment and a fixed two-camera configuration. Sixteen mapped
@@ -262,7 +274,7 @@ alignment. The private model was applied zero-shot. Calibrated triangulation
 used 2D observations and exact Unity cameras, so it is reported as a different
 input regime rather than a directly matched fusion baseline.
 
-\subsection{Cohort and repeated-cycle analysis}
+\subsection{Downstream representation-sensitivity case study}
 
 Ten cohort-stratified outer folds separated people, not cycles, so every
 participant received an out-of-fold prediction. The resulting 928 eligible
@@ -288,14 +300,16 @@ body-frame features.
 
 \section{Results}\label{sec:results}
 
-\subsection{Body-frame fusion and held-out performance}
+\subsection{Coordinate-system effect and held-out learned comparison}
 
 Across all 137 participants, deterministic body-frame averaging had mean
 pseudo-reference error 0.0640 repository units, compared with 0.1221 for
-world-coordinate averaging, a 47.54\% reduction. Several leakage-free
-canonical variants had overlapping confidence intervals, indicating that
-coordinate normalization, rather than a particular weighting rule, accounted
-for most of this improvement.
+world-coordinate averaging, a 47.54\% reduction against this deliberately
+uncorrected baseline. More informative leakage-free aligned variants occupied
+a narrow range from 0.0640 to 0.0663 with overlapping confidence intervals.
+The evidence therefore supports coordinate normalization, rather than a
+particular weighting rule or learned residual, as the main source of in-domain
+improvement.
 
 \begin{table}[t]
 \caption{Primary comparison on 14 held-out participants. Error is
@@ -325,9 +339,13 @@ Table~\ref{tab:heldout} shows that A6 was statistically indistinguishable from
 arithmetic averaging and A5. Its complete-cycle range and peak-angular-speed
 retention relative to the deterministic quality mean were both 1.000, but
 these ratios assess departure from the base rather than physical validity.
-Freer post hoc residual variants increased error to 92.02--94.11~mm and are
-reported in the Online Resource. A6 is consequently retained as the complete,
-bounded and auditable objective, not as a demonstrated positional-accuracy
+All canonical averaging and learned outputs were view-order invariant to the
+reported precision. Validation-only corruption diagnostics did not establish a
+general robustness advantage for A6: its output moved more than the
+deterministic quality mean under joint and temporal-block dropout. Freer post
+hoc residual variants increased error to 92.02--94.11~mm and are reported in
+the Online Resource. A6 is consequently retained as the prespecified complete
+test of the declared constraints, not as a demonstrated accuracy or robustness
 winner.
 
 \subsection{External native-3D test}
@@ -354,7 +372,7 @@ not improve zero-shot positional transfer relative to direct 3D averaging.
 Calibrated 2D triangulation was substantially more accurate, but used camera
 geometry and evidence unavailable to the post-estimation method.
 
-\subsection{Cohort and repeated-cycle findings}
+\subsection{Representation sensitivity in the repeated-cycle case study}
 
 All eight mixed models converged. At mid-repetition, the elderly-labeled cohort
 had a 0.3006 higher log angular-speed coefficient (95\% confidence interval
@@ -386,11 +404,12 @@ $p_{\rm Holm}$ & 0.0001 & 1.0000 & 0.2475 & 0.2324\\
 \end{tabular}
 \end{table}
 
-The source-matched analysis materially reduced the cohort coefficients
+Changing the pose source materially reduced the cohort coefficients
 (Table~\ref{tab:sensitivity}), especially for jerk. Separate
 participant-median permutation tests were also non-significant after correction
-for A6 angular speed and jerk. These sensitivities restrict the cohort findings
-to exploratory, representation-dependent signals.
+for A6 angular speed and jerk. The stable finding from this case study is
+therefore the sensitivity of downstream inference to pose representation, not
+a representation-independent difference between the two labeled cohorts.
 
 \begin{figure}[t]
 \centering
@@ -411,7 +430,8 @@ their disagreement with the same-video pseudo-reference compared with
 world-coordinate averaging. Once this mismatch was removed, deterministic and
 learned methods occupied a narrow range. The held-out comparison provides no
 evidence that the complete network improves positional accuracy over arithmetic
-averaging or A5. A6 is useful instead as a conservative implementation of
+averaging or A5. This is evidence for coordinate harmonization, not learned
+fusion superiority. A6 instead serves as the prespecified complete test of
 explicit requirements: view-order invariance, bounded correction, missing-view
 fallback and complete-cycle rotation constraints.
 
@@ -420,9 +440,10 @@ simple fused sequence and compute or training data are limited, deterministic
 body-frame averaging is the better-supported default. The learned model is
 justified when its explicit audit trail and constrained motion representation
 are required, but the current results do not justify extra complexity on
-position error alone. Reference-relative range and angular-speed retention
-also cannot establish biomechanical validity, because their denominator is the
-deterministic base rather than independent motion capture.
+position error or corruption stability. Reference-relative range and
+angular-speed retention also cannot establish biomechanical validity, because
+their denominator is the deterministic base rather than independent motion
+capture.
 
 Unity exposes a second boundary. A6 transferred worse than direct 3D averaging
 for position, whereas calibrated triangulation from 2D evidence was far better.
@@ -433,15 +454,15 @@ therefore be preferred. Post-estimation fusion addresses archival or
 low-infrastructure data where calibration is unavailable; it is not a
 replacement for geometry.
 
-The repeated-cycle experiment illustrates both the opportunity and the risk of
-downstream use. Person-disjoint inference avoids evaluating a participant with
-a model trained on that participant, and mixed models retain cycle-level
-information while accounting for repeated observations. The A6 representation
-identified group contrasts in angular speed and jerk and greater within-person
-jerk dispersion, but no group-specific repetition trend. However, the same
-models applied to other pose streams produced much smaller effects, and
-participant-median tests changed the inference. The signals may combine true
-movement differences, cohort composition, monocular estimation error and
+The repeated-cycle experiment primarily demonstrates the risk of
+representation-dependent downstream inference. Person-disjoint prediction
+avoids evaluating a participant with a model trained on that participant, and
+mixed models retain cycle-level information while accounting for repeated
+observations. A6 produced cohort contrasts in angular speed and jerk and
+greater within-person jerk dispersion, but no group-specific repetition trend.
+The same models applied to other pose streams produced much smaller effects,
+and participant-median tests changed the inference. The signals may combine
+true movement differences, cohort composition, monocular estimation error and
 learned representation effects. They must not be interpreted as ageing effects,
 normative values, impairment markers or clinical findings.
 
@@ -468,15 +489,15 @@ hypothesis generation.
 
 \section{Conclusions}\label{sec:conclusion}
 
-Calibration-free post-estimation fusion can turn two aligned monocular 3D pose
-streams into an auditable sequence representation for exploratory gymnastics
-analysis. Pelvis-centred canonicalization provided most of the in-domain
-pseudo-reference improvement, while the complete self-supervised model matched
-but did not surpass strong held-out baselines and did not improve zero-shot
-external position accuracy. Out-of-fold sequences supported between-group and
-within-person cycle analyses, but their speed and jerk effects depended on the
-pose source. The present workflow is therefore best used as a transparent
-low-infrastructure representation layer; absolute biomechanical, causal or
+Calibration-free post-estimation fusion can provide a transparent sequence
+representation when only aligned monocular 3D pose streams remain available.
+Pelvis-centred canonicalization provided the clearest in-domain improvement;
+the complete self-supervised model matched but did not surpass strong held-out
+baselines, showed no general corruption-stability advantage and did not improve
+zero-shot external position accuracy. The repeated-cycle case study further
+showed that between-cohort and within-person inferences changed with the pose
+source. The workflow is therefore best treated as an exploratory,
+low-infrastructure representation layer. Absolute biomechanical, causal or
 clinical interpretation requires calibrated or independent reference capture
 and richer participant information.
 

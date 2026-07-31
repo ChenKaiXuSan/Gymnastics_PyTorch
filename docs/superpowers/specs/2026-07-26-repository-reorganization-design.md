@@ -12,7 +12,7 @@ unambiguous.
 
 - Use a single `src/gymnastics/` package.
 - Do not preserve legacy `python -m <old-package>` entry points or imports.
-- Keep `paper/neurocomputing/` in the project, while keeping its generated build
+- Keep `paper/image_and_vision_computing/` in the project, while keeping its generated build
   output untracked.
 - Keep `legacy/prepare_dataset/` as frozen reference code outside the installed
   package.
@@ -44,7 +44,7 @@ Gymnastics_PyTorch/
 ├── docs/
 ├── notebooks/
 ├── scripts/
-├── paper/neurocomputing/
+├── paper/image_and_vision_computing/
 ├── legacy/prepare_dataset/
 ├── third_party/
 └── local/

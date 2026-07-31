@@ -57,7 +57,7 @@ tests compare methods only where the same people have both measurements.
 - The generator runs against the current full local artefacts and validates the
   96/27/14 split with 137 unique people.
 - Focused and full project tests run in the `gymnastic` conda environment.
-- The Neurocomputing paper is rebuilt after revision.
+- The Image and Vision Computing paper is rebuilt after revision.
 
 ## Non-Goals
 
