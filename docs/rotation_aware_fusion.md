@@ -219,26 +219,30 @@ described as *cross-view attention without explicit body-rotation
 conditioning*, not as a method with no rotation operation anywhere.
 Triangulated 3D remains evaluation-only for both variants.
 
+All production rotation-aware configurations resolve the same tracked
+137-person paper split: 96 training, 27 validation, and 14 held-out test
+participants. This is the exact person partition used by the A6 mainline run.
+
 ```bash
 conda run -n gymnastic gymnastics fuse rotation-aware train \
   --config configs/fusion/rotation_aware_cross_attention.yaml \
-  --run-id paper_a10_b64_e100_s0 --ablation A10
+  --run-id paper137_a10_b64_e100_s0 --ablation A10
 
 conda run -n gymnastic gymnastics fuse rotation-aware train \
   --config configs/fusion/rotation_aware_cross_attention.yaml \
-  --run-id paper_a11_b64_e100_s0 --ablation A11
+  --run-id paper137_a11_b64_e100_s0 --ablation A11
 
 conda run -n gymnastic gymnastics fuse rotation-aware infer \
   --config configs/fusion/rotation_aware_cross_attention.yaml \
-  --run-id paper_a10_b64_e100_s0
+  --run-id paper137_a10_b64_e100_s0
 
 conda run -n gymnastic gymnastics fuse rotation-aware infer \
   --config configs/fusion/rotation_aware_cross_attention.yaml \
-  --run-id paper_a11_b64_e100_s0
+  --run-id paper137_a11_b64_e100_s0
 
 conda run -n gymnastic gymnastics fuse rotation-aware evaluate \
   --config configs/fusion/rotation_aware_cross_attention.yaml \
-  --run-id paper_a10_b64_e100_s0 --run-id paper_a11_b64_e100_s0
+  --run-id paper137_a10_b64_e100_s0 --run-id paper137_a11_b64_e100_s0
 ```
 
 The primary paired contrasts are A10 minus A6 (attention added while retaining

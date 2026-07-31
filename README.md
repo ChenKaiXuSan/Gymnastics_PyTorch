@@ -69,12 +69,14 @@ conda run -n gymnastic gymnastics fuse deterministic --methods avg_body_current
 conda run -n gymnastic gymnastics fuse rotation-aware --help
 
 # Train the rotation-conditioned and cross-view-only attention ablations.
+# All production rotation-aware configs use the same fixed 137-person
+# train/validation/test split (96/27/14).
 conda run -n gymnastic gymnastics fuse rotation-aware train \
   --config configs/fusion/rotation_aware_cross_attention.yaml \
-  --run-id paper_a10_b64_e100_s0 --ablation A10
+  --run-id paper137_a10_b64_e100_s0 --ablation A10
 conda run -n gymnastic gymnastics fuse rotation-aware train \
   --config configs/fusion/rotation_aware_cross_attention.yaml \
-  --run-id paper_a11_b64_e100_s0 --ablation A11
+  --run-id paper137_a11_b64_e100_s0 --ablation A11
 
 # Train/evaluate classifiers.
 conda run -n gymnastic gymnastics classify

@@ -305,6 +305,38 @@ def test_cross_attention_production_config_declares_equal_budgets() -> None:
     cli._validate_config_protocol_run_id("paper_a11_b64_e100_s0", config)
 
 
+@pytest.mark.parametrize(
+    "config_path",
+    [
+        "configs/fusion/rotation_aware.yaml",
+        "configs/fusion/rotation_aware_batch64.yaml",
+        "configs/fusion/rotation_aware_cross_attention.yaml",
+    ],
+)
+def test_production_config_uses_paper_137_person_split(config_path: str) -> None:
+    config = load_config(config_path)
+    payload = json.loads(resolve_fold(config, None).read_text(encoding="utf-8"))
+
+    def person_id(value: object) -> str:
+        if isinstance(value, dict):
+            return str(value["person_id"])
+        return str(value)
+
+    splits = {
+        name: {person_id(value) for value in payload[name]}
+        for name in ("train", "val", "test")
+    }
+    assert {name: len(people) for name, people in splits.items()} == {
+        "train": 96,
+        "val": 27,
+        "test": 14,
+    }
+    assert len(set().union(*splits.values())) == 137
+    assert not (splits["train"] & splits["val"])
+    assert not (splits["train"] & splits["test"])
+    assert not (splits["val"] & splits["test"])
+
+
 @pytest.mark.parametrize("ablation", ["A7", "A8", "A9"])
 def test_training_schedule_accepts_the_new_twist_ablations(ablation: str) -> None:
     resolved = _training_config_for_ablation(
