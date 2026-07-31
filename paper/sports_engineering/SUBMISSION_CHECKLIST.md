@@ -4,10 +4,10 @@
 
 - [x] Research Article structure uses Introduction, Methods, Results,
   Discussion and a one-paragraph Conclusions section.
-- [x] Abstract is 218 words (required range: 150--250).
-- [x] Main body is approximately 2,330 words (journal maximum: 4,000;
+- [x] Abstract is 249 words (required range: 150--250).
+- [x] Main body is approximately 3,007 words (journal maximum: 4,000;
   abstract, captions, references and declarations excluded).
-- [x] Main article contains 2 figures and 3 tables (journal maximum: 10
+- [x] Main article contains 2 figures and 5 tables (journal maximum: 10
   combined).
 - [x] References use a numbered Springer Nature bibliography style.
 - [x] Main manuscript compiles with the official Springer Nature class.
@@ -43,12 +43,12 @@ Do not upload the package until every item below is complete.
 
 - [ ] Select article type `Original Paper` or the portal's equivalent Research
   Article category.
-- [ ] Upload `manuscript.pdf` and the flat LaTeX source package.
+- [ ] Upload `manuscript.pdf` and the LaTeX source package.
 - [ ] Upload `online_resource_1.pdf` as electronic supplementary material.
 - [ ] Upload `cover_letter.md` after converting it to the portal's accepted
   format.
 - [ ] Enter six keywords matching the manuscript.
-- [ ] Enter 2 figures, 3 main tables and 1 Online Resource in the portal.
+- [ ] Enter 2 figures, 5 main tables and 1 Online Resource in the portal.
 - [ ] Choose the subscription publication route if avoiding an article
   processing charge; verify the current option in the portal.
 - [ ] Complete any required generative-artificial-intelligence disclosure field.

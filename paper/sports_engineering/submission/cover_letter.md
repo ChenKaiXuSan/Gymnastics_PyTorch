@@ -19,12 +19,13 @@ correction trained with rotation, skeletal and temporal self-supervision.
 
 The manuscript should interest readers working on markerless sports motion
 analysis for three reasons. First, it identifies coordinate canonicalization,
-rather than learned correction, as the clearest in-domain engineering gain.
-Second, it reports both a private same-video pseudo-reference comparison and a
-limited external native-three-dimensional test, including the negative
-external-transfer result. Third, its person-disjoint repeated-cycle case study
-shows that between-cohort and within-person conclusions can change with the
-pose representation.
+rather than learned correction, as the clearest calibration-free in-domain
+engineering gain, while quantifying the smaller benefit available from
+estimated camera rotation. Second, it reports both a private same-video
+pseudo-reference comparison and a limited external native-three-dimensional
+test, including the negative external-transfer result. Third, its
+person-disjoint repeated-cycle case study shows that between-cohort and
+within-person conclusions can change with the pose representation.
 
 The main conclusion is deliberately bounded. Pelvis-centred canonicalization
 accounts for most of the in-domain improvement; the complete learned model is
@@ -35,7 +36,7 @@ not as a causal or clinical finding. We believe this transparent distinction
 between an engineering representation and a validated biomechanical
 measurement fits the applied scope of *Sports Engineering*.
 
-The main body contains approximately 2,500 words, 2 figures and 3 tables. One
+The main body contains approximately 3,000 words, 2 figures and 5 tables. One
 Online Resource contains detailed ablations, corruption settings, robustness
 results and secondary statistics. The manuscript is not under consideration
 elsewhere, and the author will confirm all required declarations in the

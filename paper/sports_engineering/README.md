@@ -20,6 +20,12 @@ representation-sensitivity case study rather than a causal analysis of ageing.
 - `cover_letter.md`: journal-specific cover-letter draft.
 - `SUBMISSION_CHECKLIST.md`: technical status and author-only blockers.
 - `scripts/check_sports_engineering.py`: structural and evidence checks.
+- `scripts/generate_comparison_tables.py`: regenerates the camera-extrinsic and
+  14-person per-joint tables from the formal local experiment artifacts.
+- `generated/`: source-checked CSV evidence and LaTeX table fragments. The
+  137-person extrinsic summary uses the deterministic evaluation harness; the
+  joint table re-evaluates extrinsic outputs with the learned-model
+  similarity-plus-hip-centring protocol.
 - `sn-jnl.cls`, `sn-mathphys-num.bst`: official Springer Nature template files.
 - `appendix.sty`, `threeparttable.sty`, `vruler.sty`: local build dependencies.
 
@@ -31,6 +37,13 @@ From this directory:
 conda run -n gymnastic make all
 conda run -n gymnastic make check
 ```
+
+`make all` first regenerates the comparison tables. This step requires the
+formal `local/runs/fuse_experiments`, `local/runs/fuse_extrinsic_baselines` and
+`local/runs/fuse_rotation_aware` artifacts plus the triangulated
+pseudo-reference. The generated table fragments are committed and included in
+the submission source archive, so the journal build itself does not require
+access to participant data.
 
 The PDFs are written to `build/manuscript.pdf` and
 `build/online_resource_1.pdf`.

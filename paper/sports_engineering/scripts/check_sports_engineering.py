@@ -13,6 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 TEX = ROOT / "manuscript.tex"
 BIB = ROOT / "references.bib"
 LOG = ROOT / "build" / "manuscript.log"
+ONLINE_LOG = ROOT / "build" / "online_resource_1.log"
+ONLINE_RESOURCE = ROOT / "online_resource_1.tex"
+MAKEFILE = ROOT / "Makefile"
 
 
 def words(text: str) -> list[str]:
@@ -48,6 +51,34 @@ def extract_braced_command(text: str, command: str) -> str:
     raise ValueError(f"unterminated \\{command} command")
 
 
+def count_display_items(text: str) -> tuple[int, int]:
+    figure_count = len(re.findall(r"\\begin\{figure\*?\}", text))
+    table_count = len(re.findall(r"\\begin\{table\*?\}", text))
+    return figure_count, table_count
+
+
+def build_log_failures(log_paths: tuple[Path, ...]) -> list[str]:
+    """Return fatal, unresolved-reference, and overflow findings for all builds."""
+    failures: list[str] = []
+    patterns = (
+        r"undefined citations",
+        r"undefined references",
+        r"Fatal error",
+        r"Emergency stop",
+        r"Overfull \\hbox",
+        r"Overfull \\vbox",
+    )
+    for log_path in log_paths:
+        if not log_path.exists():
+            failures.append(f"{log_path.name} is missing; compile before checking")
+            continue
+        log = log_path.read_text(encoding="utf-8", errors="replace")
+        for pattern in patterns:
+            if re.search(pattern, log, flags=re.I):
+                failures.append(f"{log_path.name} contains: {pattern}")
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -59,6 +90,12 @@ def main() -> int:
 
     tex = TEX.read_text(encoding="utf-8")
     bib = BIB.read_text(encoding="utf-8")
+    online_resource = ONLINE_RESOURCE.read_text(encoding="utf-8")
+    generated_sources = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((ROOT / "generated").glob("*.tex"))
+    )
+    makefile = MAKEFILE.read_text(encoding="utf-8")
     failures: list[str] = []
 
     abstract_count = len(words(strip_latex(extract_braced_command(tex, "abstract"))))
@@ -70,8 +107,7 @@ def main() -> int:
     if body_count > 4000:
         failures.append(f"main body has approximately {body_count} words; maximum is 4000")
 
-    figure_count = len(re.findall(r"\\begin\{figure\}", body))
-    table_count = len(re.findall(r"\\begin\{table\}", body))
+    figure_count, table_count = count_display_items(body + "\n" + generated_sources)
     if figure_count + table_count > 10:
         failures.append(
             f"main article has {figure_count} figures and {table_count} tables; maximum combined is 10"
@@ -107,25 +143,30 @@ def main() -> int:
         "0.4233",
         "0.0377",
         "representation-dependent",
+        "62.03",
+        "118 of 137",
+        "40.35",
+        "11 of 20",
     )
     for anchor in required_anchors:
         if anchor not in tex:
             failures.append(f"missing evidence anchor: {anchor}")
 
-    if LOG.exists():
-        log = LOG.read_text(encoding="utf-8", errors="replace")
-        for pattern in (
-            r"undefined citations",
-            r"undefined references",
-            r"Fatal error",
-            r"Emergency stop",
-            r"Overfull \\hbox",
-            r"Overfull \\vbox",
-        ):
-            if re.search(pattern, log, flags=re.I):
-                failures.append(f"build log contains: {pattern}")
-    else:
-        failures.append("build/manuscript.log is missing; compile before checking")
+    combined_sources = "\n".join((tex, online_resource, generated_sources))
+    for label in (
+        "tab:extrinsic-comparison",
+        "tab:joint-accuracy-main",
+        "tab:joint-accuracy-all70",
+    ):
+        if label not in combined_sources:
+            failures.append(f"missing comparison table label: {label}")
+    for phrase in ("camera-assisted comparator", "same-video evidence"):
+        if phrase not in tex:
+            failures.append(f"missing evidence-boundary phrase: {phrase}")
+    if "generated/*.tex" not in makefile:
+        failures.append("source package does not include generated/*.tex")
+
+    failures.extend(build_log_failures((LOG, ONLINE_LOG)))
 
     blockers = (
         "author verification required before submission",

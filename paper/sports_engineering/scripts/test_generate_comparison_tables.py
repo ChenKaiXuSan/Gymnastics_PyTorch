@@ -20,6 +20,7 @@ from generate_comparison_tables import (
     evaluate_matched_joint_metrics,
     load_test_people,
     render_all_joint_table,
+    render_extrinsic_table,
     render_main_joint_table,
 )
 
@@ -162,3 +163,48 @@ def test_joint_latex_has_expected_rows_and_bolds_row_minimum() -> None:
     assert all_latex.count("% joint-row") == 70
     assert r"\begin{longtable}" in all_latex
     assert "Extrinsic-R quality" in all_latex
+
+
+def test_extrinsic_latex_uses_compact_full_width_layout() -> None:
+    summary = pd.DataFrame(
+        [
+            {
+                "method": "avg_body_current",
+                "n": 137,
+                "mean_mm": 64.045,
+                "std_mm": 16.092,
+                "delta_mm": 0.0,
+                "ci_low_mm": np.nan,
+                "ci_high_mm": np.nan,
+                "p_holm": np.nan,
+                "improved_people": 0,
+            },
+            {
+                "method": "extrinsic_r_average",
+                "n": 137,
+                "mean_mm": 62.031,
+                "std_mm": 16.571,
+                "delta_mm": -2.015,
+                "ci_low_mm": -2.385,
+                "ci_high_mm": -1.647,
+                "p_holm": 2.66e-16,
+                "improved_people": 118,
+            },
+            {
+                "method": "extrinsic_r_quality_average",
+                "n": 137,
+                "mean_mm": 63.251,
+                "std_mm": 16.794,
+                "delta_mm": -0.794,
+                "ci_low_mm": -1.204,
+                "ci_high_mm": -0.395,
+                "p_holm": 1.96e-4,
+                "improved_people": 89,
+            },
+        ]
+    )
+
+    latex = render_extrinsic_table(summary)
+
+    assert r"\scriptsize" in latex
+    assert r"\setlength{\tabcolsep}{3pt}" in latex

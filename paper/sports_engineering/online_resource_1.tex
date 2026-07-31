@@ -5,6 +5,7 @@
 \usepackage{amsmath,amssymb}
 \usepackage{booktabs}
 \usepackage{multirow}
+\usepackage{longtable}
 
 \raggedbottom
 
@@ -182,6 +183,24 @@ average. Learnable triangulation averaged 28.058~mm and 14.555$^\circ$, 1.88\%
 below its matched fixed-triangulation baseline. These rows use Unity native 3D
 during training and answer a different question from zero-shot private-model
 transfer.
+
+The fitted-camera real-data pilot used the 14 held-out participants and three
+seeds. The frozen A6 baseline averaged 60.578~mm; the full camera-feature model
+averaged 60.850~mm, and its 30-degree wrong-camera control averaged
+60.850~mm. Correct-camera features therefore failed the preregistered gate and
+are retained as a negative result rather than a positive comparator.
+
+\section{Complete per-joint comparison}
+
+The following descriptive table uses the same 14 held-out participants and the
+same sequence-similarity-plus-hip-centring evaluator for every method. It does
+not constitute 70 separate hypothesis tests.
+
+\begingroup
+\scriptsize
+\setlength{\tabcolsep}{2pt}
+\input{generated/joint_accuracy_all70}
+\endgroup
 
 \section{Complete cohort outcomes}
 
