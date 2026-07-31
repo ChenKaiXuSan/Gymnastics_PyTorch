@@ -1,0 +1,51 @@
+paths:
+  data_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}
+  shared_run_root: ${oc.env:GYMNASTICS_SHARED_RUN_ROOT,/home/workspace/kaixu/code/Gymnastics_PyTorch/local/runs}
+  student_mapping: ${paths.data_root}/raw/person/student_id_mapping.csv
+  organization_mapping: ${paths.data_root}/raw/person/organize_from_dropbox_20260718.csv
+  fold0_split: ${paths.shared_run_root}/fuse_rotation_aware/runs/all137_a6_e100_seed0/split_manifest.json
+  fold_output: ${paths.shared_run_root}/cohort_cycle/folds
+  cohort_output: ${paths.shared_run_root}/cohort_cycle
+  rotation_aware_root: ${paths.shared_run_root}/fuse_rotation_aware
+  deterministic_root: ${paths.shared_run_root}/fuse_experiments/avg_body_current
+
+crossfit:
+  split_seed: 20260728
+  primary_seed: 0
+  expected_people: 137
+  expected_cycles: 928
+  fold0_runs:
+    seed0: all137_a6_e100_seed0
+    seed1: all137_a6_s1_e100
+    seed2: all137_a6_s2_e100
+  new_run_template: cohort_oof_f{fold:02d}_a6_e100_s0
+
+quality_control:
+  minimum_valid_frame_fraction: 0.80
+  minimum_valid_joint_fraction: 0.80
+  minimum_valid_frames: 60
+  maximum_interpolated_gap_fraction: 0.10
+  minimum_person_cycles: 4
+  phase_points: 101
+
+core_outcomes:
+  - trunk_axial_rotation_rom
+  - angular_speed_p95
+  - peak_rotation_phase
+  - trunk_tilt_p95
+  - wrist_lead_p95
+  - cycle_duration
+  - log_dimensionless_angular_jerk
+  - whole_body_repeatability
+
+statistics:
+  permutation_seed: 20260728
+  bootstrap_seed: 20260729
+  phase_permutation_seed: 20260730
+  permutations: 10000
+  bootstrap_samples: 5000
+  alpha: 0.05
+  log_transform:
+    - angular_speed_p95
+    - cycle_duration
+    - whole_body_repeatability

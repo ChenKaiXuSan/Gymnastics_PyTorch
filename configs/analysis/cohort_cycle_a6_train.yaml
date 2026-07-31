@@ -1,0 +1,26 @@
+paths:
+  sam3d_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}/sam3d_body_results
+  split_cycle_root: ${oc.env:GYMNASTICS_SHARED_RUN_ROOT,/home/workspace/kaixu/code/Gymnastics_PyTorch/local/runs}/split_cycle
+  output_root: ${oc.env:GYMNASTICS_SHARED_RUN_ROOT,/home/workspace/kaixu/code/Gymnastics_PyTorch/local/runs}/fuse_rotation_aware
+  skeleton: configs/fusion/skeleton_mhr70.yaml
+  fold_root: ${oc.env:GYMNASTICS_SHARED_RUN_ROOT,/home/workspace/kaixu/code/Gymnastics_PyTorch/local/runs}/cohort_cycle/folds
+  default_fold: fold_00.json
+  old_fuse_root: ${oc.env:GYMNASTICS_SHARED_RUN_ROOT,/home/workspace/kaixu/code/Gymnastics_PyTorch/local/runs}/fuse_experiments
+  triangulated_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}/sam3d_triangulated/person
+
+data:
+  fps: 60.0
+  cache_dir: ${oc.env:GYMNASTICS_SHARED_RUN_ROOT,/home/workspace/kaixu/code/Gymnastics_PyTorch/local/runs}/fuse_rotation_aware/cache
+
+window:
+  length: 128
+  train_stride: 32
+  eval_stride: 64
+
+training:
+  epochs: 100
+  batch_size: 32
+  learning_rate: 0.001
+  hidden_channels: 128
+  seed: 0
+  device: cuda:0
