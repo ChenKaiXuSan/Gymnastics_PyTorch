@@ -294,10 +294,15 @@ def test_model_metadata_records_checkpoint_reconstruction_fields() -> None:
 def test_cross_attention_production_config_declares_equal_budgets() -> None:
     config = load_config("configs/fusion/rotation_aware_cross_attention.yaml")
 
-    assert _training_config_for_ablation(config, "A10")["epochs"] == 100
+    a10 = _training_config_for_ablation(config, "A10")
+    assert a10["epochs"] == 100
     assert _training_config_for_ablation(config, "A11")["epochs"] == 100
     assert config["training"]["attention_heads"] == 4
     assert config["training"]["hidden_channels"] == 128
+    assert cli._protocol_run_id_token(a10) == "a10_b64_e100_s0"
+    assert cli._validate_protocol_run_id("paper_a10_b64_e100_s0", a10)
+    cli._validate_config_protocol_run_id("paper_a10_b64_e100_s0", config)
+    cli._validate_config_protocol_run_id("paper_a11_b64_e100_s0", config)
 
 
 @pytest.mark.parametrize("ablation", ["A7", "A8", "A9"])

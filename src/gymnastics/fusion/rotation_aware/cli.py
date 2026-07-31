@@ -293,6 +293,7 @@ def _protocol_run_id_token(training: Mapping[str, Any]) -> str | None:
             ablation_lower=str(training["ablation"]).lower(),
             batch_size=int(training["batch_size"]),
             epochs=int(training["epochs"]),
+            seed=int(training.get("seed", 0)),
         )
     except (KeyError, ValueError) as error:
         raise ValueError("training.protocol run_id_token_template is invalid") from error
@@ -317,10 +318,17 @@ def _validate_protocol_run_id(run_id: str, training: Mapping[str, Any]) -> bool:
 
 
 def _validate_config_protocol_run_id(run_id: str, config: Mapping[str, Any]) -> None:
-    """Require one protected A4/A5/A6 schedule token before output-path access."""
+    """Require one declared schedule token before output-path access."""
     _validate_safe_run_id_component(run_id)
+    configured_training = config.get("training", {})
+    schedule = (
+        configured_training.get("epochs_by_ablation")
+        if isinstance(configured_training, Mapping)
+        else None
+    )
+    ablations = tuple(schedule) if isinstance(schedule, Mapping) else LEARNED_ABLATIONS
     matches = []
-    for ablation in ("A4", "A5", "A6"):
+    for ablation in ablations:
         training = _training_config_for_ablation(config, ablation)
         token = _protocol_run_id_token(training)
         if token is not None and _run_id_has_protocol_token(run_id, token):
