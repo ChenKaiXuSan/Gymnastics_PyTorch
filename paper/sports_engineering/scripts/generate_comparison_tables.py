@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -13,6 +14,12 @@ from scipy.stats import wilcoxon
 
 from gymnastics.analysis.cohort_cycle.joints import MAJOR_JOINT_INDICES
 from gymnastics.common.skeletons import MHR70_NAMES
+from gymnastics.fusion.deterministic.experiment_matrix import (
+    build_pair_index,
+    load_triangulated_sequence,
+)
+from gymnastics.fusion.rotation_aware.config import SkeletonSpec, load_skeleton_spec
+from gymnastics.fusion.rotation_aware.evaluation import _external_errors
 
 
 LEARNED_JOINT_METHODS = ("A0", "A1", "A2", "A6")
@@ -23,6 +30,7 @@ EXTRINSIC_JOINT_METHODS = (
 EXPECTED_TEST_PEOPLE = 14
 EXPECTED_JOINTS = 70
 PERSON_BASELINE_METHOD = "avg_body_current"
+JOINT_EVALUATION_PROTOCOL = "similarity_plus_hip_centering"
 DISPLAY_NAMES = {
     "A0": "Face",
     "A1": "Side",
@@ -97,6 +105,13 @@ def build_joint_summary(
     extrinsic: pd.DataFrame,
     test_people: tuple[str, ...],
 ) -> pd.DataFrame:
+    if "evaluation_protocol" not in learned or "evaluation_protocol" not in extrinsic:
+        raise ValueError("joint sources must declare the same evaluation protocol")
+    protocols = set(learned["evaluation_protocol"]) | set(
+        extrinsic["evaluation_protocol"]
+    )
+    if protocols != {JOINT_EVALUATION_PROTOCOL}:
+        raise ValueError("joint sources must use the same evaluation protocol")
     learned = _validate_joint_coverage(learned, LEARNED_JOINT_METHODS, test_people)
     extrinsic = _validate_joint_coverage(
         extrinsic, EXTRINSIC_JOINT_METHODS, test_people
@@ -119,6 +134,87 @@ def build_joint_summary(
     value_columns = [*LEARNED_JOINT_METHODS, *EXTRINSIC_JOINT_METHODS]
     summary.loc[:, value_columns] = summary.loc[:, value_columns] * 1000.0
     return summary
+
+
+def evaluate_matched_joint_metrics(
+    person_id: str,
+    method: str,
+    matched_cycles: Sequence[tuple[np.ndarray, np.ndarray]],
+    skeleton: SkeletonSpec,
+) -> pd.DataFrame:
+    errors_by_joint: list[list[np.ndarray]] = [
+        [] for _ in range(len(skeleton.joint_names))
+    ]
+    for candidate, reference in matched_cycles:
+        errors, valid = _external_errors(
+            np.asarray(candidate, dtype=np.float64),
+            np.asarray(reference, dtype=np.float64),
+            skeleton,
+            alignment="similarity",
+        )
+        for joint in range(errors.shape[1]):
+            errors_by_joint[joint].append(errors[:, joint][valid[:, joint]])
+    rows = []
+    for joint, chunks in enumerate(errors_by_joint):
+        values = np.concatenate(chunks) if chunks else np.asarray([], dtype=float)
+        if not len(values):
+            raise ValueError(f"{person_id}/{method}/joint_{joint} has no matched values")
+        rows.append(
+            {
+                "person_id": str(person_id),
+                "method": method,
+                "joint": joint,
+                "valid_points": int(len(values)),
+                "mpjpe": float(values.mean()),
+                "median": float(np.median(values)),
+                "p95": float(np.percentile(values, 95)),
+                "evaluation_protocol": JOINT_EVALUATION_PROTOCOL,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def reevaluate_compact_joint_metrics(
+    method_roots: Mapping[str, Path],
+    people: tuple[str, ...],
+    triangulated_root: Path,
+    skeleton: SkeletonSpec,
+) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+    for method, method_root in method_roots.items():
+        for person_id in people:
+            compact_path = method_root / f"person_{person_id}" / "fused_sequence.npz"
+            if not compact_path.exists():
+                raise FileNotFoundError(compact_path)
+            with np.load(compact_path, allow_pickle=False) as data:
+                candidate = np.asarray(data["kpts_world"], dtype=np.float64)
+                face_map = np.asarray(data["face_map"], dtype=int)
+                side_map = np.asarray(data["side_map"], dtype=int)
+            pair_index = build_pair_index(face_map, side_map)
+            matched_cycles: list[tuple[np.ndarray, np.ndarray]] = []
+            person_root = triangulated_root / f"person_{person_id}"
+            for cycle_root in sorted(person_root.glob("cycle_*")):
+                reference, pairs = load_triangulated_sequence(cycle_root)
+                candidate_frames = []
+                reference_frames = []
+                for reference_frame, pair in zip(reference, pairs):
+                    candidate_index = pair_index.get(pair)
+                    if candidate_index is None:
+                        continue
+                    candidate_frames.append(candidate[candidate_index])
+                    reference_frames.append(reference_frame)
+                if candidate_frames:
+                    matched_cycles.append(
+                        (np.stack(candidate_frames), np.stack(reference_frames))
+                    )
+            if not matched_cycles:
+                raise ValueError(f"{person_id}/{method} has no matched triangulated cycles")
+            frames.append(
+                evaluate_matched_joint_metrics(
+                    person_id, method, matched_cycles, skeleton
+                )
+            )
+    return pd.concat(frames, ignore_index=True)
 
 
 def load_person_metrics(path: Path, methods: tuple[str, ...]) -> pd.DataFrame:
@@ -396,8 +492,12 @@ def _default_paths() -> dict[str, Path]:
         "split": root / "configs/fusion/folds/paper_137_a6_split.json",
         "learned_joint": evaluation / "metrics_by_joint.csv",
         "deterministic_person": root / "local/runs/fuse_experiments/metrics_by_person.csv",
-        "extrinsic_joint": root / "local/runs/fuse_extrinsic_baselines/metrics_by_joint.csv",
+        "extrinsic_root": root / "local/runs/fuse_extrinsic_baselines",
         "extrinsic_person": root / "local/runs/fuse_extrinsic_baselines/metrics_by_person.csv",
+        "triangulated_root": Path(
+            "/home/data/xchen/gymnastics/sam3d_triangulated/person"
+        ),
+        "skeleton": root / "configs/fusion/skeleton_mhr70.yaml",
         "output": root / "paper/sports_engineering/generated",
     }
 
@@ -408,8 +508,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split", type=Path, default=defaults["split"])
     parser.add_argument("--learned-joint", type=Path, default=defaults["learned_joint"])
     parser.add_argument("--deterministic-person", type=Path, default=defaults["deterministic_person"])
-    parser.add_argument("--extrinsic-joint", type=Path, default=defaults["extrinsic_joint"])
+    parser.add_argument("--extrinsic-root", type=Path, default=defaults["extrinsic_root"])
     parser.add_argument("--extrinsic-person", type=Path, default=defaults["extrinsic_person"])
+    parser.add_argument("--triangulated-root", type=Path, default=defaults["triangulated_root"])
+    parser.add_argument("--skeleton", type=Path, default=defaults["skeleton"])
     parser.add_argument("--output", type=Path, default=defaults["output"])
     return parser.parse_args()
 
@@ -418,7 +520,17 @@ def main() -> None:
     args = parse_args()
     test_people = load_test_people(args.split)
     learned_joint = load_joint_metrics(args.learned_joint, LEARNED_JOINT_METHODS)
-    extrinsic_joint = load_joint_metrics(args.extrinsic_joint, EXTRINSIC_JOINT_METHODS)
+    learned_joint["evaluation_protocol"] = JOINT_EVALUATION_PROTOCOL
+    skeleton = load_skeleton_spec(args.skeleton)
+    extrinsic_joint = reevaluate_compact_joint_metrics(
+        {
+            method: args.extrinsic_root / method
+            for method in EXTRINSIC_JOINT_METHODS
+        },
+        test_people,
+        args.triangulated_root,
+        skeleton,
+    )
     joint_summary = build_joint_summary(learned_joint, extrinsic_joint, test_people)
     deterministic_person = load_person_metrics(
         args.deterministic_person, (PERSON_BASELINE_METHOD,)
@@ -431,6 +543,9 @@ def main() -> None:
     )
 
     args.output.mkdir(parents=True, exist_ok=True)
+    extrinsic_joint.to_csv(
+        args.output / "extrinsic_joint_metrics_test14.csv", index=False
+    )
     joint_summary.to_csv(args.output / "joint_accuracy_test14.csv", index=False)
     extrinsic_summary.to_csv(args.output / "extrinsic_comparison_137.csv", index=False)
     (args.output / "joint_accuracy_main.tex").write_text(
