@@ -15,14 +15,18 @@ from gymnastics.fusion.rotation_aware import cli
 from gymnastics.fusion.rotation_aware.config import load_skeleton_spec
 from gymnastics.fusion.rotation_aware.prefetch import ThroughputConfig
 from gymnastics.fusion.rotation_aware.cli import (
+    CROSS_ATTENTION_ABLATIONS,
     _cache_trial_paths,
     _cached_trials,
     _training_config_for_ablation,
+    load_config,
     loss_config_for_ablation,
     main,
     make_parser,
+    model_kwargs_for_training,
     resolve_fold,
 )
+from gymnastics.fusion.rotation_aware.losses import LossConfig
 
 
 def test_training_schedule_resolves_batch64_method_epochs() -> None:
@@ -242,6 +246,46 @@ def test_twist_ablation_loss_and_model_flags_are_correct() -> None:
     assert loss_config_for_ablation("A9").complete_cycle_rom_peak_weight == 1.0
     assert loss_config_for_ablation("A9").observed_twist_rate_weight == 1.0
     assert TWIST_ABLATIONS == {"A8", "A9"}  # only these flip on the twist residual
+
+
+def test_cross_attention_ablation_flags_and_losses_are_isolated() -> None:
+    assert CROSS_ATTENTION_ABLATIONS == {"A10", "A11"}
+    a10 = loss_config_for_ablation("A10")
+    a11 = loss_config_for_ablation("A11")
+
+    assert a10 == LossConfig()
+    assert a11.circular_axial_rotation_weight == 0.0
+    assert a11.so3_rotation_weight == 0.0
+    assert a11.complete_cycle_rom_weight == 0.0
+    assert a11.adaptive_temporal_acceleration_weight == 1.0
+
+
+def test_model_kwargs_distinguish_a10_and_a11_without_capacity_change() -> None:
+    common = {"hidden_channels": 128, "attention_heads": 4}
+
+    assert model_kwargs_for_training({**common, "ablation": "A10"}) == {
+        "hidden_channels": 128,
+        "twist_residual": False,
+        "cross_attention": True,
+        "attention_heads": 4,
+        "rotation_conditioning": True,
+    }
+    assert model_kwargs_for_training({**common, "ablation": "A11"}) == {
+        "hidden_channels": 128,
+        "twist_residual": False,
+        "cross_attention": True,
+        "attention_heads": 4,
+        "rotation_conditioning": False,
+    }
+
+
+def test_cross_attention_production_config_declares_equal_budgets() -> None:
+    config = load_config("configs/fusion/rotation_aware_cross_attention.yaml")
+
+    assert _training_config_for_ablation(config, "A10")["epochs"] == 100
+    assert _training_config_for_ablation(config, "A11")["epochs"] == 100
+    assert config["training"]["attention_heads"] == 4
+    assert config["training"]["hidden_channels"] == 128
 
 
 @pytest.mark.parametrize("ablation", ["A7", "A8", "A9"])
