@@ -57,6 +57,18 @@ def count_display_items(text: str) -> tuple[int, int]:
     return figure_count, table_count
 
 
+def load_input_sources(text: str, root: Path) -> str:
+    """Load direct LaTeX inputs referenced by one document."""
+    sources: list[str] = []
+    for relative in re.findall(r"\\input\{([^}]+)\}", text):
+        path = root / relative
+        if path.suffix == "":
+            path = path.with_suffix(".tex")
+        if path.exists():
+            sources.append(path.read_text(encoding="utf-8"))
+    return "\n".join(sources)
+
+
 def build_log_failures(log_paths: tuple[Path, ...]) -> list[str]:
     """Return fatal, unresolved-reference, and overflow findings for all builds."""
     failures: list[str] = []
@@ -95,6 +107,7 @@ def main() -> int:
         path.read_text(encoding="utf-8")
         for path in sorted((ROOT / "generated").glob("*.tex"))
     )
+    main_input_sources = load_input_sources(tex, ROOT)
     makefile = MAKEFILE.read_text(encoding="utf-8")
     failures: list[str] = []
 
@@ -107,7 +120,7 @@ def main() -> int:
     if body_count > 4000:
         failures.append(f"main body has approximately {body_count} words; maximum is 4000")
 
-    figure_count, table_count = count_display_items(body + "\n" + generated_sources)
+    figure_count, table_count = count_display_items(body + "\n" + main_input_sources)
     if figure_count + table_count > 10:
         failures.append(
             f"main article has {figure_count} figures and {table_count} tables; maximum combined is 10"
@@ -133,7 +146,7 @@ def main() -> int:
         failures.append("missing bibliography keys: " + ", ".join(missing_keys))
 
     required_anchors = (
-        "47.54\\%",
+        "47.25\\%",
         "60.78",
         "166.537",
         "178.506",
@@ -143,8 +156,9 @@ def main() -> int:
         "0.4233",
         "0.0377",
         "representation-dependent",
-        "62.03",
-        "118 of 137",
+        "65.25",
+        "63.07",
+        "109 of 137",
         "40.35",
         "11 of 20",
     )
@@ -160,7 +174,11 @@ def main() -> int:
     ):
         if label not in combined_sources:
             failures.append(f"missing comparison table label: {label}")
-    for phrase in ("camera-assisted comparator", "same-video evidence"):
+    for phrase in (
+        "camera-assisted comparator",
+        "same-video evidence",
+        "framewise hip centring",
+    ):
         if phrase not in tex:
             failures.append(f"missing evidence-boundary phrase: {phrase}")
     if "generated/*.tex" not in makefile:

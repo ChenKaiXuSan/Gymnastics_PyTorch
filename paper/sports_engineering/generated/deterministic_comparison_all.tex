@@ -1,0 +1,25 @@
+\begin{table}[h]
+\caption{Agreement with the private triangulated pseudo-reference over 137
+participants. Values are mm after one similarity alignment per cycle followed
+by framewise hip centring. The pseudo-reference-fitted row is a leakage
+diagnostic and is not an eligible label-free method.}
+\label{tab:deterministic}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{p{0.42\linewidth}rrr}
+\toprule
+Method & Mean & SD & 95\% CI\\
+\midrule
+Body-frame average & 65.249 & 14.523 & [62.935, 67.789] \\ % deterministic-row
+World-coordinate average & 123.703 & 18.096 & [120.710, 126.803] \\ % deterministic-row
+Root alignment and average & 123.709 & 18.096 & [120.678, 126.787] \\ % deterministic-row
+Similarity alignment, all joints & 69.317 & 18.250 & [66.358, 72.465] \\ % deterministic-row
+Similarity alignment, stable joints & 66.086 & 14.291 & [63.719, 68.557] \\ % deterministic-row
+Pseudo-reference-fitted joint weights (leaky) & 64.077 & 14.449 & [61.718, 66.539] \\ % deterministic-row
+Similarity alignment, body-part weights & 66.270 & 14.593 & [63.863, 68.745] \\ % deterministic-row
+Similarity alignment, side smoothing & 67.037 & 14.268 & [64.686, 69.437] \\ % deterministic-row
+Similarity alignment, output smoothing & 68.031 & 14.298 & [65.731, 70.435] \\ % deterministic-row
+\bottomrule
+\end{tabular}
+\end{table}

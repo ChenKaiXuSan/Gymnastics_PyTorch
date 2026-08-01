@@ -7,7 +7,7 @@ BUILD := build
 all: tables manuscript supplement check
 
 tables:
-	$(PYTHON) scripts/generate_comparison_tables.py
+	$(PYTHON) scripts/generate_comparison_tables.py --reuse-person-cache
 
 manuscript:
 	$(LATEXMK) -pdf -bibtex -interaction=nonstopmode -halt-on-error -outdir=$(BUILD) manuscript.tex

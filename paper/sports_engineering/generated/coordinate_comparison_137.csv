@@ -1,0 +1,3 @@
+method,n,mean_mm,std_mm,reduction_vs_world_pct,evaluation_protocol
+avg_world_face_ref,137,123.70333950709048,18.09579735500544,0.0,similarity_plus_hip_centering
+avg_body_current,137,65.24945205739557,14.523251439241402,47.25328166774707,similarity_plus_hip_centering

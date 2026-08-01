@@ -4,8 +4,8 @@
 
 - [x] Research Article structure uses Introduction, Methods, Results,
   Discussion and a one-paragraph Conclusions section.
-- [x] Abstract is 249 words (required range: 150--250).
-- [x] Main body is approximately 3,007 words (journal maximum: 4,000;
+- [x] Abstract is 250 words (required range: 150--250).
+- [x] Main body is approximately 3,024 words (journal maximum: 4,000;
   abstract, captions, references and declarations excluded).
 - [x] Main article contains 2 figures and 5 tables (journal maximum: 10
   combined).

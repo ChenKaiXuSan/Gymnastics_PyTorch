@@ -10,11 +10,12 @@ from typing import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
-from scipy.stats import wilcoxon
+from scipy.stats import spearmanr, wilcoxon
 
 from gymnastics.analysis.cohort_cycle.joints import MAJOR_JOINT_INDICES
 from gymnastics.common.skeletons import MHR70_NAMES
 from gymnastics.fusion.deterministic.experiment_matrix import (
+    NO_EXTRINSIC_METHODS,
     build_pair_index,
     load_triangulated_sequence,
 )
@@ -30,6 +31,7 @@ EXTRINSIC_JOINT_METHODS = (
 EXPECTED_TEST_PEOPLE = 14
 EXPECTED_JOINTS = 70
 PERSON_BASELINE_METHOD = "avg_body_current"
+WORLD_BASELINE_METHOD = "avg_world_face_ref"
 JOINT_EVALUATION_PROTOCOL = "similarity_plus_hip_centering"
 DISPLAY_NAMES = {
     "A0": "Face",
@@ -40,6 +42,29 @@ DISPLAY_NAMES = {
     "extrinsic_r_quality_average": "Extrinsic-R quality",
     PERSON_BASELINE_METHOD: "Body-frame average",
 }
+DETERMINISTIC_DISPLAY_NAMES = {
+    "sim3_face_stable_joint_weight": "Pseudo-reference-fitted joint weights (leaky)",
+    "avg_body_current": "Body-frame average",
+    "sim3_face_stable": "Similarity alignment, stable joints",
+    "sim3_face_stable_bodypart_weight": "Similarity alignment, body-part weights",
+    "sim3_face_stable_smooth_transform": "Similarity alignment, side smoothing",
+    "sim3_face_stable_smooth_kpt": "Similarity alignment, output smoothing",
+    "sim3_face_all": "Similarity alignment, all joints",
+    "avg_world_face_ref": "World-coordinate average",
+    "root_face_stable": "Root alignment and average",
+}
+
+
+def load_all_people(path: Path) -> tuple[str, ...]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    people = tuple(
+        str(person_id)
+        for partition in ("train", "val", "test")
+        for person_id in payload.get(partition, ())
+    )
+    if len(people) != 137 or len(set(people)) != 137:
+        raise ValueError("split must contain exactly 137 unique people")
+    return people
 
 
 def load_test_people(path: Path) -> tuple[str, ...]:
@@ -136,15 +161,17 @@ def build_joint_summary(
     return summary
 
 
-def evaluate_matched_joint_metrics(
+def evaluate_matched_metrics(
     person_id: str,
     method: str,
     matched_cycles: Sequence[tuple[np.ndarray, np.ndarray]],
     skeleton: SkeletonSpec,
-) -> pd.DataFrame:
+) -> tuple[dict[str, float | int | str], pd.DataFrame]:
+    pooled_errors: list[np.ndarray] = []
     errors_by_joint: list[list[np.ndarray]] = [
         [] for _ in range(len(skeleton.joint_names))
     ]
+    matched_frames = 0
     for candidate, reference in matched_cycles:
         errors, valid = _external_errors(
             np.asarray(candidate, dtype=np.float64),
@@ -152,8 +179,23 @@ def evaluate_matched_joint_metrics(
             skeleton,
             alignment="similarity",
         )
+        matched_frames += int(valid.any(axis=1).sum())
+        pooled_errors.append(errors[valid])
         for joint in range(errors.shape[1]):
             errors_by_joint[joint].append(errors[:, joint][valid[:, joint]])
+    pooled = np.concatenate(pooled_errors) if pooled_errors else np.asarray([], dtype=float)
+    if not len(pooled):
+        raise ValueError(f"{person_id}/{method} has no matched values")
+    person_row: dict[str, float | int | str] = {
+        "person_id": str(person_id),
+        "method": method,
+        "matched_frames": matched_frames,
+        "valid_points": int(len(pooled)),
+        "mpjpe": float(pooled.mean()),
+        "median": float(np.median(pooled)),
+        "p95": float(np.percentile(pooled, 95)),
+        "evaluation_protocol": JOINT_EVALUATION_PROTOCOL,
+    }
     rows = []
     for joint, chunks in enumerate(errors_by_joint):
         values = np.concatenate(chunks) if chunks else np.asarray([], dtype=float)
@@ -171,16 +213,29 @@ def evaluate_matched_joint_metrics(
                 "evaluation_protocol": JOINT_EVALUATION_PROTOCOL,
             }
         )
-    return pd.DataFrame(rows)
+    return person_row, pd.DataFrame(rows)
 
 
-def reevaluate_compact_joint_metrics(
+def evaluate_matched_joint_metrics(
+    person_id: str,
+    method: str,
+    matched_cycles: Sequence[tuple[np.ndarray, np.ndarray]],
+    skeleton: SkeletonSpec,
+) -> pd.DataFrame:
+    _, joint_rows = evaluate_matched_metrics(
+        person_id, method, matched_cycles, skeleton
+    )
+    return joint_rows
+
+
+def reevaluate_compact_metrics(
     method_roots: Mapping[str, Path],
     people: tuple[str, ...],
     triangulated_root: Path,
     skeleton: SkeletonSpec,
-) -> pd.DataFrame:
-    frames: list[pd.DataFrame] = []
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    person_rows: list[dict[str, float | int | str]] = []
+    joint_frames: list[pd.DataFrame] = []
     for method, method_root in method_roots.items():
         for person_id in people:
             compact_path = method_root / f"person_{person_id}" / "fused_sequence.npz"
@@ -209,12 +264,24 @@ def reevaluate_compact_joint_metrics(
                     )
             if not matched_cycles:
                 raise ValueError(f"{person_id}/{method} has no matched triangulated cycles")
-            frames.append(
-                evaluate_matched_joint_metrics(
-                    person_id, method, matched_cycles, skeleton
-                )
+            person_row, joint_rows = evaluate_matched_metrics(
+                person_id, method, matched_cycles, skeleton
             )
-    return pd.concat(frames, ignore_index=True)
+            person_rows.append(person_row)
+            joint_frames.append(joint_rows)
+    return pd.DataFrame(person_rows), pd.concat(joint_frames, ignore_index=True)
+
+
+def reevaluate_compact_joint_metrics(
+    method_roots: Mapping[str, Path],
+    people: tuple[str, ...],
+    triangulated_root: Path,
+    skeleton: SkeletonSpec,
+) -> pd.DataFrame:
+    _, joint_rows = reevaluate_compact_metrics(
+        method_roots, people, triangulated_root, skeleton
+    )
+    return joint_rows
 
 
 def load_person_metrics(path: Path, methods: tuple[str, ...]) -> pd.DataFrame:
@@ -232,6 +299,33 @@ def load_person_metrics(path: Path, methods: tuple[str, ...]) -> pd.DataFrame:
         raise ValueError(f"{path} contains non-finite MPJPE")
     if frame.duplicated(["person_id", "method"]).any():
         raise ValueError(f"{path} contains duplicate person-method rows")
+    return frame
+
+
+def load_cached_person_metrics(
+    path: Path,
+    methods: Sequence[str],
+    people: Sequence[str],
+) -> pd.DataFrame:
+    frame = pd.read_csv(path, dtype={"person_id": str})
+    required = {"person_id", "method", "mpjpe", "evaluation_protocol"}
+    missing = required - set(frame.columns)
+    if missing:
+        raise ValueError(f"{path} is missing required columns: {sorted(missing)}")
+    frame = frame.loc[
+        frame["method"].isin(methods) & frame["person_id"].isin(people)
+    ].copy()
+    if set(frame["evaluation_protocol"]) != {JOINT_EVALUATION_PROTOCOL}:
+        raise ValueError("cached person metrics use the wrong evaluation protocol")
+    if frame.duplicated(["person_id", "method"]).any():
+        raise ValueError("cached person metrics contain duplicate person-method rows")
+    expected = {(str(person), method) for method in methods for person in people}
+    actual = set(zip(frame["person_id"].astype(str), frame["method"].astype(str)))
+    if actual != expected:
+        raise ValueError("cached person metrics lack complete method-person coverage")
+    frame["mpjpe"] = pd.to_numeric(frame["mpjpe"], errors="raise")
+    if not np.isfinite(frame["mpjpe"].to_numpy(dtype=float)).all():
+        raise ValueError("cached person metrics contain non-finite MPJPE")
     return frame
 
 
@@ -268,6 +362,16 @@ def build_extrinsic_summary(
     *,
     bootstrap_repetitions: int = 10_000,
 ) -> pd.DataFrame:
+    if (
+        "evaluation_protocol" not in deterministic
+        or "evaluation_protocol" not in extrinsic
+    ):
+        raise ValueError("person sources must declare the same evaluation protocol")
+    protocols = set(deterministic["evaluation_protocol"]) | set(
+        extrinsic["evaluation_protocol"]
+    )
+    if protocols != {JOINT_EVALUATION_PROTOCOL}:
+        raise ValueError("person sources must use the same evaluation protocol")
     deterministic = deterministic.loc[
         deterministic["method"] == PERSON_BASELINE_METHOD,
         ["person_id", "method", "mpjpe"],
@@ -316,6 +420,7 @@ def build_extrinsic_summary(
             "ci_high_mm": np.nan,
             "p_holm": np.nan,
             "improved_people": 0,
+            "evaluation_protocol": JOINT_EVALUATION_PROTOCOL,
         }
     ]
     for method_index, method in enumerate(EXTRINSIC_JOINT_METHODS):
@@ -337,6 +442,115 @@ def build_extrinsic_summary(
                 "ci_high_mm": high * 1000.0,
                 "p_holm": adjusted[method],
                 "improved_people": int((differences < 0.0).sum()),
+                "evaluation_protocol": JOINT_EVALUATION_PROTOCOL,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def build_calibration_association(
+    person_metrics: pd.DataFrame,
+    extrinsics: Mapping[str, object],
+) -> dict[str, float | int | str]:
+    selected = person_metrics.loc[
+        person_metrics["method"] == "extrinsic_r_average"
+    ].copy()
+    if set(selected.get("evaluation_protocol", ())) != {JOINT_EVALUATION_PROTOCOL}:
+        raise ValueError("calibration association requires the unified evaluation protocol")
+    persons = extrinsics.get("persons")
+    if not isinstance(persons, Mapping):
+        raise ValueError("extrinsics payload must contain a persons mapping")
+    reprojection: list[float] = []
+    errors: list[float] = []
+    for row in selected.itertuples(index=False):
+        metadata = persons.get(str(row.person_id))
+        if not isinstance(metadata, Mapping) or "holdout_reproj_px" not in metadata:
+            raise ValueError(f"missing holdout reprojection error for person {row.person_id}")
+        reprojection.append(float(metadata["holdout_reproj_px"]))
+        errors.append(float(row.mpjpe))
+    rho, p_value = spearmanr(reprojection, errors)
+    return {
+        "n": len(errors),
+        "spearman_rho": float(rho),
+        "p_value": float(p_value),
+        "evaluation_protocol": JOINT_EVALUATION_PROTOCOL,
+    }
+
+
+def build_coordinate_summary(person_metrics: pd.DataFrame) -> pd.DataFrame:
+    methods = (WORLD_BASELINE_METHOD, PERSON_BASELINE_METHOD)
+    selected = person_metrics.loc[person_metrics["method"].isin(methods)].copy()
+    if set(selected.get("evaluation_protocol", ())) != {JOINT_EVALUATION_PROTOCOL}:
+        raise ValueError("coordinate summary requires the unified evaluation protocol")
+    people_by_method = {
+        method: set(selected.loc[selected["method"] == method, "person_id"].astype(str))
+        for method in methods
+    }
+    if not people_by_method[WORLD_BASELINE_METHOD] or (
+        people_by_method[WORLD_BASELINE_METHOD]
+        != people_by_method[PERSON_BASELINE_METHOD]
+    ):
+        raise ValueError("coordinate methods must cover the same people")
+    if selected.duplicated(["person_id", "method"]).any():
+        raise ValueError("coordinate metrics contain duplicate person-method rows")
+    wide = selected.pivot(index="person_id", columns="method", values="mpjpe")
+    world_mean = float(wide[WORLD_BASELINE_METHOD].mean())
+    rows: list[dict[str, float | int | str]] = []
+    for method in methods:
+        values = wide[method].to_numpy(dtype=float)
+        mean = float(values.mean())
+        rows.append(
+            {
+                "method": method,
+                "n": len(values),
+                "mean_mm": mean * 1000.0,
+                "std_mm": float(values.std(ddof=1) * 1000.0),
+                "reduction_vs_world_pct": (
+                    100.0 * (world_mean - mean) / world_mean
+                    if method == PERSON_BASELINE_METHOD
+                    else 0.0
+                ),
+                "evaluation_protocol": JOINT_EVALUATION_PROTOCOL,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def build_deterministic_summary(
+    person_metrics: pd.DataFrame,
+    *,
+    methods: Sequence[str] = NO_EXTRINSIC_METHODS,
+    bootstrap_repetitions: int = 10_000,
+) -> pd.DataFrame:
+    selected = person_metrics.loc[person_metrics["method"].isin(methods)].copy()
+    if set(selected.get("evaluation_protocol", ())) != {JOINT_EVALUATION_PROTOCOL}:
+        raise ValueError("deterministic summary requires the unified evaluation protocol")
+    expected_people: set[str] | None = None
+    rows: list[dict[str, float | int | str]] = []
+    for method_index, method in enumerate(methods):
+        method_rows = selected.loc[selected["method"] == method].copy()
+        people = set(method_rows["person_id"].astype(str))
+        if expected_people is None:
+            expected_people = people
+        if not people or people != expected_people:
+            raise ValueError("deterministic methods must cover the same people")
+        if method_rows.duplicated(["person_id", "method"]).any():
+            raise ValueError("deterministic metrics contain duplicate person-method rows")
+        values = method_rows["mpjpe"].to_numpy(dtype=float)
+        low, high = _bootstrap_mean_difference(
+            values,
+            repetitions=bootstrap_repetitions,
+            seed=20260801 + method_index,
+        )
+        rows.append(
+            {
+                "method": method,
+                "n": len(values),
+                "mean_mm": float(values.mean() * 1000.0),
+                "std_mm": float(values.std(ddof=1) * 1000.0),
+                "ci_low_mm": low * 1000.0,
+                "ci_high_mm": high * 1000.0,
+                "evaluation_protocol": JOINT_EVALUATION_PROTOCOL,
             }
         )
     return pd.DataFrame(rows)
@@ -386,7 +600,7 @@ def render_main_joint_table(summary: pd.DataFrame) -> str:
     return """\\begin{table*}[t]
 \\caption{Per-joint agreement on the 14 held-out participants. Values are mean
 participant-level MPJPE in mm after sequence-level similarity alignment to the
-same-video pseudo-reference. Lower is better; bold indicates the lowest
+same-video pseudo-reference and framewise hip centring. Lower is better; bold indicates the lowest
 descriptive value in each row. Extrinsic-R is a camera-assisted comparator.}
 \\label{tab:joint-accuracy-main}
 \\centering
@@ -423,7 +637,8 @@ def render_all_joint_table(summary: pd.DataFrame) -> str:
     return """\\begin{longtable}{lrrrrrr}
 \\caption{Complete MHR70 per-joint agreement on the same 14 held-out
 participants. Values are participant-level mean MPJPE in mm; bold is the
-lowest descriptive value in each row.}\\label{tab:joint-accuracy-all70}\\\\
+lowest descriptive value in each row. Each cycle uses one similarity alignment
+followed by framewise hip centring.}\\label{tab:joint-accuracy-all70}\\\\
 \\toprule
 Joint & Face & Side & Body mean & A6 & Extrinsic-R & Extrinsic-R quality \\\\
 \\midrule
@@ -465,7 +680,8 @@ def render_extrinsic_table(summary: pd.DataFrame) -> str:
 \\caption{Camera-assisted deterministic comparison over all 137 participants.
 The difference is method minus the calibration-free body-frame average, with a
 participant-bootstrap 95\\% confidence interval. $p$ values are Holm-adjusted
-paired Wilcoxon tests. Evaluation uses a same-video pseudo-reference.}
+paired Wilcoxon tests. Each cycle uses one similarity alignment to the
+same-video pseudo-reference followed by framewise hip centring.}
 \\label{tab:extrinsic-comparison}
 \\centering
 \\scriptsize
@@ -481,6 +697,36 @@ Method & MPJPE (mm) & Difference [95\\% CI] & $p_{\\rm Holm}$ & Improved people 
 """
 
 
+def render_deterministic_table(summary: pd.DataFrame) -> str:
+    rows = [
+        (
+            f"{DETERMINISTIC_DISPLAY_NAMES.get(row.method, row.method)} & "
+            f"{row.mean_mm:.3f} & {row.std_mm:.3f} & "
+            f"[{row.ci_low_mm:.3f}, {row.ci_high_mm:.3f}] "
+            r"\\ % deterministic-row"
+        )
+        for row in summary.itertuples(index=False)
+    ]
+    return """\\begin{table}[h]
+\\caption{Agreement with the private triangulated pseudo-reference over 137
+participants. Values are mm after one similarity alignment per cycle followed
+by framewise hip centring. The pseudo-reference-fitted row is a leakage
+diagnostic and is not an eligible label-free method.}
+\\label{tab:deterministic}
+\\centering
+\\scriptsize
+\\setlength{\\tabcolsep}{3pt}
+\\begin{tabular}{p{0.42\\linewidth}rrr}
+\\toprule
+Method & Mean & SD & 95\\% CI\\\\
+\\midrule
+""" + "\n".join(rows) + """
+\\bottomrule
+\\end{tabular}
+\\end{table}
+"""
+
+
 def _default_paths() -> dict[str, Path]:
     root = Path(__file__).resolve().parents[3]
     evaluation = root / (
@@ -492,9 +738,9 @@ def _default_paths() -> dict[str, Path]:
         "root": root,
         "split": root / "configs/fusion/folds/paper_137_a6_split.json",
         "learned_joint": evaluation / "metrics_by_joint.csv",
-        "deterministic_person": root / "local/runs/fuse_experiments/metrics_by_person.csv",
+        "deterministic_root": root / "local/runs/fuse_experiments/avg_body_current",
         "extrinsic_root": root / "local/runs/fuse_extrinsic_baselines",
-        "extrinsic_person": root / "local/runs/fuse_extrinsic_baselines/metrics_by_person.csv",
+        "extrinsics": root / "local/runs/analysis/extrinsics/estimated_extrinsics.json",
         "triangulated_root": Path(
             "/home/data/xchen/gymnastics/sam3d_triangulated/person"
         ),
@@ -508,47 +754,106 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--split", type=Path, default=defaults["split"])
     parser.add_argument("--learned-joint", type=Path, default=defaults["learned_joint"])
-    parser.add_argument("--deterministic-person", type=Path, default=defaults["deterministic_person"])
+    parser.add_argument("--deterministic-root", type=Path, default=defaults["deterministic_root"])
     parser.add_argument("--extrinsic-root", type=Path, default=defaults["extrinsic_root"])
-    parser.add_argument("--extrinsic-person", type=Path, default=defaults["extrinsic_person"])
+    parser.add_argument("--extrinsics", type=Path, default=defaults["extrinsics"])
     parser.add_argument("--triangulated-root", type=Path, default=defaults["triangulated_root"])
     parser.add_argument("--skeleton", type=Path, default=defaults["skeleton"])
     parser.add_argument("--output", type=Path, default=defaults["output"])
+    parser.add_argument(
+        "--reuse-person-cache",
+        action="store_true",
+        help="reuse a complete protocol-checked 137-person CSV while recomputing test14 joint rows",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    all_people = load_all_people(args.split)
     test_people = load_test_people(args.split)
     learned_joint = load_joint_metrics(args.learned_joint, LEARNED_JOINT_METHODS)
     learned_joint["evaluation_protocol"] = JOINT_EVALUATION_PROTOCOL
     skeleton = load_skeleton_spec(args.skeleton)
-    extrinsic_joint = reevaluate_compact_joint_metrics(
-        {
+    method_roots = {
+        **{
+            method: args.deterministic_root.parent / method
+            for method in NO_EXTRINSIC_METHODS
+        },
+        **{
             method: args.extrinsic_root / method
             for method in EXTRINSIC_JOINT_METHODS
         },
-        test_people,
-        args.triangulated_root,
-        skeleton,
-    )
+    }
+    person_cache = args.output / "pseudo_reference_person_metrics_matched_137.csv"
+    if args.reuse_person_cache and person_cache.exists():
+        unified_person = load_cached_person_metrics(
+            person_cache, tuple(method_roots), all_people
+        )
+        extrinsic_joint = reevaluate_compact_joint_metrics(
+            {
+                method: method_roots[method]
+                for method in EXTRINSIC_JOINT_METHODS
+            },
+            test_people,
+            args.triangulated_root,
+            skeleton,
+        )
+        person_source = "protocol_checked_cache"
+    else:
+        unified_person, unified_joint = reevaluate_compact_metrics(
+            method_roots,
+            all_people,
+            args.triangulated_root,
+            skeleton,
+        )
+        extrinsic_joint = unified_joint.loc[
+            unified_joint["method"].isin(EXTRINSIC_JOINT_METHODS)
+            & unified_joint["person_id"].isin(test_people)
+        ].copy()
+        person_source = "fresh_compact_reevaluation"
     joint_summary = build_joint_summary(learned_joint, extrinsic_joint, test_people)
-    deterministic_person = load_person_metrics(
-        args.deterministic_person, (PERSON_BASELINE_METHOD,)
-    )
-    extrinsic_person = load_person_metrics(
-        args.extrinsic_person, EXTRINSIC_JOINT_METHODS
-    )
+    deterministic_person = unified_person.loc[
+        unified_person["method"] == PERSON_BASELINE_METHOD
+    ].copy()
+    extrinsic_person = unified_person.loc[
+        unified_person["method"].isin(EXTRINSIC_JOINT_METHODS)
+    ].copy()
     extrinsic_summary = build_extrinsic_summary(
         deterministic_person, extrinsic_person
     )
+    coordinate_summary = build_coordinate_summary(unified_person)
+    deterministic_summary = build_deterministic_summary(unified_person)
+    calibration_association = build_calibration_association(
+        extrinsic_person,
+        json.loads(args.extrinsics.read_text(encoding="utf-8")),
+    )
 
     args.output.mkdir(parents=True, exist_ok=True)
+    unified_person.to_csv(
+        args.output / "pseudo_reference_person_metrics_matched_137.csv", index=False
+    )
+    unified_person.loc[
+        unified_person["method"].isin(
+            (PERSON_BASELINE_METHOD, *EXTRINSIC_JOINT_METHODS)
+        )
+    ].to_csv(
+        args.output / "extrinsic_person_metrics_matched_137.csv", index=False
+    )
     extrinsic_joint.to_csv(
         args.output / "extrinsic_joint_metrics_test14.csv", index=False
     )
     joint_summary.to_csv(args.output / "joint_accuracy_test14.csv", index=False)
     extrinsic_summary.to_csv(args.output / "extrinsic_comparison_137.csv", index=False)
+    coordinate_summary.to_csv(
+        args.output / "coordinate_comparison_137.csv", index=False
+    )
+    deterministic_summary.to_csv(
+        args.output / "deterministic_comparison_137.csv", index=False
+    )
+    pd.DataFrame([calibration_association]).to_csv(
+        args.output / "extrinsic_calibration_association_137.csv", index=False
+    )
     (args.output / "joint_accuracy_main.tex").write_text(
         render_main_joint_table(joint_summary), encoding="utf-8"
     )
@@ -558,9 +863,13 @@ def main() -> None:
     (args.output / "extrinsic_comparison.tex").write_text(
         render_extrinsic_table(extrinsic_summary), encoding="utf-8"
     )
+    (args.output / "deterministic_comparison_all.tex").write_text(
+        render_deterministic_table(deterministic_summary), encoding="utf-8"
+    )
     print(
-        f"generated extrinsic_people={extrinsic_person['person_id'].nunique()} "
-        f"test_people={len(test_people)} joints={len(joint_summary)} output={args.output}"
+        f"generated comparison_people={unified_person['person_id'].nunique()} "
+        f"test_people={len(test_people)} joints={len(joint_summary)} "
+        f"person_source={person_source} output={args.output}"
     )
 
 

@@ -60,11 +60,12 @@ A9 & A8 + observed twist-rate anchor & A8 plus post hoc rate anchor\\
 
 \begin{table}[h]
 \caption{Held-out comparison ($N=14$). Mean per-joint position error is
-reported after one sequence-level similarity alignment to the same-video
-triangulated pseudo-reference. Differences are method minus A6 with
-participant-bootstrap 95\% confidence intervals and Holm-adjusted paired
-Wilcoxon $p$ values. Rotation range of motion (ROM) and peak angular speed are
-A3-relative retention ratios, not comparisons with independent kinematics.}
+reported after one similarity alignment per cycle followed by framewise hip
+centring to the same-video triangulated pseudo-reference. Differences are
+method minus A6 with participant-bootstrap 95\% confidence intervals and
+Holm-adjusted paired Wilcoxon $p$ values. Rotation range of motion (ROM) and
+peak angular speed are A3-relative retention ratios, not comparisons with
+independent kinematics.}
 \label{tab:complete-heldout}
 \centering
 \scriptsize
@@ -96,32 +97,11 @@ A9 (0.997, 2.615). The A8 and A9 variants demonstrate that relaxing the
 conservative correction can increase coordinate error and over-amplify peak
 angular speed.
 
+\clearpage
 \section{Deterministic comparison}
 
-\begin{table}[h]
-\caption{Agreement with the private triangulated pseudo-reference over 137
-participants. Units are repository coordinates. The pseudo-reference-fitted
-row is a leakage diagnostic and is not an eligible label-free method.}
-\label{tab:deterministic}
-\centering
-\scriptsize
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{p{0.47\linewidth}rcc}
-\toprule
-Method & Mean & Standard deviation & 95\% CI of mean\\
-\midrule
-Pseudo-reference-fitted joint weights (leaky) & 0.0635 & 0.0160 & [0.0609, 0.0662]\\
-Body-frame average & 0.0640 & 0.0161 & [0.0615, 0.0668]\\
-Similarity alignment, stable joints & 0.0646 & 0.0159 & [0.0621, 0.0673]\\
-Similarity alignment, body-part weights & 0.0649 & 0.0162 & [0.0622, 0.0676]\\
-Similarity alignment, side smoothing & 0.0655 & 0.0159 & [0.0629, 0.0682]\\
-Similarity alignment, output smoothing & 0.0663 & 0.0159 & [0.0637, 0.0690]\\
-Similarity alignment, all joints & 0.0738 & 0.0195 & [0.0707, 0.0771]\\
-World-coordinate average & 0.1221 & 0.0184 & [0.1190, 0.1252]\\
-Root alignment and average & 0.1222 & 0.0184 & [0.1191, 0.1252]\\
-\bottomrule
-\end{tabular}
-\end{table}
+\input{generated/deterministic_comparison_all}
+\clearpage
 
 \section{Synthetic corruptions and robustness}
 

@@ -24,7 +24,7 @@
 \author*[1]{\fnm{Kaixu} \sur{Chen}}\email{chenkaixusan@gmail.com}
 \affil*[1]{\orgname{CCS}}
 
-\abstract{Markerless three-dimensional motion analysis from ordinary video is
+\abstract{Markerless three-dimensional motion analysis from video is
 attractive for sports settings, but monocular estimates remain dependent on
 camera view, occlusion and depth ambiguity. We evaluated how reliably two
 temporally aligned monocular pose streams can be reused when camera calibration
@@ -33,14 +33,14 @@ poses were transformed to a pelvis-centred body frame, after which a
 view-order-invariant temporal network predicted a bounded correction using
 rotation, skeletal and temporal self-supervision. In 137 participants
 performing a repeated gymnastics movement, body-frame averaging reduced mean
-distance to a same-video triangulated pseudo-reference by 47.54\% relative to
+distance to a same-video triangulated pseudo-reference by 47.25\% relative to
 world-coordinate averaging; several aligned deterministic variants performed
 similarly. On 14 held-out participants, the complete learned model reached
-60.78~mm mean per-joint position error after sequence-level similarity
-alignment and was statistically indistinguishable from arithmetic averaging
+60.78~mm mean per-joint position error after similarity alignment and hip
+centring and was statistically indistinguishable from arithmetic averaging
 (60.85~mm) and the preceding learned ablation (60.80~mm). A camera-assisted
 comparator using estimated camera rotation reduced the 137-participant mean
-from 64.05 to 62.03~mm, although both estimates used same-video evidence.
+from 65.25 to 63.07~mm, although both estimates used same-video evidence.
 External testing on
 199 Unity samples showed no zero-shot advantage over direct three-dimensional
 averaging (178.506 versus 166.537~mm), whereas calibrated two-dimensional
@@ -253,10 +253,11 @@ triangulated pseudo-reference.
 \subsection{Evaluation hierarchy}
 
 The fixed person split contained 96 training, 27 validation and 14 held-out
-test participants. The 14-person set was the primary learned comparison.
-Person-level mean per-joint position error was calculated after one static
-sequence-level similarity transform and hip centring against the triangulated
-pseudo-reference. Each comparison was paired against the complete model on the
+test participants. The 14-person set was the primary learned comparison. For
+every private pseudo-reference comparison, one static similarity transform was
+fitted separately to each cycle, followed by framewise hip centring. Errors
+were pooled within each participant before cross-participant summaries. Each
+learned comparison was paired against the complete model on the
 same participants using a person-bootstrap 95\% confidence interval and a
 two-sided Wilcoxon signed-rank test; Holm correction covered the nine planned
 comparisons. Results use one training seed and therefore do not quantify
@@ -283,11 +284,12 @@ Because the rotations and pseudo-reference share upstream camera observations,
 this comparison measures same-video agreement rather than independent 3D
 accuracy.
 
-Joint-level results used the same 14 held-out participants as the learned
-comparison. Extrinsic outputs were re-evaluated with exactly the learned-model
-protocol: one similarity transform per cycle followed by framewise hip
-centring. Errors were first pooled within each participant and joint and then
-averaged across participants. The main table reports the 20 predefined major
+The 137-participant coordinate and camera-assisted comparisons were regenerated
+from their compact fused sequences with this same protocol rather than reusing
+the earlier similarity-only summaries. Joint-level results used the same 14
+held-out participants as the learned comparison. Errors were first pooled
+within each participant and joint and then averaged across participants. The
+main table reports the 20 predefined major
 MHR70 joints used by the analysis pipeline; Online Resource 1 reports all 70.
 
 Limited external testing used 199 rendered samples from three sequences, one
@@ -326,18 +328,18 @@ body-frame features.
 \subsection{Coordinate-system effect and held-out learned comparison}
 
 Across all 137 participants, deterministic body-frame averaging had mean
-pseudo-reference error 0.0640 repository units, compared with 0.1221 for
-world-coordinate averaging, a 47.54\% reduction against this deliberately
-uncorrected baseline. More informative leakage-free aligned variants occupied
-a narrow range from 0.0640 to 0.0663 with overlapping confidence intervals.
-The evidence therefore supports coordinate normalization, rather than a
-particular weighting rule or learned residual, as the main source of in-domain
-improvement.
+pseudo-reference error 65.25~mm, compared with 123.70~mm for world-coordinate
+averaging, a 47.25\% reduction against this deliberately uncorrected baseline.
+Other leakage-free aligned variants ranged from 66.09 to 69.32~mm under the
+same evaluator. The evidence therefore supports coordinate normalization,
+rather than a particular weighting rule or learned residual, as the main
+source of in-domain improvement.
 
 \begin{table}[t]
 \caption{Primary comparison on 14 held-out participants. Error is
-person-level mean $\pm$ standard deviation after one sequence-level similarity
-alignment to the same-video triangulated pseudo-reference. Differences are
+person-level mean $\pm$ standard deviation after one similarity alignment per
+cycle followed by framewise hip centring to the same-video triangulated
+pseudo-reference. Differences are
 method minus the complete model (A6); $p$ values are Holm-adjusted paired
 Wilcoxon tests.}
 \label{tab:heldout}
@@ -375,13 +377,13 @@ winner.
 
 \input{generated/extrinsic_comparison}
 
-Estimated camera rotation reduced the 137-participant mean error by 2.015~mm
-(3.15\%) relative to body-frame averaging and was lower for 118 of 137
-participants ($p_{\rm Holm}=2.66\times10^{-16}$). Fixed quality weighting
-retained a smaller 0.794~mm reduction and was lower for 89 participants
-($p_{\rm Holm}=1.96\times10^{-4}$). Equal weighting was therefore the preferred
+Estimated camera rotation reduced the 137-participant mean error by 2.175~mm
+(3.33\%) relative to body-frame averaging and was lower for 109 of 137
+participants ($p_{\rm Holm}=1.24\times10^{-14}$). Fixed quality weighting
+retained a smaller 1.116~mm reduction and was lower for 89 participants
+($p_{\rm Holm}=4.92\times10^{-5}$). Equal weighting was therefore the preferred
 camera-assisted comparator. Holdout reprojection error correlated with its
-person-level error (Spearman $\rho=0.354$, $p=2.19\times10^{-5}$), linking the
+person-level error (Spearman $\rho=0.347$, $p=3.35\times10^{-5}$), linking the
 result to camera-fit quality. These tests do not remove the shared-evidence
 limitation described above.
 
@@ -527,9 +529,9 @@ normative values, impairment markers or clinical findings.
 
 The private pseudo-reference shares upstream 2D evidence with the candidate
 poses and estimated extrinsics and is scored after sequence-level similarity
-alignment. Its errors can therefore be correlated with both candidate and
-camera-fit errors, and the reported value is agreement with a construction
-rather than absolute accuracy. The primary
+alignment followed by framewise hip centring. Its errors can therefore be
+correlated with both candidate and camera-fit errors, and the reported value is
+agreement with a construction rather than absolute accuracy. The primary
 learned test includes only 14 participants and one training seed. The Unity
 test contains one avatar/environment and fixed cameras. The cohort data lack
 individual demographic, health and training covariates. Finally, a single

@@ -23,9 +23,9 @@ representation-sensitivity case study rather than a causal analysis of ageing.
 - `scripts/generate_comparison_tables.py`: regenerates the camera-extrinsic and
   14-person per-joint tables from the formal local experiment artifacts.
 - `generated/`: source-checked CSV evidence and LaTeX table fragments. The
-  137-person extrinsic summary uses the deterministic evaluation harness; the
-  joint table re-evaluates extrinsic outputs with the learned-model
-  similarity-plus-hip-centring protocol.
+  137-person coordinate, deterministic and extrinsic summaries and the
+  14-person joint table all use one similarity transform per cycle followed by
+  framewise hip centring.
 - `sn-jnl.cls`, `sn-mathphys-num.bst`: official Springer Nature template files.
 - `appendix.sty`, `threeparttable.sty`, `vruler.sty`: local build dependencies.
 
@@ -38,12 +38,20 @@ conda run -n gymnastic make all
 conda run -n gymnastic make check
 ```
 
-`make all` first regenerates the comparison tables. This step requires the
-formal `local/runs/fuse_experiments`, `local/runs/fuse_extrinsic_baselines` and
-`local/runs/fuse_rotation_aware` artifacts plus the triangulated
-pseudo-reference. The generated table fragments are committed and included in
-the submission source archive, so the journal build itself does not require
-access to participant data.
+`make all` validates and reuses the committed 137-person matched-metric cache,
+then regenerates the 14-person joint rows and all LaTeX tables. This step
+requires the formal `local/runs/fuse_experiments`,
+`local/runs/fuse_extrinsic_baselines` and `local/runs/fuse_rotation_aware`
+artifacts plus the triangulated pseudo-reference. The generated table fragments
+are committed and included in the submission source archive, so the journal
+build itself does not require access to participant data.
+
+To rebuild every 137-person metric directly from compact fused sequences rather
+than the protocol-checked cache, run:
+
+```bash
+conda run -n gymnastic python scripts/generate_comparison_tables.py
+```
 
 The PDFs are written to `build/manuscript.pdf` and
 `build/online_resource_1.pdf`.
