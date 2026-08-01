@@ -1,0 +1,4 @@
+method,n,mean_mm,std_mm,delta_mm,ci_low_mm,ci_high_mm,p_holm,improved_people,evaluation_protocol
+avg_body_current,14,60.82876267802817,8.96427801452494,0.0,,,,0,similarity_plus_hip_centering
+extrinsic_r_average,14,59.081479420550494,9.480677990533867,-1.7472832574776618,-2.9210277460307776,-0.47440568794274074,0.049072265625,10,similarity_plus_hip_centering
+extrinsic_r_quality_average,14,59.595279520502956,9.275985620784693,-1.2334831575252214,-2.383380079442811,-0.00025642023688498075,0.0784912109375,10,similarity_plus_hip_centering

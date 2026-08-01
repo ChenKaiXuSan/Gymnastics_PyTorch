@@ -22,9 +22,10 @@ representation-sensitivity case study rather than a causal analysis of ageing.
 - `scripts/check_sports_engineering.py`: structural and evidence checks.
 - `scripts/generate_comparison_tables.py`: regenerates the camera-extrinsic and
   14-person per-joint tables from the formal local experiment artifacts.
-- `generated/`: source-checked CSV evidence and LaTeX table fragments. The
-  137-person coordinate, deterministic and extrinsic summaries and the
-  14-person joint table all use one similarity transform per cycle followed by
+- `generated/`: source-checked CSV evidence and LaTeX table fragments. Main
+  camera and joint tables use the fixed 14-person held-out set; secondary
+  coordinate, deterministic and camera tables use all 137 participants. Every
+  pseudo-reference table uses one similarity transform per cycle followed by
   framewise hip centring.
 - `sn-jnl.cls`, `sn-mathphys-num.bst`: official Springer Nature template files.
 - `appendix.sty`, `threeparttable.sty`, `vruler.sty`: local build dependencies.
@@ -39,7 +40,8 @@ conda run -n gymnastic make check
 ```
 
 `make all` validates and reuses the committed 137-person matched-metric cache,
-then regenerates the 14-person joint rows and all LaTeX tables. This step
+then derives the 14-person main camera and joint rows plus the 137-person
+secondary tables. This step
 requires the formal `local/runs/fuse_experiments`,
 `local/runs/fuse_extrinsic_baselines` and `local/runs/fuse_rotation_aware`
 artifacts plus the triangulated pseudo-reference. The generated table fragments

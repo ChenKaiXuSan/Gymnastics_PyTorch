@@ -156,9 +156,10 @@ def main() -> int:
         "0.4233",
         "0.0377",
         "representation-dependent",
-        "65.25",
-        "63.07",
-        "109 of 137",
+        "60.83",
+        "59.08",
+        "10 of 14",
+        "0.0491",
         "40.35",
         "11 of 20",
     )
@@ -169,6 +170,7 @@ def main() -> int:
     combined_sources = "\n".join((tex, online_resource, generated_sources))
     for label in (
         "tab:extrinsic-comparison",
+        "tab:extrinsic-comparison-all137",
         "tab:joint-accuracy-main",
         "tab:joint-accuracy-all70",
     ):
@@ -181,6 +183,9 @@ def main() -> int:
     ):
         if phrase not in tex:
             failures.append(f"missing evidence-boundary phrase: {phrase}")
+    for anchor in ("65.249", "63.074", "109/137", "0.347"):
+        if anchor not in combined_sources:
+            failures.append(f"missing secondary evidence anchor: {anchor}")
     if "generated/*.tex" not in makefile:
         failures.append("source package does not include generated/*.tex")
 

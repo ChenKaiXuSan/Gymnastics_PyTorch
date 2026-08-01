@@ -13,6 +13,8 @@ from gymnastics.fusion.deterministic.experiment_matrix import joint_errors
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import generate_comparison_tables as comparison_tables
+
 from generate_comparison_tables import (
     MAJOR_JOINT_INDICES,
     build_calibration_association,
@@ -270,6 +272,43 @@ def test_build_extrinsic_summary_rejects_similarity_only_rows() -> None:
         build_extrinsic_summary(deterministic, extrinsic, bootstrap_repetitions=20)
 
 
+def test_extrinsic_summaries_separate_heldout_and_all_participants() -> None:
+    people = ("1", "2", "3", "4")
+    rows = []
+    for method_index, method in enumerate(
+        (
+            "avg_body_current",
+            "extrinsic_r_average",
+            "extrinsic_r_quality_average",
+        )
+    ):
+        for person_index, person_id in enumerate(people):
+            rows.append(
+                {
+                    "person_id": person_id,
+                    "method": method,
+                    "mpjpe": 0.10 + 0.01 * method_index + 0.001 * person_index,
+                    "evaluation_protocol": "similarity_plus_hip_centering",
+                }
+            )
+    metrics = pd.DataFrame(rows)
+
+    heldout, all_participants = comparison_tables.build_extrinsic_summaries(
+        metrics,
+        ("2", "4"),
+        bootstrap_repetitions=100,
+    )
+
+    assert set(heldout["n"]) == {2}
+    assert set(all_participants["n"]) == {4}
+    with pytest.raises(ValueError, match="test people must be present"):
+        comparison_tables.build_extrinsic_summaries(
+            metrics,
+            ("2", "missing"),
+            bootstrap_repetitions=20,
+        )
+
+
 def test_calibration_association_uses_unified_extrinsic_person_errors() -> None:
     person_metrics = pd.DataFrame(
         {
@@ -381,7 +420,7 @@ def test_extrinsic_latex_uses_compact_full_width_layout() -> None:
         [
             {
                 "method": "avg_body_current",
-                "n": 137,
+                "n": 14,
                 "mean_mm": 64.045,
                 "std_mm": 16.092,
                 "delta_mm": 0.0,
@@ -392,31 +431,34 @@ def test_extrinsic_latex_uses_compact_full_width_layout() -> None:
             },
             {
                 "method": "extrinsic_r_average",
-                "n": 137,
+                "n": 14,
                 "mean_mm": 63.074,
                 "std_mm": 16.571,
                 "delta_mm": -2.175,
                 "ci_low_mm": -2.385,
                 "ci_high_mm": -1.647,
                 "p_holm": 1.24e-14,
-                "improved_people": 118,
+                "improved_people": 10,
             },
             {
                 "method": "extrinsic_r_quality_average",
-                "n": 137,
+                "n": 14,
                 "mean_mm": 63.251,
                 "std_mm": 16.794,
                 "delta_mm": -1.116,
                 "ci_low_mm": -1.204,
                 "ci_high_mm": -0.395,
                 "p_holm": 4.92e-5,
-                "improved_people": 89,
+                "improved_people": 9,
             },
         ]
     )
 
-    latex = render_extrinsic_table(summary)
+    latex = render_extrinsic_table(summary, scope="heldout")
 
     assert r"\scriptsize" in latex
     assert r"\setlength{\tabcolsep}{3pt}" in latex
     assert "framewise hip centring" in latex
+    assert "same 14 held-out participants used in Table~1" in latex
+    assert "10/14" in latex
+    assert "/137" not in latex

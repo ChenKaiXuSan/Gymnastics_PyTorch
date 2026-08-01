@@ -30,13 +30,13 @@
 - Consumes: the unified person-level frame and the fixed test-person tuple.
 - Produces: `build_extrinsic_summaries(person_metrics, test_people) -> tuple[pandas.DataFrame, pandas.DataFrame]`; the first frame covers exactly the held-out people and the second covers the full people set.
 
-- [ ] Add a test with four synthetic participants and a two-person test tuple; assert the main summary has `n=2`, the secondary summary has `n=4`, and an unknown test participant raises `ValueError`.
-- [ ] Run the focused test and confirm it fails because `build_extrinsic_summaries` does not exist.
-- [ ] Implement exact test-person selection before calling the existing protocol-checked paired summary.
-- [ ] Run the focused test and confirm it passes.
-- [ ] Add a rendering test proving the improved-person denominator comes from summary `n`, not a hard-coded `/137`.
-- [ ] Run the rendering test and confirm it fails on the current hard-coded denominator.
-- [ ] Parameterize the renderer with population text and table label, then rerun the tests.
+- [x] Add a test with four synthetic participants and a two-person test tuple; assert the main summary has `n=2`, the secondary summary has `n=4`, and an unknown test participant raises `ValueError`.
+- [x] Run the focused test and confirm it fails because `build_extrinsic_summaries` does not exist.
+- [x] Implement exact test-person selection before calling the existing protocol-checked paired summary.
+- [x] Run the focused test and confirm it passes.
+- [x] Add a rendering test proving the improved-person denominator comes from summary `n`, not a hard-coded `/137`.
+- [x] Run the rendering test and confirm it fails on the current hard-coded denominator.
+- [x] Parameterize the renderer with population text and table label, then rerun the tests.
 
 ### Task 2: Generate separate main and supplementary evidence
 
@@ -49,10 +49,10 @@
 - Consumes: `pseudo_reference_person_metrics_matched_137.csv` and the fixed split.
 - Produces: `extrinsic_comparison_test14.csv`, `extrinsic_comparison_137.csv`, `extrinsic_comparison.tex`, and `extrinsic_comparison_all137.tex`.
 
-- [ ] Wire `main()` to build both summaries from the same unified person frame.
-- [ ] Render main Table 2 with held-out wording and Online Resource with secondary all-participant wording.
-- [ ] Regenerate once and record means, deltas, confidence intervals, adjusted p-values, and improvement counts for both populations.
-- [ ] Regenerate a second time and compare hashes for deterministic output.
+- [x] Wire `main()` to build both summaries from the same unified person frame.
+- [x] Render main Table 2 with held-out wording and Online Resource with secondary all-participant wording.
+- [x] Regenerate once and record means, deltas, confidence intervals, adjusted p-values, and improvement counts for both populations.
+- [x] Regenerate a second time and compare hashes for deterministic output.
 
 ### Task 3: Revise and verify the manuscript package
 
@@ -68,10 +68,9 @@
 - Consumes: unified 14-person main summary, unified 137-person secondary summary, and the existing 14-person learned comparison.
 - Produces: main Tables 1--3 with one held-out population, an explicitly secondary all-participant Online Resource table, updated statistics, and compiled PDFs.
 
-- [ ] Replace every 137-person main-camera claim in the abstract, Methods, Results, Discussion and checker anchors with the held-out result.
-- [ ] Add the 137-person camera table and calibration association to Online Resource with explicit secondary-analysis wording.
-- [ ] Run the 11-item statistical fallacy scan and keep shared-evidence, small held-out sample, multiplicity and descriptive all-participant boundaries explicit.
-- [ ] Run `conda run -n gymnastic make -C paper/sports_engineering all` and inspect both PDFs for ordering and overflow.
-- [ ] Run `conda run -n gymnastic python -m pytest -q` and confirm zero failures.
-- [ ] Commit the cohort-harmonized tables and manuscript on `codex/extrinsic-joint-paper`.
-
+- [x] Replace every 137-person main-camera claim in the abstract, Methods, Results, Discussion and checker anchors with the held-out result.
+- [x] Add the 137-person camera table and calibration association to Online Resource with explicit secondary-analysis wording.
+- [x] Run the 11-item statistical fallacy scan and keep shared-evidence, small held-out sample, multiplicity and descriptive all-participant boundaries explicit.
+- [x] Run `conda run -n gymnastic make -C paper/sports_engineering all` and inspect both PDFs for ordering and overflow.
+- [x] Run `conda run -n gymnastic python -m pytest -q` and confirm zero failures.
+- [x] Commit the cohort-harmonized tables and manuscript on `codex/extrinsic-joint-paper`.

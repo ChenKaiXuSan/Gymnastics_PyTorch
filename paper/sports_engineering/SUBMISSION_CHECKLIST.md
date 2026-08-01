@@ -5,7 +5,7 @@
 - [x] Research Article structure uses Introduction, Methods, Results,
   Discussion and a one-paragraph Conclusions section.
 - [x] Abstract is 250 words (required range: 150--250).
-- [x] Main body is approximately 3,024 words (journal maximum: 4,000;
+- [x] Main body is approximately 3,106 words (journal maximum: 4,000;
   abstract, captions, references and declarations excluded).
 - [x] Main article contains 2 figures and 5 tables (journal maximum: 10
   combined).
@@ -13,9 +13,11 @@
 - [x] Main manuscript compiles with the official Springer Nature class.
 - [x] Online Resource 1 compiles and retains detailed ablations, corruption
   settings, robustness results and secondary cohort analyses.
-- [x] Main results distinguish the 14-person held-out test, 137-person
-  descriptive/deterministic analyses, 928-cycle out-of-fold cohort analysis and
-  199-sample Unity test.
+- [x] Main Tables 1--3 use the same 14-person held-out cohort and unified
+  pseudo-reference protocol; complete 137-person deterministic and
+  camera-assisted analyses are explicitly secondary Online Resource results.
+- [x] The downstream case study contains 928 out-of-fold cycles, and the Unity
+  test contains 199 samples.
 - [x] Negative external transfer and pose-source sensitivity are reported.
 - [x] Triangulated 3D is described as evaluation-only pseudo-reference evidence.
 

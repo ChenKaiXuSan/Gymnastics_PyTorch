@@ -448,6 +448,40 @@ def build_extrinsic_summary(
     return pd.DataFrame(rows)
 
 
+def build_extrinsic_summaries(
+    person_metrics: pd.DataFrame,
+    test_people: Sequence[str],
+    *,
+    bootstrap_repetitions: int = 10_000,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    test_people = tuple(str(person_id) for person_id in test_people)
+    if not test_people or len(set(test_people)) != len(test_people):
+        raise ValueError("test people must be non-empty and unique")
+    relevant_methods = (PERSON_BASELINE_METHOD, *EXTRINSIC_JOINT_METHODS)
+    relevant = person_metrics.loc[
+        person_metrics["method"].isin(relevant_methods)
+    ].copy()
+    all_people = set(
+        relevant.loc[
+            relevant["method"] == PERSON_BASELINE_METHOD, "person_id"
+        ].astype(str)
+    )
+    if not set(test_people).issubset(all_people):
+        raise ValueError("test people must be present in all-participant metrics")
+    heldout = relevant.loc[
+        relevant["person_id"].astype(str).isin(test_people)
+    ].copy()
+
+    def summarize(frame: pd.DataFrame) -> pd.DataFrame:
+        return build_extrinsic_summary(
+            frame.loc[frame["method"] == PERSON_BASELINE_METHOD],
+            frame.loc[frame["method"].isin(EXTRINSIC_JOINT_METHODS)],
+            bootstrap_repetitions=bootstrap_repetitions,
+        )
+
+    return summarize(heldout), summarize(relevant)
+
+
 def build_calibration_association(
     person_metrics: pd.DataFrame,
     extrinsics: Mapping[str, object],
@@ -658,7 +692,29 @@ Joint & Face & Side & Body mean & A6 & Extrinsic-R & Extrinsic-R quality \\\\
 """
 
 
-def render_extrinsic_table(summary: pd.DataFrame) -> str:
+def render_extrinsic_table(summary: pd.DataFrame, *, scope: str) -> str:
+    n_values = set(pd.to_numeric(summary["n"], errors="raise").astype(int))
+    if len(n_values) != 1:
+        raise ValueError("extrinsic table rows must use one participant count")
+    participant_count = n_values.pop()
+    if scope == "heldout":
+        if participant_count != EXPECTED_TEST_PEOPLE:
+            raise ValueError("heldout extrinsic table must contain 14 participants")
+        caption_lead = (
+            "Camera-assisted deterministic comparison on the same 14 held-out "
+            "participants used in Table~1."
+        )
+        label = "tab:extrinsic-comparison"
+    elif scope == "all_participants":
+        if participant_count != 137:
+            raise ValueError("all-participant extrinsic table must contain 137 participants")
+        caption_lead = (
+            "Secondary camera-assisted deterministic comparison over all 137 "
+            "participants."
+        )
+        label = "tab:extrinsic-comparison-all137"
+    else:
+        raise ValueError(f"unknown extrinsic table scope: {scope}")
     rows = []
     for row in summary.itertuples(index=False):
         if row.method == PERSON_BASELINE_METHOD:
@@ -671,29 +727,29 @@ def render_extrinsic_table(summary: pd.DataFrame) -> str:
                 f"[{row.ci_low_mm:+.3f}, {row.ci_high_mm:+.3f}]"
             )
             p_value = f"{row.p_holm:.3g}"
-            improved = f"{int(row.improved_people)}/137"
+            improved = f"{int(row.improved_people)}/{participant_count}"
         rows.append(
             f"{DISPLAY_NAMES[row.method]} & {row.mean_mm:.3f} $\\pm$ "
             f"{row.std_mm:.3f} & {comparison} & {p_value} & {improved} \\\\"
         )
-    return """\\begin{table*}[t]
-\\caption{Camera-assisted deterministic comparison over all 137 participants.
+    return f"""\\begin{{table*}}[t]
+\\caption{{{caption_lead}
 The difference is method minus the calibration-free body-frame average, with a
 participant-bootstrap 95\\% confidence interval. $p$ values are Holm-adjusted
 paired Wilcoxon tests. Each cycle uses one similarity alignment to the
-same-video pseudo-reference followed by framewise hip centring.}
-\\label{tab:extrinsic-comparison}
+same-video pseudo-reference followed by framewise hip centring.}}
+\\label{{{label}}}
 \\centering
 \\scriptsize
-\\setlength{\\tabcolsep}{3pt}
-\\begin{tabular}{lcccc}
+\\setlength{{\\tabcolsep}}{{3pt}}
+\\begin{{tabular}}{{lcccc}}
 \\toprule
-Method & MPJPE (mm) & Difference [95\\% CI] & $p_{\\rm Holm}$ & Improved people \\\\
+Method & MPJPE (mm) & Difference [95\\% CI] & $p_{{\\rm Holm}}$ & Improved people \\\\
 \\midrule
-""" + "\n".join(rows) + """
+""" + "\n".join(rows) + f"""
 \\bottomrule
-\\end{tabular}
-\\end{table*}
+\\end{{tabular}}
+\\end{{table*}}
 """
 
 
@@ -813,14 +869,12 @@ def main() -> None:
         ].copy()
         person_source = "fresh_compact_reevaluation"
     joint_summary = build_joint_summary(learned_joint, extrinsic_joint, test_people)
-    deterministic_person = unified_person.loc[
-        unified_person["method"] == PERSON_BASELINE_METHOD
-    ].copy()
     extrinsic_person = unified_person.loc[
         unified_person["method"].isin(EXTRINSIC_JOINT_METHODS)
     ].copy()
-    extrinsic_summary = build_extrinsic_summary(
-        deterministic_person, extrinsic_person
+    extrinsic_test_summary, extrinsic_all_summary = build_extrinsic_summaries(
+        unified_person,
+        test_people,
     )
     coordinate_summary = build_coordinate_summary(unified_person)
     deterministic_summary = build_deterministic_summary(unified_person)
@@ -844,7 +898,12 @@ def main() -> None:
         args.output / "extrinsic_joint_metrics_test14.csv", index=False
     )
     joint_summary.to_csv(args.output / "joint_accuracy_test14.csv", index=False)
-    extrinsic_summary.to_csv(args.output / "extrinsic_comparison_137.csv", index=False)
+    extrinsic_test_summary.to_csv(
+        args.output / "extrinsic_comparison_test14.csv", index=False
+    )
+    extrinsic_all_summary.to_csv(
+        args.output / "extrinsic_comparison_137.csv", index=False
+    )
     coordinate_summary.to_csv(
         args.output / "coordinate_comparison_137.csv", index=False
     )
@@ -861,7 +920,12 @@ def main() -> None:
         render_all_joint_table(joint_summary), encoding="utf-8"
     )
     (args.output / "extrinsic_comparison.tex").write_text(
-        render_extrinsic_table(extrinsic_summary), encoding="utf-8"
+        render_extrinsic_table(extrinsic_test_summary, scope="heldout"),
+        encoding="utf-8",
+    )
+    (args.output / "extrinsic_comparison_all137.tex").write_text(
+        render_extrinsic_table(extrinsic_all_summary, scope="all_participants"),
+        encoding="utf-8",
     )
     (args.output / "deterministic_comparison_all.tex").write_text(
         render_deterministic_table(deterministic_summary), encoding="utf-8"
