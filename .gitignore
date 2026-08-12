@@ -135,3 +135,6 @@ ckpt/
 paper/
 local/
 .ruff_cache/
+
+# NQSV job stdout (moved to local/runs/freeman_benchmark_cluster/joblogs/)
+freeman_subj.o*

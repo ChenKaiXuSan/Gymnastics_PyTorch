@@ -101,11 +101,19 @@ rather than imputed.
 
 ## Evidence still pending
 
-- Inference and evaluation of additional random seeds (only A6 training
-  checkpoints exist for seeds 1 and 2).
+- Inference and evaluation of additional random seeds on the private data
+  (A6 seeds 1 and 2 are now evaluated zero-shot on FreeMan, where the
+  three-seed PA-MPJPE spread is below 0.1 mm; the private-data evaluation
+  remains seed 0 only).
 - Offset/temporal-perturbation robustness experiments.
-- Independent motion-capture ground truth or a completed public synthetic
-  benchmark evaluation.
+- Independent motion-capture ground truth. A zero-shot FreeMan evaluation
+  over the ten most trunk-rotation-relevant subjects (552 sessions, 60% of
+  the release, stride 1) is complete: fusion reaches 102.9--103.4 mm
+  per-frame PA-MPJPE against the markerless multi-view reference versus
+  106.3/106.9 mm for the single views, naive baselines 129.8 mm, and the A6
+  three-seed spread is below 0.05 mm. The report lives at
+  `local/runs/freeman_benchmark_cluster/report/`. The remaining 30 FreeMan
+  subjects and any marker-based validation are still pending.
 - A fully matched classification study with repeated seeds and uncertainty
   intervals beyond fold variation.
 

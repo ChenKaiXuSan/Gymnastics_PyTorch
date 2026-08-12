@@ -12,6 +12,7 @@ from typing import Any
 
 import cv2
 import numpy as np
+import yaml
 
 from gymnastics.common.paths import PROJECT_ROOT
 
@@ -123,9 +124,38 @@ def load_inference(path: Path) -> ViewPrediction:
 def validate_inference(
     path: Path,
     expected: InferenceIdentity | None = None,
+    accepted_config_hashes: Sequence[str] = (),
 ) -> bool:
-    """Return whether an artifact is readable and matches its expected identity."""
-    return _validate_inference(path, expected, allow_partial=False)
+    """Return whether an artifact is readable and matches its expected identity.
+
+    ``accepted_config_hashes`` lists SAM3D config sha256 values whose caches
+    are accepted as equivalent to the expected config (declared via the
+    ``inference.identity_aliases`` field of the SAM3D config file, which is
+    itself part of the expected hash, so acceptance stays auditable). Every
+    other identity field must still match exactly.
+    """
+    return _validate_inference(
+        path,
+        expected,
+        allow_partial=False,
+        accepted_config_hashes=accepted_config_hashes,
+    )
+
+
+def _identity_matches(
+    stored: Mapping[str, Any],
+    expected: InferenceIdentity,
+    accepted_config_hashes: Sequence[str],
+) -> bool:
+    expected_dict = asdict(expected)
+    if stored == expected_dict:
+        return True
+    stored_hash = stored.get("sam3d_config_sha256")
+    if stored_hash not in tuple(accepted_config_hashes):
+        return False
+    relaxed = dict(stored)
+    relaxed["sam3d_config_sha256"] = expected_dict["sam3d_config_sha256"]
+    return relaxed == expected_dict
 
 
 def _validate_inference(
@@ -133,6 +163,7 @@ def _validate_inference(
     expected: InferenceIdentity | None,
     *,
     allow_partial: bool,
+    accepted_config_hashes: Sequence[str] = (),
 ) -> bool:
     try:
         prediction_path = Path(path).resolve()
@@ -143,7 +174,11 @@ def _validate_inference(
         identity = metadata.get("identity")
         if not isinstance(identity, dict):
             return False
-        if expected is not None and identity != asdict(expected):
+        if expected is not None and not _identity_matches(
+            identity,
+            expected,
+            accepted_config_hashes,
+        ):
             return False
         if (
             prediction.session_id != identity.get("session_id")
@@ -345,6 +380,20 @@ def _publish_prediction(
     return path
 
 
+def _inference_options(config: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Read the optional `inference:` block of the SAM3D config file.
+
+    The options live inside the file referenced by `sam3d.config` so that
+    enabling batched inference changes `sam3d_config_sha256` and therefore
+    the cache identity: batched and per-frame results never mix silently.
+    """
+    loaded = yaml.safe_load(_config_path(config).read_text(encoding="utf-8"))
+    if not isinstance(loaded, Mapping):
+        return {}
+    options = loaded.get("inference")
+    return options if isinstance(options, Mapping) else {}
+
+
 def _artifact(path: Path) -> InferenceArtifact:
     prediction = load_inference(path)
     return InferenceArtifact(
@@ -374,6 +423,8 @@ def infer_subject_sessions(
         raise ValueError("frame_stride must be positive")
     factory = estimator_factory or _default_estimator_factory
     estimator: Any | None = None
+    inference_options = _inference_options(config)
+    batched_runner: Any | None = None
     artifacts: list[InferenceArtifact] = []
     for session in sorted(sessions, key=lambda item: (item.fps, item.session_id)):
         pair = pairs.get(session.session_id)
@@ -405,7 +456,15 @@ def infer_subject_sessions(
                 common_frame_count,
             )
             path = _prediction_path(session, view_id, config)
-            if validate_inference(path, identity):
+            identity_aliases = tuple(
+                str(value)
+                for value in (inference_options.get("identity_aliases") or ())
+            )
+            if validate_inference(
+                path,
+                identity,
+                accepted_config_hashes=identity_aliases,
+            ):
                 artifacts.append(_artifact(path))
                 continue
             if estimator is None:
@@ -415,12 +474,24 @@ def infer_subject_sessions(
                 dtype=np.int64,
                 copy=True,
             )
-            xyz, xy, xyz_valid, xy_valid, failed = _stream_view(
-                estimator,
-                session,
-                view_id,
-                frame_ids,
-            )
+            if inference_options.get("batched"):
+                from .sam3d_batched import BatchedViewRunner, stream_view_batched
+
+                if batched_runner is None:
+                    batched_runner = BatchedViewRunner(estimator, inference_options)
+                xyz, xy, xyz_valid, xy_valid, failed = stream_view_batched(
+                    batched_runner,
+                    session,
+                    view_id,
+                    frame_ids,
+                )
+            else:
+                xyz, xy, xyz_valid, xy_valid, failed = _stream_view(
+                    estimator,
+                    session,
+                    view_id,
+                    frame_ids,
+                )
             prediction = ViewPrediction(
                 session_id=session.session_id,
                 subject_id=session.subject_id,

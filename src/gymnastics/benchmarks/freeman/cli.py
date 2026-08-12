@@ -144,34 +144,45 @@ def run_subjects(
     cleanup: Callable[[int], Any],
     keep_workspace: bool,
 ) -> None:
-    """Run subjects in numeric order, publishing state after every transition."""
+    """Run subjects in numeric order, publishing state after every transition.
+
+    Every write re-loads the state file and merges only this subject's entry,
+    so concurrent per-subject jobs (one qsub request per subject) cannot
+    resurrect stale sibling statuses from a snapshot held across hours.
+    """
     state_file = Path(state_path)
-    state = _load_state(state_file)
-    subject_state = state["subjects"]
+
+    def publish(key: str, value: Mapping[str, Any]) -> None:
+        state = _load_state(state_file)
+        state["subjects"][key] = dict(value)
+        _atomic_json(state_file, state)
+
     for subject in sorted({int(value) for value in subjects}):
         if subject < 1 or subject > 40:
             raise ValueError("FreeMan subjects must be within 1..40")
         key = str(subject)
-        if subject_state.get(key, {}).get("status") == "complete":
+        current = _load_state(state_file)["subjects"].get(key, {})
+        if current.get("status") == "complete":
             continue
-        subject_state[key] = {"status": "running"}
-        _atomic_json(state_file, state)
+        publish(key, {"status": "running"})
         try:
             artifacts = process(subject)
             if not keep_workspace:
                 cleanup(subject)
         except Exception as error:
-            subject_state[key] = {
-                "status": "failed",
-                "error_type": type(error).__name__,
-                "error_message": str(error),
-            }
-            _atomic_json(state_file, state)
+            publish(
+                key,
+                {
+                    "status": "failed",
+                    "error_type": type(error).__name__,
+                    "error_message": str(error),
+                },
+            )
             raise
-        subject_state[key] = {"status": "complete"}
+        completed: dict[str, Any] = {"status": "complete"}
         if isinstance(artifacts, Mapping):
-            subject_state[key]["artifacts"] = dict(artifacts)
-        _atomic_json(state_file, state)
+            completed["artifacts"] = dict(artifacts)
+        publish(key, completed)
 
 
 def _worker_state_path(output_root: Path, device: int) -> Path:
@@ -953,15 +964,28 @@ class DefaultStageOperations(StageOperations):
         devices: Sequence[int] | None = None,
     ) -> Any:
         state_path = self._state_path(config)
-        state = _load_state(state_path)
-        state["force_stage"] = force_stage
-        state["frame_stride"] = config["dataset"]["frame_stride"]
-        if force_stage is not None:
-            reset_forced_stage(config, force_stage)
+
+        def publish(mutate: Callable[[dict], None]) -> dict:
+            # Fresh read-modify-write for every publication so concurrent
+            # per-subject requests never resurrect a stale snapshot.
+            state = _load_state(state_path)
+            mutate(state)
+            _atomic_json(state_path, state)
+            return state
+
+        def set_stage(name: str, value: Mapping[str, Any]) -> None:
+            publish(lambda s: s["stages"].__setitem__(name, dict(value)))
+
+        def startup(state: dict) -> None:
+            state["force_stage"] = force_stage
+            state["frame_stride"] = config["dataset"]["frame_stride"]
             if force_stage in {"infer", "fuse", "evaluate"}:
                 for subject in config["dataset"]["subjects"]:
                     state["subjects"].pop(str(int(subject)), None)
-        _atomic_json(state_path, state)
+
+        if force_stage is not None:
+            reset_forced_stage(config, force_stage)
+        state = publish(startup)
         shared_root = Path(config["paths"]["work_root"]) / "shared"
         prepared = (
             not dry_run
@@ -974,39 +998,35 @@ class DefaultStageOperations(StageOperations):
             and _shared_tree_valid(shared_root)
         )
         if not prepared:
-            state["stages"]["inspect"] = {"status": "running"}
-            _atomic_json(state_path, state)
+            set_stage("inspect", {"status": "running"})
             try:
                 report = self.inspect(config, dry_run=dry_run)
             except Exception as error:
-                state["stages"]["inspect"] = {
-                    "status": "failed",
-                    "error_type": type(error).__name__,
-                    "error_message": str(error),
-                }
-                _atomic_json(state_path, state)
+                set_stage(
+                    "inspect",
+                    {
+                        "status": "failed",
+                        "error_type": type(error).__name__,
+                        "error_message": str(error),
+                    },
+                )
                 raise
-            state["stages"]["inspect"] = {"status": "complete"}
-            _atomic_json(state_path, state)
+            set_stage("inspect", {"status": "complete"})
             if dry_run:
                 return report
-            state["stages"]["download"] = {"status": "running"}
-            _atomic_json(state_path, state)
+            set_stage("download", {"status": "running"})
             if report.required_bytes:
                 self.download(config)
             else:
                 validate_downloads(report.entries, report.archive_root)
-            state["stages"]["download"] = {"status": "complete"}
-            _atomic_json(state_path, state)
-            state["stages"]["shared_annotations"] = {"status": "running"}
-            _atomic_json(state_path, state)
+            set_stage("download", {"status": "complete"})
+            set_stage("shared_annotations", {"status": "running"})
             extract_shared_annotations(
                 report.entries,
                 report.archive_root,
                 Path(config["paths"]["work_root"]),
             )
-            state["stages"]["shared_annotations"] = {"status": "complete"}
-            _atomic_json(state_path, state)
+            set_stage("shared_annotations", {"status": "complete"})
         if devices:
             _run_parallel_subjects(
                 config,
@@ -1027,16 +1047,16 @@ class DefaultStageOperations(StageOperations):
                 ),
                 keep_workspace=keep_workspace,
             )
-        state = _load_state(state_path)
-        state["stages"]["report"] = {"status": "running"}
-        _atomic_json(state_path, state)
+        set_stage("report", {"status": "running"})
         outputs = self.report(config)
-        state["stages"]["report"] = {
-            "status": "complete",
-            "results_json_sha256": _file_sha256(outputs.results_json),
-            "markdown_sha256": _file_sha256(outputs.markdown),
-        }
-        _atomic_json(state_path, state)
+        set_stage(
+            "report",
+            {
+                "status": "complete",
+                "results_json_sha256": _file_sha256(outputs.results_json),
+                "markdown_sha256": _file_sha256(outputs.markdown),
+            },
+        )
         return outputs
 
 

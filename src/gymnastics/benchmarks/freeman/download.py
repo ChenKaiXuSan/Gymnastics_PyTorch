@@ -475,6 +475,16 @@ def _contains_signature(path: Path, signature: bytes, *, tail: bool) -> bool:
     return signature in data
 
 
+def _is_first_zip_volume(path: Path) -> bool:
+    """First volume of a split ZIP: local file header, optionally preceded by
+    the single spanned-archive marker that `zip -s` writes (PK\\x07\\x08)."""
+    with path.open("rb") as stream:
+        data = stream.read(8)
+    if data.startswith(b"PK\x03\x04"):
+        return True
+    return data[:4] == b"PK\x07\x08" and data[4:8] == b"PK\x03\x04"
+
+
 def _reconstruct_numeric_archive(
     subject_id: int,
     pieces: Sequence[Path],
@@ -483,11 +493,7 @@ def _reconstruct_numeric_archive(
     seven_zip: str,
     runner: Runner,
 ) -> Path:
-    starts = [
-        path
-        for path in pieces
-        if _contains_signature(path, b"PK\x03\x04", tail=False)
-    ]
+    starts = [path for path in pieces if _is_first_zip_volume(path)]
     finals = [
         path
         for path in pieces
