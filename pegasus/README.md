@@ -59,7 +59,7 @@ bash pegasus/submit_cycle_aware_transfer.sh \
      local/runs/cycle_aware/freeman_all40_v1_reference_supervised_5fold_seed0/fold_01/checkpoints/last.ckpt gymnastics
 
 # Robustness evaluation of existing checkpoints (fixed corruption replayed on test windows).
-OVERRIDES="data.test_with_corruption=true" bash pegasus/submit_cycle_aware_transfer.sh <ckpt> gymnastics <sweep>
+bash pegasus/submit_cycle_aware_transfer.sh <ckpt> gymnastics <sweep> "data.test_with_corruption=true"
 
 # Measurement-quality regularisation (periodicity 0.5 + half-cycle symmetry 0.2).
 bash pegasus/submit_cycle_aware_5fold.sh gymnastics measurement

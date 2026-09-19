@@ -2,7 +2,7 @@
 # Evaluate ONE existing checkpoint on every fold of a target protocol (zero-shot
 # transfer, no training): 5 short gpu jobs writing <sweep>/fold_NN/result.json.
 #
-#   bash pegasus/submit_cycle_aware_transfer.sh <checkpoint> <gymnastics|freeman|freeman_all40> [sweep_name] [extra overrides]
+#   bash pegasus/submit_cycle_aware_transfer.sh <checkpoint> <gymnastics|freeman|freeman_all40> [sweep_name] [extra overrides, "|"-separated]
 #   e.g.
 #   bash pegasus/submit_cycle_aware_transfer.sh \
 #        local/runs/cycle_aware/freeman_all40_v1_reference_supervised_5fold_seed0/fold_01/checkpoints/last.ckpt \
@@ -19,4 +19,4 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 [ -f "$CKPT" ] || { echo "missing checkpoint $CKPT"; exit 2; }
 export SWEEP
-OVERRIDES="test_only=true checkpoint=$CKPT ${EXTRA}" bash pegasus/submit_cycle_aware_5fold.sh "$TARGET"
+OVERRIDES="test_only=true|checkpoint=$CKPT${EXTRA:+|$EXTRA}" bash pegasus/submit_cycle_aware_5fold.sh "$TARGET"

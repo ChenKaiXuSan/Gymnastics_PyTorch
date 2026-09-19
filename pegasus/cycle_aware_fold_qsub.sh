@@ -14,7 +14,8 @@
 #   EXPERIMENT optional Hydra experiment preset (no_film, no_cross_view, ...)
 #   SEED       seed (default 0)
 #   EPOCHS     epochs (default 50)
-#   OVERRIDES  extra Hydra overrides, space separated
+#   OVERRIDES  extra Hydra overrides separated by "|" (qsub -v values cannot
+#              contain spaces), e.g. "test_only=true|checkpoint=path/last.ckpt"
 #
 # Usually submitted for all folds at once by pegasus/submit_cycle_aware_5fold.sh.
 #
@@ -60,8 +61,11 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || ec
 ARGS=("data=$DATA" "data.fold_json=$FOLD_JSON" "run_name=$SWEEP/$FOLD" "seed=$SEED"
       "trainer.max_epochs=$EPOCHS" "trainer.enable_progress_bar=false" "data.num_workers=${NUM_WORKERS:-0}")
 [ -n "$EXPERIMENT" ] && ARGS+=("experiment=$EXPERIMENT")
-# shellcheck disable=SC2206
-[ -n "$OVERRIDES" ] && ARGS+=($OVERRIDES)
+if [ -n "$OVERRIDES" ]; then
+  # "|"-separated list -> one argument per override (spaces are also accepted).
+  IFS='| ' read -r -a EXTRA_ARGS <<<"$OVERRIDES"
+  ARGS+=("${EXTRA_ARGS[@]}")
+fi
 
 "$PYBIN" -u -m gymnastics fuse cycle-aware "${ARGS[@]}"
 status=$?
