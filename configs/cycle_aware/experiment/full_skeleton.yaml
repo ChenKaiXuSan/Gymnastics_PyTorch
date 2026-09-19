@@ -1,0 +1,5 @@
+# @package _global_
+# Use all 70 MHR70 joints instead of the 20 major joints.
+run_name: ${data.name}_${model.name}_full_skeleton_seed${seed}
+model:
+  skeleton: mhr70

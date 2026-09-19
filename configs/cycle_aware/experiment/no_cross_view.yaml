@@ -1,0 +1,6 @@
+# @package _global_
+# Ablation: no_cross_view.
+run_name: ${data.name}_${model.name}_no_cross_view_seed${seed}
+model:
+  cross_view:
+    enabled: false

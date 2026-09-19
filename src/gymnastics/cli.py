@@ -35,6 +35,11 @@ _COMMANDS = {
         "main",
         True,
     ),
+    "fuse:cycle-aware": (
+        "gymnastics.fusion.cycle_aware.train",
+        "main",
+        True,
+    ),
     "analyze": ("gymnastics.analysis.main", "main", False),
     "cohort-cycle": (
         "gymnastics.analysis.cohort_cycle.cli",
@@ -105,6 +110,11 @@ def _parser() -> argparse.ArgumentParser:
     fusion_commands.add_parser(
         "rotation-aware",
         help="run the self-supervised paper method",
+        add_help=False,
+    )
+    fusion_commands.add_parser(
+        "cycle-aware",
+        help="train the cycle-aware dual-view fusion model (Hydra overrides)",
         add_help=False,
     )
     benchmark = commands.add_parser(

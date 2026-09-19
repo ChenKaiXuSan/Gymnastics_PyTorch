@@ -25,7 +25,8 @@ src/gymnastics/
 ├── triangulation/      # extrinsics and pseudo-reference reconstruction
 ├── fusion/
 │   ├── deterministic/  # nine-method comparison matrix
-│   └── rotation_aware/ # self-supervised paper method
+│   ├── rotation_aware/ # self-supervised paper method
+│   └── cycle_aware/    # cycle-aware dual-view fusion (Lightning + Hydra)
 ├── benchmarks/         # Unity native-3D and FreeMan public-data benchmarks
 ├── analysis/           # metrics, reports, statistics, visualization
 ├── calibration/        # camera calibration
@@ -67,6 +68,9 @@ conda run -n gymnastic gymnastics fuse deterministic --methods avg_body_current
 
 # Run the rotation-aware paper method.
 conda run -n gymnastic gymnastics fuse rotation-aware --help
+
+# Train the cycle-aware dual-view fusion model (Hydra overrides).
+conda run -n gymnastic gymnastics fuse cycle-aware experiment=smoke
 
 # Train the rotation-conditioned and cross-view-only attention ablations.
 # All production rotation-aware configs use the same fixed 137-person
@@ -133,6 +137,143 @@ conda run -n gymnastic gymnastics benchmark freeman run
 Downloaded archives, extracted subject workspaces, predictions, and reports all
 remain under ignored `local/` paths.
 
+## Cycle-aware dual-view fusion (Architecture v1.0)
+
+`gymnastics.fusion.cycle_aware` is a second, self-contained learned fusion
+model that treats the repeated-cycle structure of the recorded motion as a
+first-class signal. It is trained with PyTorch Lightning, configured with
+Hydra, and shares the SAM3D-Body inputs, the canonical body frame, and the
+skeleton metadata of the rest of the repository. The long-form description is
+in [docs/cycle_aware_fusion.md](docs/cycle_aware_fusion.md).
+
+### Research goal
+
+Two uncalibrated monocular 3D pose estimates of the same person (View A/B)
+fail at different joints and different times. The model learns, without any
+3D labels, *how much to trust each view for every joint at every time step*
+and applies a small bounded correction, using local motion (velocity) and
+cycle-scale motion (phase, periodic recurrence) as the evidence.
+
+### Architecture
+
+```text
+View A/B 3D Kpts  [B, T, J, 3]
+      ↓
+Spatial Transformer            (attention over joints, per frame)      -> F_pose
+      +
+Short Temporal Transformer     (local band, ~0.25 cycle, per joint)    -> F_short
+      +
+Long Temporal Transformer      (whole window + phase encoding)         -> F_long
+      ↓
+Motion Fusion                  F_motion = MLP([F_short ; F_long])
+      ↓
+FiLM                           H = (1 + γ(F_motion)) · F_pose + β(F_motion)
+      ↓
+Motion-Guided A/B
+      ↓
+Bidirectional Cross-Attention  H_A <-> H_B (same frame, over joints)
+      ↓
+Joint-Wise Reliability         [w_A, w_B] = softmax(R),  w_A + w_B = 1
+      ↓
+Weighted Pose Fusion           P_base = w_A · P_A + w_B · P_B   (original inputs)
+      ↓
+Residual Refinement            P_hat = P_base + ΔP  (bounded)
+      ↓
+Final 3D Pose
+```
+
+Both views go through the *same* encoder weights; the model is symmetric
+under swapping the views.
+
+### Project structure
+
+```text
+src/gymnastics/fusion/cycle_aware/
+├── skeleton.py           common joint set (mhr70 / mhr70_major), bones, mirrors
+├── sample.py             DualViewSample + FusionBatch contracts, canonicalisation
+├── phase.py              cycle phase, phase normalisation, phase encoding, cycle estimation
+├── velocity.py           physical velocity from timestamps
+├── outputs.py            PoseFusionOutput dataclass
+├── modules/              spatial / short / long transformers, motion fusion, FiLM,
+│                         cross-view attention, reliability, weighted fusion, residual
+├── model.py              CycleAwareFusionModel + CycleAwareModelConfig
+├── losses.py             recovery, periodicity, symmetry, residual objectives
+├── corruptions.py        joint/distal masks, noise, depth drift, frame dropouts
+├── metrics.py            Procrustes / translation aligned MPJPE
+├── data/                 base DataModule, windows, sample cache, and one adapter per
+│                         dataset (gymnastics, freeman, unity) plus synthetic
+├── lightning_module.py   training / validation / test / predict steps
+└── train.py              Hydra entry point (`gymnastics fuse cycle-aware`)
+configs/cycle_aware/      Hydra groups: model, data, loss, corruption, trainer, optimizer, experiment
+tests/cycle_aware/        unit and integration tests
+```
+
+### Dataset interface
+
+Every adapter returns `DualViewSample` objects: two `[T, J, 3]` views in the
+pelvis-centred canonical body frame, `[T, J]` validity masks, strictly
+increasing physical timestamps, optional complete-cycle ranges, and an
+optional reference pose (evaluation only). The shared windowing code turns
+samples into `[B, T, J, ·]` batches; the model never sees dataset-specific
+structure.
+
+| Adapter | Source | Cycles | Reference |
+|---|---|---|---|
+| `gymnastics` | rotation-aware person cache or SAM3D + split-cycle records | annotated | triangulated pseudo-reference |
+| `freeman` | zero-shot benchmark SAM3D cache | optional estimate | `keypoints3d_optim` (COCO17) |
+| `unity` | Unity manifest + SAM3D camera cache | optional estimate | native 3D (Unity22) |
+| `synthetic` | generated in memory | exact | generating motion |
+
+### Configuration
+
+Hydra composes `configs/cycle_aware/config.yaml` with the groups `model`,
+`data`, `loss`, `corruption`, `trainer`, `optimizer`, and the optional
+`experiment` presets. Every command-line argument is an override:
+
+```bash
+conda run -n gymnastic gymnastics fuse cycle-aware print_config=true data=freeman
+```
+
+### Training
+
+```bash
+# Smoke run on synthetic data (CPU, seconds).
+conda run -n gymnastic gymnastics fuse cycle-aware experiment=smoke
+
+# Private data, fixed 96/27/14 split, 50 epochs.
+conda run -n gymnastic gymnastics fuse cycle-aware data=gymnastics trainer.max_epochs=50
+
+# FreeMan with estimated cycles, subject-disjoint split.
+conda run -n gymnastic gymnastics fuse cycle-aware data=freeman data.options.estimate_cycles=true
+
+# Unity direction-transfer fold.
+conda run -n gymnastic gymnastics fuse cycle-aware data=unity data.options.fold=right_to_left
+```
+
+Outputs (resolved config, CSV logs, checkpoints, `result.json`) are written
+below `local/runs/cycle_aware/<run_name>`.
+
+### Testing
+
+```bash
+conda run -n gymnastic python -m pytest tests/cycle_aware -q
+```
+
+### Ablation studies
+
+Each module has a Hydra switch under `model.*` and a ready-made preset under
+`configs/cycle_aware/experiment/`:
+
+```bash
+conda run -n gymnastic gymnastics fuse cycle-aware data=gymnastics experiment=no_film
+conda run -n gymnastic gymnastics fuse cycle-aware data=gymnastics model.cross_view.enabled=false
+```
+
+Presets: `no_film`, `no_cross_view`, `no_short_motion`, `no_long_motion`,
+`no_phase`, `equal_reliability`, `no_residual`, `pose_only`, `full_skeleton`,
+`full_context` (long-term context = whole sequence). The long-term context is
+`num_cycles` (0.5, 1, 2, ... or `null` for the full sequence).
+
 ## Repository boundaries
 
 - `src/gymnastics/`: active project-owned Python code.
@@ -160,6 +301,7 @@ Additional workflow documentation:
 - [Runbook](docs/runbook.md)
 - [Module map](docs/modules.md)
 - [Rotation-aware fusion](docs/rotation_aware_fusion.md)
+- [Cycle-aware fusion](docs/cycle_aware_fusion.md)
 - [Triangulation](docs/triangulation.md)
 
 ## License

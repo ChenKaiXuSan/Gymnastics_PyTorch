@@ -9,6 +9,7 @@ All active code belongs to the `gymnastics` package under `src/`.
 | `gymnastics.triangulation` | Estimate camera extrinsics and reconstruct the 3D pseudo-reference. | `gymnastics triangulate` |
 | `gymnastics.fusion.deterministic` | Run and evaluate the nine deterministic fusion methods. | `gymnastics fuse deterministic` |
 | `gymnastics.fusion.rotation_aware` | Train, infer, and evaluate the self-supervised paper method. | `gymnastics fuse rotation-aware` |
+| `gymnastics.fusion.cycle_aware` | Cycle-aware dual-view fusion (transformer encoders, FiLM, cross-view reliability) trained with Lightning and configured with Hydra. | `gymnastics fuse cycle-aware` |
 | `gymnastics.analysis` | Compute metrics, compare methods, create reports, and visualize results. | `gymnastics analyze` |
 | `gymnastics.calibration` | Calibrate cameras from local image/video inputs. | `gymnastics calibrate` |
 | `gymnastics.common` | Canonical project paths, geometry helpers, and MHR70 metadata. | Imported by other domains |

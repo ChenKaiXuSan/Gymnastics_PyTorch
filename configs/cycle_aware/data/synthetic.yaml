@@ -1,0 +1,11 @@
+# In-memory periodic motion for smoke tests.
+defaults:
+  - _common
+name: synthetic
+options:
+  subjects: 6
+  sequences_per_subject: 2
+  frames: 96
+  period: 24
+  fps: 30.0
+  noise: 0.01

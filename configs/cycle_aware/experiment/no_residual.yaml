@@ -1,0 +1,6 @@
+# @package _global_
+# Ablation: no_residual.
+run_name: ${data.name}_${model.name}_no_residual_seed${seed}
+model:
+  residual:
+    enabled: false

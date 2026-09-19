@@ -1,0 +1,6 @@
+# @package _global_
+# Ablation: equal_reliability.
+run_name: ${data.name}_${model.name}_equal_reliability_seed${seed}
+model:
+  reliability:
+    enabled: false

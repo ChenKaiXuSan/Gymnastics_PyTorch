@@ -1,0 +1,16 @@
+# FreeMan sessions from the zero-shot benchmark SAM3D cache.
+defaults:
+  - _common
+name: freeman
+# Converted samples are cached here after the first run.
+cache_dir: local/runs/cycle_aware/sample_cache
+options:
+  benchmark_root: local/runs/freeman_benchmark_cluster
+  # Subject numbers to load (null = every subject with a manifest).
+  subjects: null
+  # FreeMan references are stored in centimetres.
+  reference_scale_to_m: 0.01
+  # FreeMan has no cycle annotations; estimate them from the trunk twist.
+  estimate_cycles: false
+  min_period_s: 0.5
+  max_period_s: 4.0

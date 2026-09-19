@@ -83,7 +83,7 @@ python -m pytest tests/test_sam3d_triangulation.py tests/test_compare_fused_tria
 | `src/gymnastics/sam3d/` | SAM3D-Body inference and keypoint extraction from raw videos. |
 | `src/gymnastics/alignment/` | Face/side time alignment, audio/keypoint offset selection, cycle segmentation, and split-cycle videos. |
 | `src/gymnastics/triangulation/` | 3D triangulation from SAM3D 2D keypoints, camera helpers, and visualizations. |
-| `src/gymnastics/fusion/` | Deterministic and rotation-aware multi-view fusion. |
+| `src/gymnastics/fusion/` | Deterministic, rotation-aware, and cycle-aware multi-view fusion. The cycle-aware model (`fusion/cycle_aware`, `configs/cycle_aware`, `gymnastics fuse cycle-aware`) is a Lightning/Hydra implementation documented in `docs/cycle_aware_fusion.md`. |
 | `src/gymnastics/benchmarks/` | Unity native-3D and FreeMan public-data benchmarks. |
 | `src/gymnastics/analysis/` | Metric comparison, plotting, reports, cohort/repeated-cycle analysis, and result inspection. |
 | `src/gymnastics/calibration/` | Camera calibration utilities. |

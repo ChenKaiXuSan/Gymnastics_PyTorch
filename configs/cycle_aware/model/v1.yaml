@@ -1,0 +1,53 @@
+# Architecture v1.0 of the cycle-aware dual-view fusion model.
+name: v1
+# Common skeleton: "mhr70" (70 joints) or "mhr70_major" (20 major joints).
+skeleton: mhr70_major
+# Feature width D shared by every branch.
+hidden_dim: 128
+num_heads: 4
+# Feed-forward width relative to hidden_dim.
+mlp_ratio: 2.0
+dropout: 0.0
+samples_per_cycle: ${samples_per_cycle}
+# First-sample velocity: "replicate" (copy v[1]) or "zero".
+velocity_boundary: replicate
+
+spatial:
+  # Transformer blocks over joints (Pose Branch).
+  layers: 2
+
+short_motion:
+  enabled: true
+  layers: 2
+  # Fraction of one phase-normalized motion cycle visible to the short branch.
+  cycle_ratio: 0.25
+
+long_motion:
+  enabled: true
+  layers: 2
+  # Number of complete motion cycles used as long-range temporal context
+  # (defines the training window together with samples_per_cycle).
+  num_cycles: ${num_cycles}
+
+phase_encoding:
+  # Adds sin(2*pi*h*phi), cos(2*pi*h*phi) for h = 1..harmonics.
+  enabled: true
+  harmonics: 1
+
+film:
+  enabled: true
+  # Optional tanh bound on gamma; null = unbounded.
+  gamma_bound: null
+
+cross_view:
+  enabled: true
+  layers: 1
+
+reliability:
+  # false = equal weights (up to validity) instead of learned reliability.
+  enabled: true
+
+residual:
+  enabled: true
+  # Bound on |Delta_P| per axis in canonical units (torso lengths); null = unbounded.
+  max_delta: 0.25

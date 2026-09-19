@@ -1,0 +1,14 @@
+# Two tiny epochs on CPU for smoke tests.
+max_epochs: 2
+accelerator: cpu
+devices: 1
+precision: 32
+fast_dev_run: false
+gradient_clip_val: 1.0
+log_every_n_steps: 1
+limit_train_batches: 2
+limit_val_batches: 2
+limit_test_batches: 2
+enable_progress_bar: false
+deterministic: true
+num_sanity_val_steps: 0

@@ -1,0 +1,37 @@
+# Root Hydra configuration of the cycle-aware dual-view fusion framework.
+#
+# Compose with overrides, e.g.
+#   gymnastics fuse cycle-aware data=gymnastics trainer.max_epochs=50
+#   gymnastics fuse cycle-aware data=freeman experiment=no_film
+defaults:
+  - _self_
+  - model: v1
+  - data: synthetic
+  - loss: default
+  - corruption: default
+  - trainer: default
+  - optimizer: default
+  # Optional ablation / experiment preset (configs/cycle_aware/experiment/*.yaml);
+  # it is composed last so its @package _global_ values win.
+  - experiment: null
+
+# Number of samples per phase-normalised cycle.  Shared by the model (short
+# branch window, periodicity shift) and the DataModule (resampling).
+samples_per_cycle: 64
+# Complete cycles per training window (long-term context): 0.5, 1, 2, ... or
+# null for the full sequence (one padded window per sequence).
+num_cycles: 2
+
+seed: 0
+run_name: ${data.name}_${model.name}_seed${seed}
+# All outputs (config, checkpoints, CSV logs) go below this ignored root.
+output_root: local/runs/cycle_aware
+# Run trainer.test on the held-out split once fitting finishes.
+test_after_fit: true
+# Print the resolved configuration and exit without training.
+print_config: false
+
+hydra:
+  output_subdir: null
+  run:
+    dir: .

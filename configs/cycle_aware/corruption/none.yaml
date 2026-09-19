@@ -1,0 +1,2 @@
+# No synthetic corruption: the recovery term becomes a clean consistency term.
+enabled: false

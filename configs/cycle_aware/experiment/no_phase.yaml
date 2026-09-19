@@ -1,0 +1,6 @@
+# @package _global_
+# Ablation: no_phase.
+run_name: ${data.name}_${model.name}_no_phase_seed${seed}
+model:
+  phase_encoding:
+    enabled: false

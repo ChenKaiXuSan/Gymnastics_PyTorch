@@ -1,0 +1,13 @@
+max_epochs: 30
+accelerator: auto
+devices: 1
+precision: 32
+fast_dev_run: false
+gradient_clip_val: 1.0
+log_every_n_steps: 10
+limit_train_batches: 1.0
+limit_val_batches: 1.0
+limit_test_batches: 1.0
+enable_progress_bar: true
+deterministic: false
+num_sanity_val_steps: 1

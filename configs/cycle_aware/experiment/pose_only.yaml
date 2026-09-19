@@ -1,0 +1,10 @@
+# @package _global_
+# Ablation: pose_only.
+run_name: ${data.name}_${model.name}_pose_only_seed${seed}
+model:
+  short_motion:
+    enabled: false
+  long_motion:
+    enabled: false
+  film:
+    enabled: false

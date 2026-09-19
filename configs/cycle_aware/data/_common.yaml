@@ -1,0 +1,28 @@
+# Fields shared by every DataModule (merged into each dataset file).
+skeleton: ${model.skeleton}
+batch_size: 8
+num_workers: 0
+seed: ${seed}
+window:
+  num_cycles: ${num_cycles}
+  samples_per_cycle: ${samples_per_cycle}
+  # Stride between training windows in samples; null = samples_per_cycle // 2.
+  train_stride: null
+  # Stride between evaluation windows; null = the window length.
+  eval_stride: null
+# Resample every annotated cycle to samples_per_cycle samples.
+phase_normalize: true
+# Attach reference poses (evaluation splits only; never used in training).
+attach_reference: true
+corruption: ${corruption}
+# Replay a fixed corruption on validation windows for comparable losses.
+validate_with_corruption: true
+# Explicit subject lists override the adapter default when non-empty.
+split:
+  train: []
+  val: []
+  test: []
+# Cap subjects per split for quick experiments (null = all).
+max_subjects_per_split: null
+# Directory for the converted-sample cache (null = convert on every run).
+cache_dir: null

@@ -31,6 +31,7 @@ analysis = [
   "statsmodels>=0.14",
 ]
 training = [
+  "pytorch-lightning>=2.0",
   "torch",
   "torchvision",
 ]

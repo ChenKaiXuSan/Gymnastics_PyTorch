@@ -1,0 +1,6 @@
+# @package _global_
+# Long-term context = the whole sequence (one padded window per sequence).
+run_name: ${data.name}_${model.name}_full_context_seed${seed}
+num_cycles: null
+data:
+  batch_size: 2

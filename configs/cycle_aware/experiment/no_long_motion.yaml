@@ -1,0 +1,6 @@
+# @package _global_
+# Ablation: no_long_motion.
+run_name: ${data.name}_${model.name}_no_long_motion_seed${seed}
+model:
+  long_motion:
+    enabled: false

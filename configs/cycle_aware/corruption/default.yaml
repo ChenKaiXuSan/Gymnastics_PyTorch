@@ -1,0 +1,24 @@
+# Training-time corruption (see gymnastics/fusion/cycle_aware/corruptions.py).
+enabled: true
+families:
+  - joint_mask
+  - distal_mask
+  - gaussian_noise
+  - depth_perturbation
+  - temporal_dropout
+  - contiguous_dropout
+# Probability that a view of a window is corrupted at all.
+view_probability: 0.5
+joint_mask_probability: 0.05
+distal_mask_probability: 0.3
+# Samples covered by a distal (hands/feet) block.
+distal_block_length: 8
+gaussian_noise_probability: 0.3
+# Canonical units (about one torso length = 1).
+gaussian_noise_std: 0.02
+depth_probability: 0.3
+depth_shift_std: 0.01
+depth_scale_std: 0.1
+temporal_dropout_probability: 0.03
+contiguous_dropout_probability: 0.2
+contiguous_block_length: 8

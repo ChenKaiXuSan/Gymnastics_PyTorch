@@ -1,0 +1,21 @@
+# @package _global_
+# Tiny end-to-end run on synthetic data (CPU, seconds).
+defaults:
+  - override /trainer: debug
+run_name: smoke
+samples_per_cycle: 8
+num_cycles: 2
+model:
+  hidden_dim: 16
+  num_heads: 2
+  spatial: {layers: 1}
+  short_motion: {layers: 1}
+  long_motion: {layers: 1}
+data:
+  batch_size: 4
+  options:
+    subjects: 4
+    frames: 48
+    period: 12
+optimizer:
+  warmup_steps: 2

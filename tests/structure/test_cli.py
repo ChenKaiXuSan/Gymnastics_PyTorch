@@ -84,3 +84,21 @@ def test_runtime_cache_preserves_default_huggingface_credentials(
 
     assert os.environ["HF_HOME"] == str(home / ".cache" / "huggingface")
     assert os.environ["XDG_CACHE_HOME"] == str(local_root / "cache" / "xdg")
+
+
+def test_unified_cli_exposes_cycle_aware_fusion():
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(PROJECT_ROOT / "src")
+
+    result = subprocess.run(
+        [sys.executable, "-m", "gymnastics", "fuse", "--help"],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "cycle-aware" in result.stdout
+    assert unified_cli._COMMANDS["fuse:cycle-aware"][0] == "gymnastics.fusion.cycle_aware.train"

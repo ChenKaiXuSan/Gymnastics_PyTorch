@@ -1,0 +1,11 @@
+# Self-supervised objectives (see gymnastics/fusion/cycle_aware/losses.py).
+recovery_weight: 1.0
+# "smooth_l1", "l1" or "l2".
+recovery_kind: smooth_l1
+# Huber transition point in canonical units.
+recovery_beta: 0.05
+# Maximum clean-view disagreement (canonical units) for an averaged target.
+consensus_distance: 0.15
+periodicity_weight: 0.1
+symmetry_weight: 0.1
+residual_weight: 0.01
