@@ -3,7 +3,7 @@
 A SAM3D-Body-first pipeline for multi-view gymnastics motion analysis. Paired
 face/side videos are converted into 3D keypoints, temporally aligned and split
 into movement cycles, triangulated into a pseudo-reference, fused across views,
-and optionally used for motion classification.
+and analysed (fusion metrics, public benchmarks, cohort statistics).
 
 ## Active pipeline
 
@@ -13,7 +13,7 @@ paired face/side videos
   -> temporal alignment and cycle segmentation
   -> triangulated 3D pseudo-reference
   -> deterministic or rotation-aware fusion
-  -> analysis and optional classification
+  -> analysis, benchmarks and cohort statistics
 ```
 
 All active Python code is installed from one package:
@@ -26,7 +26,7 @@ src/gymnastics/
 ├── fusion/
 │   ├── deterministic/  # nine-method comparison matrix
 │   └── rotation_aware/ # self-supervised paper method
-├── classification/     # splits, datasets, models, training, evaluation
+├── benchmarks/         # Unity native-3D and FreeMan public-data benchmarks
 ├── analysis/           # metrics, reports, statistics, visualization
 ├── calibration/        # camera calibration
 └── common/             # canonical paths and skeleton metadata
@@ -78,9 +78,6 @@ conda run -n gymnastic gymnastics fuse rotation-aware train \
   --config configs/fusion/rotation_aware_cross_attention.yaml \
   --run-id paper137_a11_b64_e100_s0 --ablation A11
 
-# Train/evaluate classifiers.
-conda run -n gymnastic gymnastics classify
-
 # Analyze saved sequences.
 conda run -n gymnastic gymnastics analyze
 
@@ -92,8 +89,8 @@ Configuration is grouped by domain under `configs/`.
 
 ## Results
 
-The current evidence summary, including cohort definitions, headline fusion and
-classification results, failure coverage, and unfinished experiments, is in
+The current evidence summary, including cohort definitions, headline fusion
+results, failure coverage, and unfinished experiments, is in
 [docs/results_summary.md](docs/results_summary.md).
 
 Regenerate the detailed local tables from the saved per-person/fold artefacts:

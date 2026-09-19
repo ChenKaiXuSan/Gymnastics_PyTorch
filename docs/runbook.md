@@ -200,16 +200,6 @@ local/runs/analysis/triangulated_results/triangulated_cycle_details.csv
 
 融合评估的 MPJPE、median、p95 和最大误差位于 `local/runs/fuse_experiments/metrics_by_person.csv` 和 `metrics_by_joint.csv`。
 
-### 7. 可选：分类训练
-
-需要进行动作分类实验时运行：
-
-```bash
-conda run -n gymnastic gymnastics classify
-```
-
-分类训练使用已准备的动作数据、标签和人员级折叠映射。它不是生成三角化或融合 3D 关键点的必要步骤。
-
 ## 全数据集处理
 
 以下命令会处理配置和数据目录中发现的全部人物，可能占用较长 GPU 时间、CPU 时间和存储空间。运行前应先用单人命令验证数据和标定。

@@ -19,7 +19,6 @@ because the underlying experiment outputs are intentionally not tracked by Git.
 | Learned A0--A9 generalization | held-out test, 14 people | Primary learned-model evidence |
 | Learned A0--A9 all-person result | 137 people | Descriptive only; includes train and validation people |
 | Fixed-corruption recovery | validation, 27 people | Validation diagnostic; unavailable on test people |
-| Classification | 3 person-level folds | Mean ± sample SD across folds, not repeated seeds |
 
 The learned split contains 96 training, 27 validation, and 14 test people, with
 no person overlap.
@@ -77,17 +76,6 @@ Fixed-corruption recovery was measured only for the 27 validation people:
 A4 0.0878, A5 0.0880, A6 0.1205, A7 0.0870, A8 0.3782, and A9 0.3960.
 It must not be reported as a 137-person or test-set result.
 
-### Classification
-
-The existing `local/runs/train` artefacts contain complete three-fold metrics
-for the full multitask configurations of Body-Part Mamba, ST-GCN, and TCN. The
-generated classification CSV includes every available accuracy and F1 metric.
-For the `total` label, mean fold accuracy is 0.46 for Body-Part Mamba, 0.28 for
-ST-GCN, and 0.66 for TCN. These are fold aggregates from one recorded training
-run per configuration; they do not quantify random-seed variance. Some ST-GCN
-metric files do not contain F1 fields, which is preserved as missing evidence
-rather than imputed.
-
 ## Failure and uncertainty coverage
 
 - The triangulation report ranks the worst people and cycles by reprojection
@@ -114,7 +102,5 @@ rather than imputed.
   three-seed spread is below 0.05 mm. The report lives at
   `local/runs/freeman_benchmark_cluster/report/`. The remaining 30 FreeMan
   subjects and any marker-based validation are still pending.
-- A fully matched classification study with repeated seeds and uncertainty
-  intervals beyond fold variation.
 
 These items remain limitations; they are not inferred from the available runs.

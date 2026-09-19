@@ -35,7 +35,6 @@ _COMMANDS = {
         "main",
         True,
     ),
-    "classify": ("gymnastics.classification.train", "init_params", False),
     "analyze": ("gymnastics.analysis.main", "main", False),
     "cohort-cycle": (
         "gymnastics.analysis.cohort_cycle.cli",
@@ -61,14 +60,13 @@ def _parser() -> argparse.ArgumentParser:
     for name, help_text in (
         ("sam3d", "run SAM3D-Body extraction"),
         ("align", "align views and segment motion cycles"),
-        ("classify", "train or evaluate motion classifiers"),
         ("analyze", "generate metrics and analysis outputs"),
         ("calibrate", "calibrate cameras"),
     ):
         commands.add_parser(
             name,
             help=help_text,
-            add_help=name in {"classify", "analyze", "calibrate"},
+            add_help=name in {"analyze", "calibrate"},
         )
     commands.add_parser(
         "cohort-cycle",

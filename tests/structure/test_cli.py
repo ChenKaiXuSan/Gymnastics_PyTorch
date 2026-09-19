@@ -28,7 +28,6 @@ def test_unified_cli_lists_pipeline_commands():
         "align",
         "triangulate",
         "fuse",
-        "classify",
         "analyze",
         "calibrate",
         "benchmark",

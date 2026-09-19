@@ -31,17 +31,8 @@ analysis = [
   "statsmodels>=0.14",
 ]
 training = [
-  "av",
-  "captum",
-  "grad-cam",
-  "imbalanced-learn",
-  "pytorch-lightning",
-  "rich",
-  "scikit-learn",
-  "tensorboard",
   "torch",
   "torchvision",
-  "transformers",
 ]
 test = [
   "pytest>=8",

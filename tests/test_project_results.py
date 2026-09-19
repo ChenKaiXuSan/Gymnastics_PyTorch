@@ -11,7 +11,6 @@ from gymnastics.analysis.project_results import (
     holm_adjust,
     load_split_manifest,
     paired_comparisons,
-    summarize_classification,
     summarize_learned_by_split,
 )
 
@@ -114,61 +113,6 @@ def test_paired_comparisons_use_only_requested_people_and_report_reproducible_ci
     assert all(0.0 <= row["holm_p"] <= 1.0 for row in result)
 
 
-def _write_fold_metric(
-    root: Path,
-    run_name: str,
-    fold: int,
-    payload: dict[str, float],
-) -> Path:
-    path = (
-        root
-        / run_name
-        / "2026-05-19"
-        / "09-18-17"
-        / "metrics"
-        / f"fold_{fold}_test_metrics.txt"
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps([payload]), encoding="utf-8")
-    return path
-
-
-def test_classification_summary_aggregates_matching_run_over_person_folds(
-    tmp_path: Path,
-) -> None:
-    paths = [
-        _write_fold_metric(
-            tmp_path,
-            "st_gcn_['posture', 'total']",
-            fold,
-            {
-                "test/acc_posture": acc,
-                "test/f1_posture": f1,
-                "test/loss": 1.0,
-            },
-        )
-        for fold, acc, f1 in [
-            (0, 0.50, 0.40),
-            (1, 0.70, 0.60),
-            (2, 0.90, 0.80),
-        ]
-    ]
-
-    summary = summarize_classification(paths)
-
-    by_metric = {row["metric"]: row for row in summary}
-    assert by_metric["test/acc_posture"] == {
-        "model": "st_gcn",
-        "targets": "posture,total",
-        "metric": "test/acc_posture",
-        "n_folds": 3,
-        "mean": pytest.approx(0.70),
-        "std": pytest.approx(0.20),
-    }
-    assert by_metric["test/f1_posture"]["mean"] == pytest.approx(0.60)
-    assert "test/loss" not in by_metric
-
-
 def test_generator_writes_machine_readable_outputs_with_cohort_labels(
     tmp_path: Path,
 ) -> None:
@@ -195,22 +139,11 @@ def test_generator_writes_machine_readable_outputs_with_cohort_labels(
         + "\n",
         encoding="utf-8",
     )
-    classification_root = tmp_path / "classification"
-    metric_paths = [
-        _write_fold_metric(
-            classification_root,
-            "tcn_['posture', 'relax', 'twist', 'total']",
-            fold,
-            {"test/acc_total": value, "test/f1_total": value - 0.1},
-        )
-        for fold, value in [(0, 0.50), (1, 0.60), (2, 0.70)]
-    ]
     output_dir = tmp_path / "output"
 
     outputs = generate_project_results(
         learned_metrics_path=learned_path,
         split_manifest_path=manifest_path,
-        classification_metric_paths=metric_paths,
         output_dir=output_dir,
         reference_method="A6",
         bootstrap_samples=500,
@@ -219,7 +152,6 @@ def test_generator_writes_machine_readable_outputs_with_cohort_labels(
     assert set(outputs) == {
         "learned_by_split",
         "learned_test_comparisons",
-        "classification_summary",
         "markdown_summary",
     }
     assert all(path.is_file() for path in outputs.values())

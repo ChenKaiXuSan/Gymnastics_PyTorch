@@ -14,8 +14,7 @@
   -> alignment 对齐 face/side 时间轴并切分动作周期
   -> triangulation 先估计逐人相机外参，再用两个视角的 2D 关键点生成 3D 伪真值
   -> fusion 对齐并融合两个视角的 3D 关键点
-  -> analysis 将融合结果与三角化伪真值比较
-  -> classification（可选的动作分类训练与评估）
+  -> analysis 将融合结果与三角化伪真值比较，并做队列/重复周期统计
 ```
 
 ## 各阶段说明
@@ -27,7 +26,6 @@
 | `triangulation` | 对齐记录、两个视角的 2D 关键点、逐人外参 | 按周期进行两视角三角化 | `sam3d_triangulated/person/person_<id>/cycle_<idx>/` |
 | `fusion` | 对齐记录和两个视角的 3D 关键点 | Sim3 对齐、双视角融合、时间平滑 | `local/runs/fuse_experiments/<method>/person_<id>/fused_sequence.npz` |
 | `analysis` | 融合结果和三角化伪真值 | 计算 MPJPE 等指标并生成报告 | `local/runs/analysis/` 和融合指标 CSV |
-| `classification` | 已准备的动作数据和人员级划分 | 分类训练与评估 | `local/runs/train/` 等训练输出 |
 
 ## 关键规则
 
@@ -67,8 +65,6 @@
 | 时间对齐和周期切分 | `local/runs/split_cycle` |
 | 三角化 3D 伪真值 | `/home/data/xchen/gymnastics/sam3d_triangulated/person` |
 | 融合实验结果 | `local/runs/fuse_experiments` |
-| 人员级交叉验证划分 | `/home/data/xchen/gymnastics/index_mapping/camera_pairs_by_person_folds` |
-| 训练结果 | `local/runs/train` |
 
 ## 入口命令
 
@@ -108,12 +104,6 @@
 
    ```bash
    conda run -n gymnastic python -m gymnastics.analysis.reports.generate_results_report
-   ```
-
-7. 可选：训练和评估分类模型：
-
-   ```bash
-   conda run -n gymnastic gymnastics classify
    ```
 
 单个人物的完整命令、预期输出和故障排查见[数据处理运行手册](runbook.md)。

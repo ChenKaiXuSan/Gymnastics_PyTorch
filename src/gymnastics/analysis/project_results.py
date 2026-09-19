@@ -8,7 +8,6 @@ be tested without access to the project data directories.
 
 from __future__ import annotations
 
-import ast
 import argparse
 import csv
 import json
@@ -28,7 +27,6 @@ DEFAULT_LEARNED_METRICS = Path(
 DEFAULT_SPLIT_MANIFEST = Path(
     "local/runs/fuse_rotation_aware/runs/all137_a6_e100_seed0/split_manifest.json"
 )
-DEFAULT_CLASSIFICATION_ROOT = Path("local/runs/train")
 DEFAULT_OUTPUT_DIR = Path("local/runs/analysis/project_results")
 
 
@@ -212,67 +210,6 @@ def paired_comparisons(
     return comparisons
 
 
-def _classification_run(path: Path) -> tuple[str, str]:
-    run_dir = next(
-        (
-            parent
-            for parent in path.parents
-            if "_[" in parent.name and parent.name.endswith("]")
-        ),
-        None,
-    )
-    if run_dir is None:
-        raise ValueError(f"cannot identify classification run from {path}")
-    separator = run_dir.name.rfind("_[")
-    if separator < 1:
-        raise ValueError(f"cannot split model and targets in {run_dir.name}")
-    model = run_dir.name[:separator]
-    target_literal = run_dir.name[separator + 1 :]
-    targets = ast.literal_eval(target_literal)
-    if not isinstance(targets, list) or not all(
-        isinstance(target, str) for target in targets
-    ):
-        raise ValueError(f"invalid target list in {run_dir.name}")
-    return model, ",".join(targets)
-
-
-def summarize_classification(
-    metric_paths: Iterable[Path],
-) -> list[dict[str, object]]:
-    """Aggregate classification accuracy/F1 over person-level folds."""
-    values: dict[tuple[str, str, str], list[float]] = defaultdict(list)
-    for path in sorted(Path(item) for item in metric_paths):
-        model, targets = _classification_run(path)
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(payload, list) or len(payload) != 1:
-            raise ValueError(f"expected one metric object in {path}")
-        metrics = payload[0]
-        for metric, raw_value in metrics.items():
-            if not (metric.startswith("test/acc_") or metric.startswith("test/f1_")):
-                continue
-            value = _finite_float(raw_value)
-            if value is not None:
-                values[(model, targets, metric)].append(value)
-
-    results: list[dict[str, object]] = []
-    for (model, targets, metric), fold_values in sorted(values.items()):
-        results.append(
-            {
-                "model": model,
-                "targets": targets,
-                "metric": metric,
-                "n_folds": len(fold_values),
-                "mean": float(np.mean(fold_values)),
-                "std": (
-                    float(np.std(fold_values, ddof=1))
-                    if len(fold_values) > 1
-                    else 0.0
-                ),
-            }
-        )
-    return results
-
-
 def _write_csv(path: Path, rows: Sequence[Mapping[str, object]]) -> None:
     if not rows:
         raise ValueError(f"refusing to write empty CSV: {path}")
@@ -301,7 +238,6 @@ def _build_markdown_summary(
     splits: Mapping[str, set[str]],
     learned_summary: Sequence[Mapping[str, object]],
     comparisons: Sequence[Mapping[str, object]],
-    classification_summary: Sequence[Mapping[str, object]],
     reference_method: str,
 ) -> str:
     total_people = len(set().union(*splits.values()))
@@ -333,8 +269,8 @@ def _build_markdown_summary(
         f"- Primary learned result: held-out test (`N={test_n}`).",
         f"- Secondary learned result: descriptive all-person (`N={total_people}`).",
         f"- Fixed-corruption diagnostic: validation-only (`N={val_n}`).",
-        "- Classification variation is the standard deviation across three "
-        "person-level folds, not repeated-seed uncertainty.",
+        "- Learned-fusion variation is single-seed; it is not repeated-seed "
+        "uncertainty.",
         "",
         "## Learned fusion MPJPE",
         "",
@@ -387,34 +323,6 @@ def _build_markdown_summary(
             value = _fmt_mean_std(float(row["mean"]), float(row["std"]))
         lines.append(f"| {method} | {value} | {row['n_measured']} |")
 
-    full_targets = "posture,relax,twist,total"
-    selected_classification = [
-        row
-        for row in classification_summary
-        if row["targets"] == full_targets
-        and (
-            str(row["metric"]).startswith("test/acc_")
-            or str(row["metric"]).startswith("test/f1_")
-        )
-    ]
-    lines.extend(
-        [
-            "",
-            "## Classification (full multitask configuration)",
-            "",
-            "| Model | Metric | fold mean ± SD | folds |",
-            "|---|---|---:|---:|",
-        ]
-    )
-    for row in selected_classification:
-        lines.append(
-            f"| {row['model']} | {row['metric']} | "
-            f"{_fmt_mean_std(float(row['mean']), float(row['std']))} | "
-            f"{row['n_folds']} |"
-        )
-    if not selected_classification:
-        lines.append("| — | no complete full-multitask fold metrics found | — | — |")
-
     lines.extend(
         [
             "",
@@ -436,8 +344,6 @@ def generate_project_results(
     *,
     learned_metrics_path: Path = DEFAULT_LEARNED_METRICS,
     split_manifest_path: Path = DEFAULT_SPLIT_MANIFEST,
-    classification_metric_paths: Iterable[Path] | None = None,
-    classification_root: Path = DEFAULT_CLASSIFICATION_ROOT,
     output_dir: Path = DEFAULT_OUTPUT_DIR,
     reference_method: str = "A6",
     bootstrap_samples: int = 10_000,
@@ -491,30 +397,19 @@ def generate_project_results(
         bootstrap_samples=bootstrap_samples,
     )
 
-    if classification_metric_paths is None:
-        classification_metric_paths = classification_root.glob(
-            "**/metrics/fold_*_test_metrics.txt"
-        )
-    classification_summary = summarize_classification(classification_metric_paths)
-    if not classification_summary:
-        raise ValueError("no classification accuracy/F1 metrics found")
-
     outputs = {
         "learned_by_split": output_dir / "learned_results_by_split.csv",
         "learned_test_comparisons": output_dir / "learned_test_comparisons.csv",
-        "classification_summary": output_dir / "classification_summary.csv",
         "markdown_summary": output_dir / "RESULTS_SUMMARY.md",
     }
     _write_csv(outputs["learned_by_split"], learned_summary)
     _write_csv(outputs["learned_test_comparisons"], comparisons)
-    _write_csv(outputs["classification_summary"], classification_summary)
     _write_text(
         outputs["markdown_summary"],
         _build_markdown_summary(
             splits=splits,
             learned_summary=learned_summary,
             comparisons=comparisons,
-            classification_summary=classification_summary,
             reference_method=reference_method,
         ),
     )
@@ -527,9 +422,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--learned-metrics", type=Path, default=DEFAULT_LEARNED_METRICS)
     parser.add_argument("--split-manifest", type=Path, default=DEFAULT_SPLIT_MANIFEST)
-    parser.add_argument(
-        "--classification-root", type=Path, default=DEFAULT_CLASSIFICATION_ROOT
-    )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--reference-method", default="A6")
     parser.add_argument("--bootstrap-samples", type=int, default=10_000)
@@ -538,7 +430,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     outputs = generate_project_results(
         learned_metrics_path=args.learned_metrics,
         split_manifest_path=args.split_manifest,
-        classification_root=args.classification_root,
         output_dir=args.output_dir,
         reference_method=args.reference_method,
         bootstrap_samples=args.bootstrap_samples,

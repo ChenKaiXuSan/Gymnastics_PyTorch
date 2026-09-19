@@ -78,6 +78,22 @@ mhr_names = [
 MHR70_NAMES = mhr_names
 MHR70_INDEX = {name: index for index, name in enumerate(MHR70_NAMES)}
 
+# Twenty major body joints (nose, shoulders, elbows, wrists, neck, hips, knees,
+# ankles, feet) used for whole-body descriptors such as the cohort repeatability
+# analysis. Order is preserved for numerical reproducibility.
+MHR70_MAJOR_JOINT_INDICES = (
+    0,  # nose
+    5, 6,  # shoulders
+    7, 8,  # elbows
+    41, 62,  # wrists
+    69,  # neck
+    9, 10,  # hips
+    11, 12,  # knees
+    13, 14,  # ankles
+    15, 16, 17,  # left foot
+    18, 19, 20,  # right foot
+)
+
 pose_info = dict(
     pose_format="mhr70",
     paper_info=dict(
