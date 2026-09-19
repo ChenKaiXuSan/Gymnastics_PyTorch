@@ -9,7 +9,8 @@
 #   FOLD       fold_01 .. fold_05              (required)
 #   SWEEP      sweep name; run dir = local/runs/cycle_aware/<SWEEP>/<FOLD>  (default <DATA>_v1_5fold)
 #   FOLDS_DIR  fold-file directory (default: configs/cycle_aware/folds/gymnastics
-#              or configs/fusion/folds/freeman)
+#              or configs/fusion/folds/freeman; configs/cycle_aware/folds/freeman_all40
+#              for the 40-subject FreeMan protocol)
 #   EXPERIMENT optional Hydra experiment preset (no_film, no_cross_view, ...)
 #   SEED       seed (default 0)
 #   EPOCHS     epochs (default 50)

@@ -12,7 +12,9 @@ whose test sets partition the subjects (every subject is tested exactly
 once); the validation set of fold *k* is the test set of fold *k + 1*, and
 the remaining subjects train.  An optional stratification key (e.g. the
 elderly / student cohort of the private data) keeps the cohort proportions
-equal across folds.
+equal across folds; optional per-subject weights (e.g. session counts on
+FreeMan, where subjects have 1 to 117 sessions) balance the amount of data
+per group instead of the number of subjects.
 
 Command line::
 
@@ -38,6 +40,7 @@ def make_subject_folds(
     k: int = 5,
     seed: int = 0,
     stratify: Callable[[str], str] | None = None,
+    weights: Mapping[str, float] | None = None,
 ) -> list[dict[str, list[str]]]:
     """Build ``k`` subject-disjoint folds.
 
@@ -47,6 +50,10 @@ def make_subject_folds(
         seed: Shuffling seed.
         stratify: Optional function mapping a subject to a stratum label;
             each stratum is split into ``k`` groups separately.
+        weights: Optional per-subject weight (e.g. number of sessions).  When
+            given, subjects are dealt in descending weight order to the group
+            with the smallest total weight so far (ties broken by the seeded
+            shuffle), which balances data volume rather than subject count.
 
     Returns:
         List of ``{"train", "val", "test"}`` dictionaries (sorted id lists).
@@ -61,11 +68,20 @@ def make_subject_folds(
     for subject in subjects:
         strata.setdefault(stratify(subject) if stratify else "all", []).append(subject)
     groups: list[list[str]] = [[] for _ in range(k)]
+    load = [0.0] * k
     for label in sorted(strata):
         members = sorted(strata[label], key=lambda s: (len(s), s))
         order = rng.permutation(len(members))
-        for position, index in enumerate(order):
-            groups[position % k].append(members[index])
+        shuffled = [members[i] for i in order]
+        if weights is None:
+            for position, subject in enumerate(shuffled):
+                groups[position % k].append(subject)
+            continue
+        # Greedy balancing: heaviest subjects first, each to the lightest group.
+        for subject in sorted(shuffled, key=lambda s: -float(weights.get(s, 0.0))):
+            target = min(range(k), key=lambda g: (load[g], len(groups[g])))
+            groups[target].append(subject)
+            load[target] += float(weights.get(subject, 0.0))
     folds = []
     for fold in range(k):
         test = groups[fold]
@@ -104,21 +120,38 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--dataset", default="gymnastics")
     parser.add_argument("--subjects-from", type=Path, default=Path("local/runs/split_cycle"), help="directory with person_<id> sub-directories")
     parser.add_argument("--student-mapping", type=Path, default=None, help="student_id_mapping.csv for cohort stratification")
+    parser.add_argument("--freeman-manifests", type=Path, default=None, help="FreeMan benchmark manifests dir: subjects = every subject_NN_sessions.json, weights = session counts")
     parser.add_argument("--out", type=Path, default=Path("configs/cycle_aware/folds/gymnastics"))
     parser.add_argument("--k", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args(list(argv) if argv is not None else None)
-    subjects = sorted((p.name.split("_", 1)[1] for p in args.subjects_from.glob("person_*") if p.is_dir()), key=lambda s: (len(s), s))
+    weights: dict[str, float] | None = None
+    if args.freeman_manifests is not None:
+        subjects, weights = [], {}
+        for manifest in sorted(args.freeman_manifests.glob("subject_*_sessions.json")):
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            subject = f"{int(payload['subject_id']):02d}"
+            subjects.append(subject)
+            weights[subject] = float(len(payload.get("sessions", [])))
+    else:
+        subjects = sorted((p.name.split("_", 1)[1] for p in args.subjects_from.glob("person_*") if p.is_dir()), key=lambda s: (len(s), s))
     stratify = None
     extra: dict[str, object] = {"seed": args.seed}
+    if weights is not None:
+        extra["weights"] = "sessions"
+        extra["sessions_per_subject"] = {s: int(w) for s, w in weights.items()}
     if args.student_mapping is not None:
         students = _student_ids(args.student_mapping)
         stratify = lambda s: "student" if s in students else "elderly"  # noqa: E731
         extra["strata"] = {"student": sum(s in students for s in subjects), "elderly": sum(s not in students for s in subjects)}
-    folds = make_subject_folds(subjects, k=args.k, seed=args.seed, stratify=stratify)
+    folds = make_subject_folds(subjects, k=args.k, seed=args.seed, stratify=stratify, weights=weights)
     for path in write_fold_files(folds, args.out, dataset=args.dataset, extra=extra):
         fold = read_fold_file(path)
-        print(f"{path}: train {len(fold['train'])} val {len(fold['val'])} test {len(fold['test'])}")
+        if weights:
+            volume = {split: int(sum(weights.get(s, 0) for s in fold[split])) for split in ("train", "val", "test")}
+            print(f"{path}: train {len(fold['train'])} val {len(fold['val'])} test {len(fold['test'])} subjects; sessions {volume}")
+        else:
+            print(f"{path}: train {len(fold['train'])} val {len(fold['val'])} test {len(fold['test'])}")
     return 0
 
 

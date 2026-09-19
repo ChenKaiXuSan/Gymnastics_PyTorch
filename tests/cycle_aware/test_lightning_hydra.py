@@ -111,3 +111,14 @@ def test_summarize_sweep_collects_fold_results(tmp_path: Path):
     assert payload["missing"] == ["fold_03"] and list(payload["folds"]) == ["fold_01", "fold_02"]
     assert payload["summary"]["test/pa_mpjpe"]["mean"] == pytest.approx(0.2)
     assert (tmp_path / "summary.csv").read_text().splitlines()[0] == "fold,test/pa_mpjpe,test/total"
+
+
+def test_weighted_folds_balance_volume():
+    from gymnastics.fusion.cycle_aware.data.folds import make_subject_folds
+
+    subjects = [f"{i:02d}" for i in range(1, 21)]
+    weights = {s: float(i * i) for i, s in enumerate(subjects, start=1)}  # 1 .. 400
+    folds = make_subject_folds(subjects, k=5, seed=0, weights=weights)
+    volumes = [sum(weights[s] for s in fold["test"]) for fold in folds]
+    assert max(volumes) - min(volumes) < 0.15 * max(volumes)
+    assert sorted(s for fold in folds for s in fold["test"]) == subjects
