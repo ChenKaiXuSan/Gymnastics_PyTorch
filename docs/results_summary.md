@@ -76,6 +76,23 @@ Fixed-corruption recovery was measured only for the 27 validation people:
 A4 0.0878, A5 0.0880, A6 0.1205, A7 0.0870, A8 0.3782, and A9 0.3960.
 It must not be reported as a 137-person or test-set result.
 
+### Failure-structure diagnostics (2026-09-16)
+
+- Silent single-view corruption (27 validation people, two tiers): at the
+  default tier arithmetic fusion is equal or better everywhere; at the severe
+  tier the learned models absorb 29--42% of the damage for the two
+  anatomy-detectable families (impulse spikes: A5 0.0696 vs A2 0.0726,
+  p=3.0e-8; thorax rotation bias: A5 p=1.1e-4) and tie or lose for
+  motion-plausible families. Artefacts:
+  `local/runs/analysis/single_view_silent_corruption/`.
+- FreeMan common-mode failure analysis (552 sessions, 587,124 frames):
+  per-view catastrophic failures (>150 mm) co-occur 57x above independence
+  (~95% co-occurrence); median error is orientation-independent; oracle
+  per-frame view selection improves the two-view mean by only 5.5%. Cross-view
+  redundancy provides no exploitable independent failures, bounding any
+  post-estimation fusion. Artefacts:
+  `local/runs/analysis/view_reliability_phase/`.
+
 ## Failure and uncertainty coverage
 
 - The triangulation report ranks the worst people and cycles by reprojection
@@ -93,7 +110,6 @@ It must not be reported as a 137-person or test-set result.
   (A6 seeds 1 and 2 are now evaluated zero-shot on FreeMan, where the
   three-seed PA-MPJPE spread is below 0.1 mm; the private-data evaluation
   remains seed 0 only).
-- Offset/temporal-perturbation robustness experiments.
 - Independent motion-capture ground truth. A zero-shot FreeMan evaluation
   over the ten most trunk-rotation-relevant subjects (552 sessions, 60% of
   the release, stride 1) is complete: fusion reaches 102.9--103.4 mm
