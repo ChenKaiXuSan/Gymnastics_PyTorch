@@ -181,6 +181,43 @@ averaged 60.850~mm, and its 30-degree wrong-camera control averaged
 60.850~mm. Correct-camera features therefore failed the preregistered gate and
 are retained as a negative result rather than a positive comparator.
 
+\section{Complete FreeMan zero-shot comparison}
+
+The public FreeMan evaluation covered ten subjects (1, 7, 9, 12, 15, 19, 22,
+29, 35, 36; 552 sessions) at frame stride 1 with all methods frozen. Values
+are subject-balanced; Sim3 fits one similarity transform per session, PA is
+per-frame Procrustes alignment. The pseudo-reference-fitted per-joint
+weighting variant has no fitting target on FreeMan and is excluded as a
+diagnostic. The FreeMan reference is a markerless multi-view reconstruction,
+so all values measure agreement rather than absolute accuracy.
+
+\begin{table}[h]
+\caption{All FreeMan methods, subject-balanced over ten subjects and 552
+sessions (mm). A6 is mean $\pm$ SD over training seeds 0--2.}
+\label{tab:freeman-full}
+\centering
+\small
+\begin{tabular}{lrr}
+\toprule
+Method & Sim3 & PA\\
+\midrule
+View A & 360.333 & 106.852\\
+View B & 361.985 & 106.342\\
+World-coordinate average & 368.342 & 129.823\\
+Root translation to view A & 368.489 & 129.823\\
+Body-frame average & 362.521 & 103.184\\
+Sim3, stable joints & 362.554 & 103.167\\
+Sim3, stable + body-part weights & 362.551 & 103.212\\
+Sim3, all joints & 364.198 & 103.265\\
+Sim3, stable + smoothed side stream & 362.280 & 103.000\\
+Sim3, stable + smoothed fusion & 362.187 & 102.898\\
+A4, zero-shot & 364.363 & 103.114\\
+A5, zero-shot & 364.218 & 103.199\\
+A6, zero-shot (3 seeds) & 364.815 $\pm$ 0.738 & 103.317 $\pm$ 0.048\\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \section{Complete per-joint comparison}
 
 The following descriptive table uses the same 14 held-out participants and the

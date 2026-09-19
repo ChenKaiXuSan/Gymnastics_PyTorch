@@ -7,8 +7,11 @@ pose-fusion paper. The earlier manuscript remains unchanged in
 The article is positioned as an evaluation of a low-infrastructure
 post-estimation workflow. Its central evidence is that body-frame
 canonicalization provides the clearest in-domain gain, while the complete
-learned model does not outperform strong held-out baselines or transfer
-zero-shot to the limited Unity benchmark. The repeated-cycle analysis is a
+learned model does not outperform strong held-out baselines or improve
+zero-shot position accuracy on the limited Unity benchmark. A ten-subject
+FreeMan evaluation (552 sessions, zero-shot) shows the workflow's internal
+ranking transfers to public multi-camera data: normalized fusion beats both
+single views and learned and deterministic variants remain indistinguishable. The repeated-cycle analysis is a
 representation-sensitivity case study rather than a causal analysis of ageing.
 
 ## Contents

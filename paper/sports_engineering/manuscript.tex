@@ -34,17 +34,18 @@ view-order-invariant temporal network predicted a bounded correction using
 rotation, skeletal and temporal self-supervision. In 137 participants
 performing a repeated gymnastics movement, body-frame averaging reduced mean
 distance to a same-video triangulated pseudo-reference by 47.25\% relative to
-world-coordinate averaging; several aligned deterministic variants performed
+world-coordinate averaging; aligned deterministic variants performed
 similarly. On 14 held-out participants, the complete learned model reached
-60.78~mm mean per-joint position error after similarity alignment and hip
-centring and was statistically indistinguishable from arithmetic averaging
-(60.85~mm) and the preceding learned ablation (60.80~mm). A camera-assisted
-comparator using estimated camera rotation reduced the held-out mean from
-60.83 to 59.08~mm, although both estimates used same-video evidence.
-External testing on
-199 Unity samples showed no zero-shot advantage over direct three-dimensional
-averaging (178.506 versus 166.537~mm), whereas calibrated two-dimensional
-triangulation reached 30.259~mm. Person-disjoint inference yielded 928 cycles
+60.78~mm mean per-joint position error and was statistically
+indistinguishable from arithmetic averaging
+(60.85~mm). Estimated camera rotation gave a small improvement (60.83 to
+59.08~mm) on same-video evidence.
+On synthetic Unity samples the model showed no zero-shot advantage over
+direct averaging; calibrated triangulation was far more accurate. On ten trunk-rotation-matched FreeMan subjects (552 sessions), the frozen
+workflow reproduced its ranking: fused streams reached
+102.9--103.4~mm Procrustes-aligned error versus 106.3--106.9~mm for single
+views.
+Person-disjoint inference yielded 928 cycles
 from 80 elderly-labeled and 57 student-labeled participants. Cohort contrasts
 in angular speed and dimensionless jerk changed materially with the pose
 source. Coordinate canonicalization, rather than the learned correction,
@@ -57,8 +58,8 @@ human movement, trunk rotation, repeated measures}
 
 \maketitle
 
-\noindent\textbf{Article counts:} approximately 3,000 words in the main body; 2
-figures; 5 tables. Online Resource 1 contains 8 supplementary tables.
+\noindent\textbf{Article counts:} approximately 3,400 words in the main body; 2
+figures; 6 tables. Online Resource 1 contains 9 supplementary tables.
 
 \section{Introduction}\label{sec:introduction}
 
@@ -302,6 +303,20 @@ alignment. The private model was applied zero-shot. Calibrated triangulation
 used 2D observations and exact Unity cameras, so it is reported as a different
 input regime rather than a directly matched fusion baseline.
 
+A second, larger external test used the public FreeMan dataset
+\cite{Wang2024FreeMan}: ten subjects (552 sessions, 60\% of the release)
+comprising subject 1 and the nine subjects with the strongest trunk-rotation
+content, ranked from the public reference annotations so that the motion
+matches the studied movement family. For each session, the two of eight
+calibrated views closest to a 90$^\circ$ separation were selected (mean
+deviation 1.6$^\circ$); the same monocular estimator ran per view at every
+frame without dataset calibration, and all fusion methods and the frozen
+checkpoints (A4, A5 and three A6 seeds) were applied zero-shot. Seventeen
+shared joints were scored against the FreeMan reference---itself a markerless
+multi-view reconstruction, so agreement is measured, not absolute
+accuracy---under one similarity transform per session and, separately,
+per-frame Procrustes alignment, with subject-balanced aggregation.
+
 \subsection{Downstream representation-sensitivity case study}
 
 Ten cohort-stratified outer folds separated people, not cycles, so every
@@ -431,6 +446,43 @@ not improve zero-shot positional transfer relative to direct 3D averaging.
 Calibrated 2D triangulation was substantially more accurate, but used camera
 geometry and evidence unavailable to the post-estimation method.
 
+\subsection{Public-data zero-shot evaluation}
+
+\begin{table}[t]
+\caption{FreeMan zero-shot evaluation, subject-balanced over ten subjects and
+552 sessions. Sim3 fits one similarity transform per session and retains
+per-frame monocular depth drift; PA applies per-frame Procrustes alignment.
+A6 is mean $\pm$ SD over three training seeds. Online Resource~1 reports all
+fourteen methods.}
+\label{tab:freeman}
+\centering
+\small
+\begin{tabular}{lrr}
+\toprule
+Method & Sim3 (mm) & PA (mm)\\
+\midrule
+Single view (better of two) & 360.333 & 106.342\\
+World-coordinate average & 368.342 & 129.823\\
+Body-frame average & 362.521 & 103.184\\
+Best deterministic variant & 362.187 & 102.898\\
+A6, zero-shot (3 seeds) & 364.815 $\pm$ 0.738 & 103.317 $\pm$ 0.048\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The FreeMan evaluation reproduced the in-domain ordering with every fitting
+choice frozen (Table~\ref{tab:freeman}). Under per-frame Procrustes
+alignment, all rotation-normalizing fusion variants (102.9--103.4~mm) improved
+on both single views (106.3/106.9~mm), whereas world-coordinate averaging
+degraded to 129.8~mm---the coordinate-system effect again dominated the choice
+among normalized methods. The zero-shot learned checkpoints remained inside
+the deterministic range, and the three A6 seeds agreed within 0.05~mm,
+providing the first across-seed evidence for the model. Under the stricter
+one-transform-per-session protocol, every method including the single views
+fell in a narrow 360--368~mm band: this metric is dominated by per-frame
+monocular depth drift common to both input streams, which averaging cannot
+remove. Both protocols are reported so that this boundary stays visible.
+
 \subsection{Representation sensitivity in the repeated-cycle case study}
 
 All eight mixed models converged. At mid-repetition, the elderly-labeled cohort
@@ -515,14 +567,21 @@ A6 model and was practically indistinguishable from a 30-degree wrong-camera
 control. Camera information was useful only in the explicit deterministic
 rotation operation supported by the present data.
 
-Unity exposes a second boundary. A6 transferred worse than direct 3D averaging
-for position, whereas calibrated triangulation from 2D evidence was far better.
-Projection geometry retains information that cannot reliably be recovered
-after two independent monocular 3D predictions have been made. In a prospective
-capture where camera calibration is feasible, calibrated reconstruction should
-therefore be preferred. Post-estimation fusion addresses archival or
-low-infrastructure data where calibration is unavailable; it is not a
-replacement for geometry.
+The two external tests draw complementary boundaries. On Unity, A6
+transferred worse than direct 3D averaging for position, whereas calibrated
+triangulation from 2D evidence was far better: projection geometry retains
+information that cannot reliably be recovered after two independent monocular
+3D predictions have been made. On FreeMan---real multi-camera human data at
+thirty times the session count---the calibration-free ordering itself
+transferred zero-shot: normalized fusion beat both single views, the
+coordinate-system effect dominated, and learned and deterministic variants
+remained indistinguishable, with seed-level repeatability below 0.05~mm.
+Together these results say the workflow's internal ranking is portable, while
+its absolute accuracy remains bounded by monocular estimation. In a
+prospective capture where camera calibration is feasible, calibrated
+reconstruction should therefore be preferred. Post-estimation fusion addresses
+archival or low-infrastructure data where calibration is unavailable; it is
+not a replacement for geometry.
 
 The repeated-cycle experiment primarily demonstrates the risk of
 representation-dependent downstream inference. Person-disjoint prediction
@@ -548,9 +607,12 @@ individual demographic, health and training covariates. Finally, a single
 global time offset cannot model drift, dropped frames or rolling shutter, and
 the study covers one movement family and one face/side arrangement.
 
-Future work should validate the representation against synchronized independent
-capture and across diverse people, cameras and movements. Public datasets such
-as Human3.6M, MPI-INF-3DHP and TotalCapture provide complementary settings
+Future work should validate the representation against synchronized
+independent capture and across diverse people, cameras and movements. The
+FreeMan evaluation covers ten trunk-rotation-matched subjects of forty;
+completing the release and adding datasets with independent capture
+modalities, such as Human3.6M, MPI-INF-3DHP and TotalCapture, would separate
+agreement-with-reconstruction from absolute accuracy
 \cite{Ionescu2014Human36M,Mehta2017MPIINF3DHP,Trumble2017TotalCapture}.
 For sports deployment, comparisons should include calibrated systems such as
 OpenCap, whose camera calibration, musculoskeletal modelling and laboratory
@@ -565,8 +627,12 @@ Calibration-free post-estimation fusion can provide a transparent sequence
 representation when only aligned monocular 3D pose streams remain available.
 Pelvis-centred canonicalization provided the clearest in-domain improvement;
 the complete self-supervised model matched but did not surpass strong held-out
-baselines, showed no general corruption-stability advantage and did not improve
-zero-shot external position accuracy. Estimated camera rotation gave a small
+baselines, showed no general corruption-stability advantage and did not
+improve zero-shot external position accuracy. A ten-subject public FreeMan
+evaluation nevertheless confirmed that the calibration-free ranking itself
+transfers zero-shot: normalized fusion outperformed single views with
+deterministic and learned variants indistinguishable. Estimated camera
+rotation gave a small
 camera-assisted improvement when such geometry was available, but did not
 alter the calibration-free model conclusion. The repeated-cycle case study further
 showed that between-cohort and within-person inferences changed with the pose
