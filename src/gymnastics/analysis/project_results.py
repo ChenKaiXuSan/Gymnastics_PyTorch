@@ -124,6 +124,15 @@ def summarize_learned_by_split(
     return results
 
 
+def _is_ablation_label(name: str) -> bool:
+    """A0..A11 are the rotation-aware ladder; B1.. are external learned baselines."""
+    return len(name) >= 2 and name[0] in "AB" and name[1:].isdigit()
+
+
+def _ablation_sort_key(name: str) -> tuple[str, int, str]:
+    return (name[0], int(name[1:]) if name[1:].isdigit() else 10_000, name)
+
+
 def holm_adjust(p_values: Sequence[float]) -> list[float]:
     """Return Holm family-wise adjusted p-values in the original order."""
     values = np.asarray(p_values, dtype=float)
@@ -251,10 +260,9 @@ def _build_markdown_summary(
         {
             str(row["method"])
             for row in learned_summary
-            if str(row["method"]).startswith("A")
-            and str(row["method"])[1:].isdigit()
+            if _is_ablation_label(str(row["method"]))
         },
-        key=lambda name: (int(name[1:]) if name[1:].isdigit() else 10_000, name),
+        key=_ablation_sort_key,
     )
 
     lines = [
@@ -383,10 +391,7 @@ def generate_project_results(
         learned_rows, splits, metrics=available_metrics
     )
     learned_ablation_rows = [
-        row
-        for row in learned_rows
-        if str(row["method"]).startswith("A")
-        and str(row["method"])[1:].isdigit()
+        row for row in learned_rows if _is_ablation_label(str(row["method"]))
     ]
     comparisons = paired_comparisons(
         learned_ablation_rows,

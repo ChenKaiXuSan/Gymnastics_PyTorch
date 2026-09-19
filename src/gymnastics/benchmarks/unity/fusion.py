@@ -13,8 +13,10 @@ import numpy as np
 import torch
 
 from gymnastics.common.skeletons.mhr70 import mhr_names
+from gymnastics.fusion.deterministic.classical_baselines import fuse_baseline
 from gymnastics.fusion.deterministic.experiment_matrix import (
     ALL_METHODS,
+    BASELINE_METHODS,
     STABLE_SIM3_JOINTS,
     apply_sim3,
     bodypart_weights,
@@ -28,7 +30,7 @@ from gymnastics.fusion.deterministic.experiment_matrix import (
 )
 from gymnastics.fusion.rotation_aware.config import SkeletonSpec, load_skeleton_spec
 from gymnastics.fusion.rotation_aware.inference import run_inference
-from gymnastics.fusion.rotation_aware.model import RotationAwareFusionModel
+from torch import nn
 from gymnastics.fusion.rotation_aware.schema import PosePairTrial
 from gymnastics.fusion.rotation_aware.training import load_checkpoint
 
@@ -44,7 +46,7 @@ from .schema import MethodSequence, UnityBenchmark
 
 @dataclass(frozen=True)
 class LoadedRotationAware:
-    model: RotationAwareFusionModel
+    model: nn.Module
     skeleton: SkeletonSpec
     ablation: str
     hidden_channels: int
@@ -103,11 +105,9 @@ def load_rotation_aware_model(
         raise ValueError("rotation-aware checkpoint has no ablation")
     hidden_channels = int(training.get("hidden_channels", 128))
     skeleton = load_skeleton_spec(Path(skeleton_path))
-    model = RotationAwareFusionModel(
-        skeleton,
-        hidden_channels=hidden_channels,
-        twist_residual=ablation in {"A8", "A9"},
-    )
+    from gymnastics.fusion.rotation_aware.cli import build_fusion_model
+
+    model = build_fusion_model(skeleton, training)
     payload = load_checkpoint(
         checkpoint_path, model, map_location=torch.device(device)
     )
@@ -133,6 +133,7 @@ def fuse_deterministic_sequence(
     cam1: np.ndarray,
     *,
     leaky_weights: np.ndarray | None = None,
+    fps: float = 60.0,
 ) -> tuple[np.ndarray, Mapping[str, object]]:
     """Fuse one synchronized MHR70 sequence without dataset file assumptions."""
     face = np.asarray(cam0, dtype=np.float32)
@@ -161,6 +162,9 @@ def fuse_deterministic_sequence(
         )
         fused = 0.5 * (face + aligned)
         metadata["scale_mean"] = float(np.mean(scales))
+    elif method in BASELINE_METHODS:
+        fused, baseline_extra = fuse_baseline(method, face, side, fps=fps)
+        metadata.update(baseline_extra)
     else:
         sim3_stable, stable_scales = sim3_align_to_reference(
             side, face, STABLE_SIM3_JOINTS

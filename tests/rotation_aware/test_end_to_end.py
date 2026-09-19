@@ -332,6 +332,7 @@ def test_cross_attention_ablations_train_infer_and_evaluate(
         assert np.isfinite(sequence["kpts_world"]).all()
     assert metadata["ablation"] == ablation
     assert metadata["model_config"] == {
+        "architecture": "rotation_aware",
         "hidden_channels": 8,
         "cross_attention": True,
         "attention_heads": 2,

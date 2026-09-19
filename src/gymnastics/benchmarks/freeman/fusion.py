@@ -12,8 +12,10 @@ from typing import Any, Callable
 
 import numpy as np
 
+from gymnastics.fusion.deterministic.classical_baselines import fuse_baseline
 from gymnastics.fusion.deterministic.experiment_matrix import (
     ALL_METHODS,
+    BASELINE_METHODS,
     STABLE_SIM3_JOINTS,
     bodypart_weights,
     current_body_average,
@@ -170,6 +172,9 @@ def fuse_deterministic(
             else:
                 fused = smooth_sequence(0.5 * (face + sim3_stable), win=5)
                 extra.update({"smooth_target": "fused_world", "smooth_window": 5})
+        elif method in BASELINE_METHODS:
+            fused, baseline_extra = fuse_baseline(method, face, side, fps=pair.fps)
+            extra.update(baseline_extra)
         else:
             raise AssertionError(f"unreachable method: {method}")
         fused = np.asarray(fused, dtype=np.float32)
@@ -317,11 +322,10 @@ def _default_runtime_loader(
     import torch
 
     from gymnastics.fusion.rotation_aware.cli import (
-        TWIST_ABLATIONS,
+        build_fusion_model,
         load_config as load_rotation_config,
     )
     from gymnastics.fusion.rotation_aware.config import load_skeleton_spec
-    from gymnastics.fusion.rotation_aware.model import RotationAwareFusionModel
     from gymnastics.fusion.rotation_aware.training import load_checkpoint
 
     rotation_settings = benchmark_config.get("rotation_aware", {})
@@ -351,11 +355,7 @@ def _default_runtime_loader(
     if not isinstance(provenance, Mapping):
         raise ValueError("rotation-aware checkpoint requires provenance")
     ablation = str(training.get("ablation", "A6"))
-    model = RotationAwareFusionModel(
-        skeleton,
-        hidden_channels=int(training.get("hidden_channels", 128)),
-        twist_residual=ablation in TWIST_ABLATIONS,
-    )
+    model = build_fusion_model(skeleton, training)
     payload = load_checkpoint(checkpoint, model)
     loaded_provenance = payload.get("provenance", {})
     return RotationRuntime(

@@ -284,6 +284,7 @@ def test_model_metadata_records_checkpoint_reconstruction_fields() -> None:
     assert model_metadata_for_training(
         {"ablation": "A11", "hidden_channels": 8, "attention_heads": 2}
     ) == {
+        "architecture": "rotation_aware",
         "hidden_channels": 8,
         "cross_attention": True,
         "attention_heads": 2,

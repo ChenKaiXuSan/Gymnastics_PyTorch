@@ -26,6 +26,8 @@ ABLATION_REGISTRY = {
     "A9": "learned_twist_rom_peak_rate",
     "A10": "rotation_conditioned_cross_view_attention",
     "A11": "cross_view_attention_without_rotation",
+    "B1": "plain_temporal_baseline",
+    "B2": "plain_temporal_baseline_bounded",
 }
 LEARNED_ABLATION_IDS = frozenset(
     ablation for ablation in ABLATION_REGISTRY if ablation not in {"A0", "A1", "A2", "A3"}

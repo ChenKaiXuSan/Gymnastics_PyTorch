@@ -1,0 +1,34 @@
+# Bounded plain temporal-network baseline (B2) on the private data.
+#
+# Identical to the paper A6 protocol (configs/fusion/rotation_aware.yaml with
+# the all137 overrides: 100 epochs, batch 32, Adam 1e-3, 128-frame windows,
+# paper_137_a6_split.json) except for the model class: a generic dilated TCN
+# over the concatenated views with an unbounded residual, no rotation
+# conditioning and no view-order symmetrization. Losses, corruptions and the
+# checkpoint-selection score are the full A6 set.
+paths:
+  sam3d_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}/sam3d_body_results
+  split_cycle_root: local/runs/split_cycle
+  output_root: local/runs/fuse_rotation_aware
+  skeleton: configs/fusion/skeleton_mhr70.yaml
+  fold_root: configs/fusion/folds
+  default_fold: paper_137_a6_split.json
+  old_fuse_root: local/runs/fuse_experiments
+  triangulated_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}/sam3d_triangulated/person
+data:
+  fps: 60.0
+  cache_dir: ${paths.output_root}/cache
+window:
+  length: 128
+  train_stride: 32
+  eval_stride: 64
+training:
+  epochs: 100
+  batch_size: 32
+  learning_rate: 0.001
+  hidden_channels: 128
+  architecture: plain_tcn
+  max_delta: 0.05
+  direct_regression: false
+  seed: 0
+  device: cuda:0

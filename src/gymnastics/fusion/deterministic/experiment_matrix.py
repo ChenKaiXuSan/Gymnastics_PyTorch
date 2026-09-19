@@ -55,8 +55,19 @@ EXTRINSIC_METHODS = (
 )
 # Backward-compatible name used by the FreeMan benchmark, whose pose-pair
 # schema does not currently carry camera extrinsics.
-ALL_METHODS = NO_EXTRINSIC_METHODS
-AVAILABLE_METHODS = NO_EXTRINSIC_METHODS + EXTRINSIC_METHODS
+# External baselines shared by the private, FreeMan and Unity evaluations
+# (implemented in classical_baselines.py; dispatched through fuse_baseline).
+CLASSICAL_METHODS = (
+    "kalman_body_fusion",
+    "kalman_rts_body_fusion",
+    "jitter_weighted_body_average",
+    "butterworth_body_average",
+)
+EXTERNAL_REFINER_METHODS = ("smoothnet_body_average",)
+BASELINE_METHODS = CLASSICAL_METHODS + EXTERNAL_REFINER_METHODS
+
+ALL_METHODS = NO_EXTRINSIC_METHODS + BASELINE_METHODS
+AVAILABLE_METHODS = NO_EXTRINSIC_METHODS + BASELINE_METHODS + EXTRINSIC_METHODS
 
 
 @dataclass(frozen=True)
@@ -1143,6 +1154,11 @@ def process_person(
             )
             extra["mean_face_weight"] = float(np.mean(frame_weights[:, 0]))
             extra["mean_side_weight"] = float(np.mean(frame_weights[:, 1]))
+        elif method in BASELINE_METHODS:
+            from gymnastics.fusion.deterministic.classical_baselines import fuse_baseline
+
+            fused_world, baseline_extra = fuse_baseline(method, face, side, fps=60.0)
+            extra.update(baseline_extra)
         else:
             raise ValueError(f"Unsupported method: {method}")
 

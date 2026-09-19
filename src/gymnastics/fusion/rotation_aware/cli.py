@@ -151,13 +151,19 @@ def resolve_fold(config: Mapping[str, Any], value: str | None) -> Path:
 # A7/A8 are the twist-fusion matrix: A7 = A6 + per-view-peak ROM anchor (改法4),
 # A8 = A7 + rotation-parameterised trunk-twist residual (改法2). Kept additive so
 # A4/A5/A6 are byte-identical.
-LEARNED_ABLATIONS = ("A4", "A5", "A6", "A7", "A8", "A9", "A10", "A11")
+LEARNED_ABLATIONS = ("A4", "A5", "A6", "A7", "A8", "A9", "A10", "A11", "B1", "B2")
 # Ablations whose model uses the opt-in twist residual (改法2).
 TWIST_ABLATIONS = frozenset({"A8", "A9"})
 # Ablations that exchange same-frame joint tokens between the two views.
 CROSS_ATTENTION_ABLATIONS = frozenset({"A10", "A11"})
 # A11 keeps the attention capacity but removes explicit rotation conditioning.
 ROTATION_UNCONDITIONED_ABLATIONS = frozenset({"A11"})
+# B1/B2 are the plain temporal-network baselines: same objectives, generic
+# model; B1 has an unbounded residual, B2 uses the A6 residual bound.
+PLAIN_TCN_ABLATIONS = frozenset({"B1", "B2"})
+BOUNDED_PLAIN_TCN_ABLATIONS = frozenset({"B2"})
+PLAIN_TCN_MAX_DELTA = 0.05
+ARCHITECTURES = ("rotation_aware", "plain_tcn")
 
 
 def loss_config_for_ablation(ablation: str) -> LossConfig:
@@ -173,7 +179,7 @@ def loss_config_for_ablation(ablation: str) -> LossConfig:
         )
     if ablation == "A5":
         return replace(full, complete_cycle_rom_weight=0.0)
-    if ablation in ("A6", "A10"):
+    if ablation in ("A6", "A10", "B1", "B2"):
         return full
     if ablation in ("A7", "A8"):
         # 改法4: full A6 objective plus the per-view-peak ROM anchor. A8 also flips
@@ -193,6 +199,37 @@ def loss_config_for_ablation(ablation: str) -> LossConfig:
             complete_cycle_rom_weight=0.0,
         )
     raise ValueError(f"learned ablation must be one of {LEARNED_ABLATIONS}: {ablation}")
+
+
+def architecture_for_training(training: Mapping[str, Any]) -> str:
+    """Resolve which model class a training config / checkpoint describes."""
+    ablation = str(training.get("ablation", "A6"))
+    architecture = str(
+        training.get(
+            "architecture",
+            "plain_tcn" if ablation in PLAIN_TCN_ABLATIONS else "rotation_aware",
+        )
+    )
+    if architecture not in ARCHITECTURES:
+        raise ValueError(f"architecture must be one of {ARCHITECTURES}: {architecture}")
+    return architecture
+
+
+def build_fusion_model(skeleton, training: Mapping[str, Any]):
+    """Instantiate the model class recorded in training metadata."""
+    architecture = architecture_for_training(training)
+    if architecture == "plain_tcn":
+        from .plain_tcn import PlainTemporalFusionModel
+
+        ablation = str(training.get("ablation", "B1"))
+        default_delta = PLAIN_TCN_MAX_DELTA if ablation in BOUNDED_PLAIN_TCN_ABLATIONS else 0.0
+        return PlainTemporalFusionModel(
+            skeleton,
+            hidden_channels=int(training.get("hidden_channels", 128)),
+            direct_regression=bool(training.get("direct_regression", False)),
+            max_delta=float(training.get("max_delta", default_delta)),
+        )
+    return RotationAwareFusionModel(skeleton, **model_kwargs_for_training(training))
 
 
 def model_kwargs_for_training(training: Mapping[str, Any]) -> dict[str, Any]:
@@ -220,6 +257,7 @@ def model_metadata_for_training(training: Mapping[str, Any]) -> dict[str, Any]:
     """Return the architecture fields required to reproduce inference."""
     kwargs = model_kwargs_for_training(training)
     return {
+        "architecture": architecture_for_training(training),
         "hidden_channels": kwargs["hidden_channels"],
         "cross_attention": kwargs["cross_attention"],
         "attention_heads": kwargs["attention_heads"],
@@ -250,6 +288,14 @@ def _training_config_for_ablation(
         raise ValueError("training epochs must be positive")
     training["epochs"] = epochs
     training["ablation"] = ablation
+    training["architecture"] = architecture_for_training(training)
+    if ablation in PLAIN_TCN_ABLATIONS:
+        training["max_delta"] = float(
+            training.get(
+                "max_delta",
+                PLAIN_TCN_MAX_DELTA if ablation in BOUNDED_PLAIN_TCN_ABLATIONS else 0.0,
+            )
+        )
     if ablation in CROSS_ATTENTION_ABLATIONS:
         training["attention_heads"] = int(training.get("attention_heads", 4))
         training["cross_attention"] = True
@@ -687,7 +733,7 @@ def _cmd_train(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
         batch_size=batch_size,
         generator=generator,
     )
-    model = RotationAwareFusionModel(skeleton, **model_kwargs_for_training(training))
+    model = build_fusion_model(skeleton, training)
     optimizer = torch.optim.Adam(
         model.parameters(), lr=float(training.get("learning_rate", 1e-3))
     )
@@ -849,6 +895,8 @@ def _cmd_infer(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
             "epochs",
             "learning_rate",
             "hidden_channels",
+            "architecture",
+            "max_delta",
             "attention_heads",
             "cross_attention",
             "rotation_conditioning",
@@ -869,9 +917,7 @@ def _cmd_infer(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
         if not _validate_protocol_run_id(args.run_id, saved_training):
             raise ValueError("protected infer checkpoint is missing training.protocol")
     saved_ablation = str(saved_training.get("ablation", "A6"))
-    model = RotationAwareFusionModel(
-        skeleton, **model_kwargs_for_training(saved_training)
-    )
+    model = build_fusion_model(skeleton, saved_training)
     payload = load_checkpoint(checkpoint, model)
     if args.ablation and args.ablation != saved_ablation:
         raise ValueError(
