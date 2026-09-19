@@ -20,23 +20,42 @@ length of the sequence. The two views are therefore directly comparable
 without calibration; the transform of View A is stored so the fused pose can
 be mapped back into its world frame.
 
-### 1.2 Cycle phase and phase normalisation
+### 1.2 Cycles, middles and phase normalisation
 
-For an annotated cycle `[start, end)` the phase of frame `t` is
-`phi = (t - start) / (end - start)`. Before windowing, every complete cycle is
-resampled to `S = samples_per_cycle` samples by linear interpolation
-(`phase.normalize_sample_to_phase`). Physical timestamps are kept, so the
-sample interval `delta_t` still measures real time and velocities are
-physical:
+Cycle detection is **not** part of the training code. It runs once, offline,
+in `gymnastics.alignment` (`alignment/cycles.py`) and writes record files
+(`alignment/cycle_records.py`) that the DataModules read through
+`fusion/cycle_aware/data/cycle_records.py`:
+
+| Dataset | Command | Record |
+|---|---|---|
+| private | `gymnastics align` (boundaries) + `gymnastics align cycles private` (middles) | `local/runs/split_cycle/person_<id>/alignment_record_<id>.json` |
+| FreeMan | `gymnastics align cycles freeman` | `local/runs/cycle_records/freeman/subject_NN/<session>.json` |
+| Unity | `gymnastics align cycles unity` | `local/runs/cycle_records/unity/subject_<seq>/<seq>.json` |
+
+One shared definition is used everywhere: the right-wrist azimuth in the
+pelvis body frame (smoothed, unwrapped) starts a cycle each time it crosses
+the reference angle upwards (counter-clockwise), and the **middle** of a
+cycle is the turn-around frame, the extremum of that signal inside the cycle.
+Every record stores the detection settings that produced it.
+
+For an annotated cycle `[start, mid, end)` the phase of frame `t` is
+`phi = (t - start) / (end - start)` and `half_index` is 0 on `[start, mid)`
+(outward motion) and 1 on `[mid, end)` (return). Before windowing, every
+complete cycle is resampled to `S = samples_per_cycle` samples by linear
+interpolation (`phase.normalize_sample_to_phase`): each half gets `S / 2`
+samples, so the middle lands exactly at phase 0.5 and the time-reversed
+mirror of sample `k` of a cycle is sample `S - k` (the hook for the symmetry
+objective). Physical timestamps are kept, so the sample interval `delta_t`
+still measures real time and velocities are physical:
 
 ```
 v[t] = (P[t] - P[t-1]) / delta_t[t]
 ```
 
-Datasets without cycle annotations keep their native sampling and an invalid
-phase; the model then degrades gracefully to plain temporal modelling. An
-autocorrelation estimator (`phase.estimate_cycle_bounds`) on the trunk-twist
-signal can supply approximate cycles for FreeMan and Unity.
+Sequences whose record lists no cycles keep their native sampling and an
+invalid phase; the model then degrades gracefully to plain temporal
+modelling.
 
 ### 1.3 Network
 
@@ -104,11 +123,11 @@ Each adapter documents its source layout, skeleton, coordinate system,
 synchronisation, ground truth and cycle availability in its module
 docstring.
 
-| Adapter | Module | Subject id | Cycles | Reference |
+| Adapter | Module | Subject id | Cycles + middles | Reference |
 |---|---|---|---|---|
-| Private gymnastics | `data/gymnastics.py` | person id | split-cycle records (exact); consecutive cycles concatenated | triangulated pseudo-reference matched by face/side frame pairs |
-| FreeMan | `data/freeman.py` | subject number | none / estimated | `keypoints3d_optim` scaled to metres, COCO17 → MHR70 positions |
-| Unity | `data/unity.py` | sequence id | none / estimated | native Unity22 joints → MHR70 positions |
+| Private gymnastics | `data/gymnastics.py` | person id | `alignment_record_<id>.json` (`require_cycle_mids`); consecutive cycles concatenated | triangulated pseudo-reference matched by face/side frame pairs |
+| FreeMan | `data/freeman.py` | subject number | `cycle_records/freeman` (`require_cycle_records`) | `keypoints3d_optim` scaled to metres, COCO17 → MHR70 positions |
+| Unity | `data/unity.py` | sequence id | `cycle_records/unity` (`require_cycle_records`) | native Unity22 joints → MHR70 positions |
 | Synthetic | `data/synthetic.py` | generated | exact | generating motion |
 
 The private adapter uses the rotation-aware person cache by default
@@ -152,9 +171,13 @@ conda run -n gymnastic gymnastics fuse cycle-aware experiment=smoke
 # Private data.
 conda run -n gymnastic gymnastics fuse cycle-aware data=gymnastics trainer.max_epochs=50
 
-# FreeMan (subject-disjoint), with estimated cycles and a subject subset.
-conda run -n gymnastic gymnastics fuse cycle-aware data=freeman \
-  data.options.estimate_cycles=true 'data.options.subjects=[1,2,3,4,5,6]'
+# Precompute cycles + middles (once per dataset).
+conda run -n gymnastic gymnastics align cycles private
+conda run -n gymnastic gymnastics align cycles freeman
+conda run -n gymnastic gymnastics align cycles unity
+
+# FreeMan (subject-disjoint) on a subject subset.
+conda run -n gymnastic gymnastics fuse cycle-aware data=freeman 'data.options.subjects=[1,2,3,4,5,6]'
 
 # Unity direction transfer.
 conda run -n gymnastic gymnastics fuse cycle-aware data=unity data.options.fold=left_to_right

@@ -217,12 +217,23 @@ optional reference pose (evaluation only). The shared windowing code turns
 samples into `[B, T, J, ·]` batches; the model never sees dataset-specific
 structure.
 
-| Adapter | Source | Cycles | Reference |
+| Adapter | Source | Cycles + middles (precomputed) | Reference |
 |---|---|---|---|
-| `gymnastics` | rotation-aware person cache or SAM3D + split-cycle records | annotated | triangulated pseudo-reference |
-| `freeman` | zero-shot benchmark SAM3D cache | optional estimate | `keypoints3d_optim` (COCO17) |
-| `unity` | Unity manifest + SAM3D camera cache | optional estimate | native 3D (Unity22) |
+| `gymnastics` | rotation-aware person cache or SAM3D + split-cycle records | `alignment_record_<id>.json` (`gymnastics align`, middles via `gymnastics align cycles private`) | triangulated pseudo-reference |
+| `freeman` | zero-shot benchmark SAM3D cache | `local/runs/cycle_records/freeman` (`gymnastics align cycles freeman`) | `keypoints3d_optim` (COCO17) |
+| `unity` | Unity manifest + SAM3D camera cache | `local/runs/cycle_records/unity` (`gymnastics align cycles unity`) | native 3D (Unity22) |
 | `synthetic` | generated in memory | exact | generating motion |
+
+Cycle detection (cycle start = right-wrist azimuth crossing, middle =
+turn-around extremum) lives entirely in `gymnastics.alignment`; the training
+package only reads the record files, so run the `align cycles` step before
+training:
+
+```bash
+conda run -n gymnastic gymnastics align cycles private      # adds "mid" to the 137 records
+conda run -n gymnastic gymnastics align cycles freeman      # local/runs/cycle_records/freeman
+conda run -n gymnastic gymnastics align cycles unity        # local/runs/cycle_records/unity
+```
 
 ### Configuration
 
@@ -243,8 +254,8 @@ conda run -n gymnastic gymnastics fuse cycle-aware experiment=smoke
 # Private data, fixed 96/27/14 split, 50 epochs.
 conda run -n gymnastic gymnastics fuse cycle-aware data=gymnastics trainer.max_epochs=50
 
-# FreeMan with estimated cycles, subject-disjoint split.
-conda run -n gymnastic gymnastics fuse cycle-aware data=freeman data.options.estimate_cycles=true
+# FreeMan, subject-disjoint split (cycle records from `gymnastics align cycles freeman`).
+conda run -n gymnastic gymnastics fuse cycle-aware data=freeman
 
 # Unity direction-transfer fold.
 conda run -n gymnastic gymnastics fuse cycle-aware data=unity data.options.fold=right_to_left

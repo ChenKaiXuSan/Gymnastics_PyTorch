@@ -35,9 +35,12 @@ Ground truth:
     validation/test samples only when ``attach_reference`` is on.
 
 Cycle information:
-    None in the release.  With ``options.estimate_cycles: true`` the trunk
-    twist signal of View A is analysed by the autocorrelation estimator
-    (``min_period_s``, ``max_period_s``); otherwise phase is invalid.
+    None in the release.  Cycles and middles are detected offline by
+    ``gymnastics align cycles freeman`` and read from
+    ``options.cycle_records_root`` (one ``cycle_record_v1`` file per
+    session).  A session whose record lists no cycles is trained without
+    phase; a missing record is an error when ``options.require_cycle_records``
+    is true (default).
 
 Split:
     Subject-disjoint by construction.  Default: a deterministic 70/15/15
@@ -46,12 +49,11 @@ Split:
 
 Options (``data.options``):
     benchmark_root, subjects (list of ints), reference_scale_to_m,
-    estimate_cycles, min_period_s, max_period_s
+    cycle_records_root, require_cycle_records
 """
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -60,9 +62,9 @@ import numpy as np
 from gymnastics.common.paths import PROJECT_ROOT
 from gymnastics.fusion.rotation_aware.schema import PosePairTrial
 
-from ..phase import estimate_cycle_bounds, trunk_twist_signal
 from ..sample import DualViewSample, sample_from_pose_pair_trial
 from .base import DualViewDataModule, SplitSpec
+from .cycle_records import public_cycles_for_sequence
 
 SessionLoader = Callable[[int], Sequence[tuple[PosePairTrial, Path | None]]]
 """Returns ``(trial, keypoints3d_path)`` per session of one subject."""
@@ -88,29 +90,6 @@ def coco17_to_mhr70(points: np.ndarray, valid: np.ndarray | None = None) -> tupl
     target[:, list(_MHR_INDICES)] = np.where(finite[..., None], source, 0.0)
     target_valid[:, list(_MHR_INDICES)] = finite
     return target, target_valid
-
-
-def with_estimated_cycles(sample: DualViewSample, *, min_period_s: float, max_period_s: float) -> DualViewSample:
-    """Return ``sample`` with cycle bounds estimated from the trunk twist of View A.
-
-    The sample is already in the canonical body frame, so the shoulder-line
-    angle in the x-z plane is the trunk twist.  Samples for which no periodic
-    structure is found keep an empty ``cycle_bounds``.
-
-    Args:
-        sample: Canonical sample (common skeleton must contain both shoulders).
-        min_period_s: Shortest admissible cycle duration in seconds.
-        max_period_s: Longest admissible cycle duration in seconds.
-
-    Returns:
-        The same sample with ``cycle_bounds`` (and ``metadata.cycles_estimated``) set.
-    """
-    fps = float(sample.metadata.get("fps", 0.0))
-    if fps <= 0:
-        fps = 1.0 / float(np.median(np.diff(sample.timestamps))) if sample.num_frames > 1 else 1.0
-    signal = trunk_twist_signal(sample.view_a, sample.valid_a, sample.joint_names.index("left-shoulder"), sample.joint_names.index("right-shoulder"))
-    bounds = estimate_cycle_bounds(signal, min_period=max(2, int(round(min_period_s * fps))), max_period=max(3, int(round(max_period_s * fps))))
-    return replace(sample, cycle_bounds=bounds, metadata={**dict(sample.metadata), "cycles_estimated": True, "estimated_cycles": len(bounds)})
 
 
 class FreeManDataModule(DualViewDataModule):
@@ -161,28 +140,32 @@ class FreeManDataModule(DualViewDataModule):
 
     def load_samples(self) -> Sequence[DualViewSample]:
         options = dict(self.config.options)
-        estimate = bool(options.get("estimate_cycles", False))
+        records_root = _resolve(options.get("cycle_records_root", "local/runs/cycle_records/freeman"))
+        require_record = bool(options.get("require_cycle_records", True))
         samples: list[DualViewSample] = []
         for subject in self._subjects():
+            subject_id = f"{int(subject):02d}"
             for trial, reference_path in self._session_loader(subject):
                 reference = reference_valid = None
                 if self.config.attach_reference:
                     loaded = self._load_reference(reference_path, trial.face.shape[0])
                     if loaded is not None:
                         reference, reference_valid = loaded
-                sample = sample_from_pose_pair_trial(
-                    trial,
-                    self.skeleton,
-                    dataset="freeman",
-                    reference=reference,
-                    reference_valid=reference_valid,
-                    subject_id=f"{int(subject):02d}",
-                    sequence_id=trial.trial_id,
-                    metadata={"cycles_estimated": False},
+                bounds, mids, record = public_cycles_for_sequence(records_root, subject_id, trial.trial_id, trial, require_record=require_record)
+                samples.append(
+                    sample_from_pose_pair_trial(
+                        trial,
+                        self.skeleton,
+                        dataset="freeman",
+                        cycle_bounds=bounds,
+                        cycle_mids=mids,
+                        reference=reference,
+                        reference_valid=reference_valid,
+                        subject_id=subject_id,
+                        sequence_id=trial.trial_id,
+                        metadata={"cycle_record": record is not None, "cycle_detection": dict(record.detection) if record is not None else {}},
+                    )
                 )
-                if estimate:
-                    sample = with_estimated_cycles(sample, min_period_s=float(options.get("min_period_s", 0.5)), max_period_s=float(options.get("max_period_s", 4.0)))
-                samples.append(sample)
         return samples
 
     def default_split(self, samples: Sequence[DualViewSample]) -> SplitSpec:

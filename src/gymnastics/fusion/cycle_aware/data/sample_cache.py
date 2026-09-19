@@ -49,6 +49,7 @@ def save_samples(directory: Path, samples: Sequence[DualViewSample], *, config: 
             "valid_b": sample.valid_b,
             "timestamps": sample.timestamps,
             "cycle_bounds": np.asarray(sample.cycle_bounds, dtype=np.int64).reshape(-1, 2),
+            "cycle_mids": np.asarray(sample.cycle_mids, dtype=np.int64),
             "header": np.asarray(
                 json.dumps(
                     {
@@ -107,6 +108,7 @@ def load_samples(directory: Path) -> list[DualViewSample] | None:
                     timestamps=data["timestamps"],
                     joint_names=tuple(header["joint_names"]),
                     cycle_bounds=tuple((int(s), int(e)) for s, e in data["cycle_bounds"].tolist()),
+                    cycle_mids=tuple(int(m) for m in data["cycle_mids"].tolist()) if "cycle_mids" in data else (),
                     reference=data["reference"] if "reference" in data else None,
                     reference_valid=data["reference_valid"] if "reference_valid" in data else None,
                     transform_a=transform,

@@ -34,6 +34,10 @@ def test_window_dataset_phase_normalises_and_pads(skeleton):
     assert item["frame_mask"].all() and item["phase_valid"].all()
     torch.testing.assert_close(item["phase"][:8], torch.arange(8) / 8.0)
     assert item["cycle_index"][:8].tolist() == [0] * 8 and item["cycle_index"][8:].tolist() == [1] * 8
+    assert (item["half_index"] == -1).all()  # no middles in this sample
+    with_mids = CycleWindowDataset([make_sample(skeleton, frames=48, period=16, mids=True)], skeleton=skeleton, window=window, split="train")
+    halves = with_mids[0]["half_index"]
+    assert halves[:4].tolist() == [0] * 4 and halves[4:8].tolist() == [1] * 4 and halves[8:12].tolist() == [0] * 4
     torch.testing.assert_close(item["delta_t"], torch.full((16,), 2.0 / 30.0))
     assert item["reference_valid"].all()
     padded = dataset[3]

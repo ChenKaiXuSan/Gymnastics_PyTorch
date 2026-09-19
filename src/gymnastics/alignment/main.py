@@ -79,6 +79,12 @@ try:
 except Exception:  # matplotlib is optional for visualization
     plt = None
 
+from gymnastics.alignment.cycles import (
+    CycleSpan,
+    DetectionSettings,
+    detect_cycles,
+    find_crossings,  # noqa: F401  (re-exported for backwards compatibility)
+)
 from gymnastics.alignment.load import load_sam3d_body_sequence
 from gymnastics.alignment.save import save_cycles_videos
 
@@ -453,50 +459,6 @@ def fuse_body_kpts(
 
 
 # -------------------- cycle segmentation --------------------
-def find_crossings(
-    theta_unwrap: np.ndarray,
-    fps: float,
-    *,
-    theta_ref: float = -3 * np.pi / 4,
-    min_period_sec: float = 0.8,
-    direction: Literal["ccw", "cw"] = "ccw",
-    verbose: bool = False,
-) -> List[int]:
-    min_gap = int(round(min_period_sec * fps))
-
-    k = np.round((theta_unwrap - theta_ref) / (2 * np.pi))
-    ref = theta_ref + 2 * np.pi * k
-    d = theta_unwrap - ref
-
-    sgn = np.sign(d)
-    sgn[sgn == 0] = 1
-
-    vel = np.gradient(theta_unwrap)
-    ok = vel > 0 if direction == "ccw" else vel < 0
-
-    crossing: List[int] = []
-    for t in range(1, len(theta_unwrap)):
-        if ok[t] and (sgn[t - 1] < 0 and sgn[t] > 0):
-            crossing.append(t)
-
-    out: List[int] = []
-    last = -(10**9)
-    for t in crossing:
-        if t - last >= min_gap:
-            out.append(t)
-            last = t
-    
-    if verbose:
-        print(f"    [{direction}] raw crossings: {len(crossing)}, filtered: {len(out)}", end="")
-        if len(out) > 0:
-            gaps = np.diff(out)
-            print(f", gaps(sec): {gaps/fps}")
-        else:
-            print()
-    
-    return out
-
-
 def segment_cycles_from_fused_body(
     fused_body: np.ndarray,
     fps: float,
@@ -507,51 +469,33 @@ def segment_cycles_from_fused_body(
     both_directions: bool = False,
     auto_theta_ref: bool = False,
     verbose: bool = False,
-) -> Tuple[List[Tuple[int, int]], float]:
-    """
+) -> Tuple[List[CycleSpan], DetectionSettings]:
+    """Detect cycles (with turn-around middles) on the fused right-wrist angle.
+
+    The detection itself lives in :mod:`gymnastics.alignment.cycles`; this
+    wrapper only builds the signal from the fused body-frame keypoints.
+
     Returns:
-        cycles: List of (start, end) tuples
-        theta_ref_used: The actual theta_ref used (auto-detected or input)
+        cycles: ``CycleSpan`` objects (start, mid, end) on the fused timeline.
+        settings: The detection settings actually used (theta_ref, direction).
     """
     hand_b = fused_body[:, wrist_idx, :]
     x, z = hand_b[:, 0], hand_b[:, 2]
     theta = np.arctan2(z, x).astype(np.float32)
     theta = smooth_1d(theta, 11)
     theta_u = np.unwrap(theta)
-
-    # 自动检测 theta_ref
-    if auto_theta_ref:
-        # 使用第10百分位作为参考点（接近波谷）
-        theta_ref = float(np.percentile(theta_u, 10))
-        if verbose:
-            print(f"    [auto] theta_ref detected: {theta_ref:.3f}")
-
+    settings = DetectionSettings(
+        theta_ref=float(theta_ref),
+        theta_ref_mode="auto_p10" if auto_theta_ref else "manual",
+        min_period_sec=float(min_period_sec),
+    )
+    spans, used = detect_cycles(theta_u, fps, settings=settings, both_directions=both_directions)
     if verbose:
         print(f"    θ range: [{theta_u.min():.2f}, {theta_u.max():.2f}], std: {np.std(theta_u):.4f}")
-        if not auto_theta_ref:
-            print(f"    θ_ref (manual): {theta_ref:.3f}")
-
-    # 首先尝试逆时针方向
-    bds_ccw = find_crossings(
-        theta_u, fps=fps, theta_ref=theta_ref, min_period_sec=min_period_sec, 
-        direction="ccw", verbose=verbose
-    )
-    
-    if both_directions and len(bds_ccw) < 2:
-        # 如果逆时针找不到足够的cycle，尝试顺时针
-        bds_cw = find_crossings(
-            theta_u, fps=fps, theta_ref=theta_ref, min_period_sec=min_period_sec, 
-            direction="cw", verbose=verbose
-        )
-        if len(bds_cw) >= 2:
-            bds = bds_cw
-        else:
-            bds = bds_ccw
-    else:
-        bds = bds_ccw
-    
-    cycles = [(bds[i], bds[i + 1]) for i in range(len(bds) - 1)]
-    return cycles, theta_ref
+        print(f"    θ_ref ({used.theta_ref_mode}): {used.theta_ref:.3f}, direction: {used.direction}, cycles: {len(spans)}")
+        if spans:
+            print(f"    gaps(sec): {np.diff([s.start for s in spans] + [spans[-1].end]) / fps}")
+    return spans, used
 
 
 def save_theta_plot(
@@ -621,6 +565,33 @@ def cycles_t_to_video_cycles(
         e = int(valid[-1]) + 1
         if e > s + 1:
             out.append((s, e))
+    return out
+
+
+def spans_t_to_video_spans(
+    spans_t: List[CycleSpan],
+    frame_map: np.ndarray,  # (T,) -1 or original frame idx
+    n_frames: int,
+) -> List[Optional[CycleSpan]]:
+    """Map fused-timeline spans to original video frames, keeping the middle.
+
+    Returns one entry per input span; ``None`` marks spans that do not map to
+    at least three valid frames (they are dropped by the caller together
+    with their partner view so both lists stay aligned).
+    """
+    out: List[Optional[CycleSpan]] = []
+    for span in spans_t:
+        seg = frame_map[span.start : span.end]
+        valid = seg[seg >= 0]
+        mid_seg = frame_map[span.mid : span.end]
+        mid_valid = mid_seg[mid_seg >= 0]
+        if len(valid) < 3 or len(mid_valid) == 0:
+            out.append(None)
+            continue
+        s0 = max(0, min(int(valid[0]), n_frames))
+        e0 = max(0, min(int(valid[-1]) + 1, n_frames))
+        m0 = max(s0 + 1, min(int(mid_valid[0]), e0 - 1))
+        out.append(CycleSpan(s0, m0, e0) if e0 > s0 + 2 else None)
     return out
 
 
@@ -744,10 +715,12 @@ def process_person(person_id: str, raw_root: Path, kpt_root: Path, log_root: Pat
         # 4) segment cycles on fused
         print(f"  [cycle] person_{person_id}: segmenting cycles...")
         
-        cycles_t, theta_ref_used = segment_cycles_from_fused_body(
+        spans_t, detection = segment_cycles_from_fused_body(
             fused_body, fps=fps_kpt, wrist_idx=IDX["rwrist"],
             min_period_sec=0.8, both_directions=True, auto_theta_ref=True, verbose=True
         )
+        theta_ref_used = detection.theta_ref
+        cycles_t = [(span.start, span.end) for span in spans_t]
         print(f"✓ [cycle] person_{person_id}: found {len(cycles_t)} cycles")
         if len(cycles_t) == 0:
             print(f"⚠ [warn] person_{person_id}: no cycles found, check data quality")
@@ -768,15 +741,15 @@ def process_person(person_id: str, raw_root: Path, kpt_root: Path, log_root: Pat
             auto_detected=True,
         )
 
-        # 5) save videos (face/side) using mapping
-        face_cycles = cycles_t_to_video_cycles(cycles_t, frame_map=face_map)
-        side_cycles = cycles_t_to_video_cycles(cycles_t, frame_map=side_map)
-
-        # clamp by actual video length
+        # 5) save videos (face/side) using mapping (start, mid, end per view)
         nF = get_video_nframes(face_video)
         nS = get_video_nframes(side_video)
-        face_cycles = clamp_cycles(face_cycles, nF)
-        side_cycles = clamp_cycles(side_cycles, nS)
+        face_spans_all = spans_t_to_video_spans(spans_t, frame_map=face_map, n_frames=nF)
+        side_spans_all = spans_t_to_video_spans(spans_t, frame_map=side_map, n_frames=nS)
+        face_spans = [f for f, s_ in zip(face_spans_all, side_spans_all) if f is not None and s_ is not None]
+        side_spans = [s_ for f, s_ in zip(face_spans_all, side_spans_all) if f is not None and s_ is not None]
+        face_cycles = [(span.start, span.end) for span in face_spans]
+        side_cycles = [(span.start, span.end) for span in side_spans]
 
         out_face = person_log_root / "face"
         out_side = person_log_root / "side"
@@ -803,15 +776,17 @@ def process_person(person_id: str, raw_root: Path, kpt_root: Path, log_root: Pat
                 "audio_confidence": float(audio_confidence),
                 "fps": fps_kpt,
                 "overlap_union_range": [t0, t1],
+                # Provenance of the cycle / middle detection (see alignment/cycles.py).
+                "cycle_detection": detection.to_dict(),
             },
             "cycles": [],
         }
 
-        for i, (f_cyc, s_cyc) in enumerate(zip(face_cycles, side_cycles)):
+        for i, (f_span, s_span) in enumerate(zip(face_spans, side_spans)):
             cycle_info = {
                 "cycle_index": i,
-                "face_video_frames": {"start": f_cyc[0], "end": f_cyc[1]},
-                "side_video_frames": {"start": s_cyc[0], "end": s_cyc[1]},
+                "face_video_frames": {"start": f_span.start, "mid": f_span.mid, "end": f_span.end},
+                "side_video_frames": {"start": s_span.start, "mid": s_span.mid, "end": s_span.end},
             }
             alignment_data["cycles"].append(cycle_info)
 
@@ -936,7 +911,13 @@ def main(
 
 
 def cli_main(argv: Optional[Sequence[str]] = None) -> int:
-    args = parse_args(argv)
+    argv_list = list(argv) if argv is not None else None
+    if argv_list and argv_list[0] == "cycles":
+        # Offline cycle/middle annotation for every dataset (alignment/annotate_cycles.py).
+        from gymnastics.alignment.annotate_cycles import main as annotate_main
+
+        return annotate_main(argv_list[1:])
+    args = parse_args(argv_list)
     main(
         num_threads=args.threads,
         raw_root=args.raw_root,

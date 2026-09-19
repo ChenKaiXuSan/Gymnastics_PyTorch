@@ -10,7 +10,7 @@ options:
   subjects: null
   # FreeMan references are stored in centimetres.
   reference_scale_to_m: 0.01
-  # FreeMan has no cycle annotations; estimate them from the trunk twist.
-  estimate_cycles: false
-  min_period_s: 0.5
-  max_period_s: 4.0
+  # Records written by `gymnastics align cycles freeman` (cycles + middles).
+  cycle_records_root: local/runs/cycle_records/freeman
+  # Error when a sequence has no record (records with zero cycles are fine).
+  require_cycle_records: true

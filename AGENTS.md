@@ -58,6 +58,12 @@ gymnastics sam3d
 # Segment aligned motion into cycles.
 gymnastics align
 
+# Add cycle middles (turn-around frames) to the private records / detect
+# cycles for FreeMan and Unity. Training never detects cycles itself.
+gymnastics align cycles private
+gymnastics align cycles freeman
+gymnastics align cycles unity
+
 # Triangulate SAM3D face/side 2D keypoints into pseudo-GT 3D joints.
 gymnastics triangulate
 
@@ -81,7 +87,7 @@ python -m pytest tests/test_sam3d_triangulation.py tests/test_compare_fused_tria
 | Module | Current Role |
 |---|---|
 | `src/gymnastics/sam3d/` | SAM3D-Body inference and keypoint extraction from raw videos. |
-| `src/gymnastics/alignment/` | Face/side time alignment, audio/keypoint offset selection, cycle segmentation, and split-cycle videos. |
+| `src/gymnastics/alignment/` | Face/side time alignment, audio/keypoint offset selection, cycle segmentation with turn-around middles (`cycles.py`, `cycle_records.py`, `annotate_cycles.py`), and split-cycle videos. |
 | `src/gymnastics/triangulation/` | 3D triangulation from SAM3D 2D keypoints, camera helpers, and visualizations. |
 | `src/gymnastics/fusion/` | Deterministic, rotation-aware, and cycle-aware multi-view fusion. The cycle-aware model (`fusion/cycle_aware`, `configs/cycle_aware`, `gymnastics fuse cycle-aware`) is a Lightning/Hydra implementation documented in `docs/cycle_aware_fusion.md`. |
 | `src/gymnastics/benchmarks/` | Unity native-3D and FreeMan public-data benchmarks. |

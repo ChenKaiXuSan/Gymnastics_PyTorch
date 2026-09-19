@@ -35,9 +35,13 @@ Common Coordinate System:
 
 Cycle Information:
     ``cycle_bounds`` lists complete motion cycles as half-open frame ranges
-    ``[start, end)``.  It may be empty when the dataset has no cycle
-    annotations and no estimate was requested; in that case phase features are
-    marked invalid and the model falls back to plain temporal modelling.
+    ``[start, end)`` and ``cycle_mids`` the turn-around frame of each cycle
+    (``start < mid < end``).  Both come from the record files written by
+    ``gymnastics align`` / ``gymnastics align cycles``; the training code
+    never detects cycles itself.  ``cycle_bounds`` may be empty when a
+    sequence has no (detected) cycles; in that case phase features are marked
+    invalid and the model falls back to plain temporal modelling.
+    ``cycle_mids`` is either empty or has one entry per cycle.
 
 Tensor shapes in :class:`FusionBatch` (``B`` windows, ``T`` samples, ``J`` joints):
 
@@ -49,6 +53,7 @@ Tensor shapes in :class:`FusionBatch` (``B`` windows, ``T`` samples, ``J`` joint
     phase                  [B, T]        float32 in [0, 1)
     phase_valid            [B, T]        bool
     cycle_index            [B, T]        int64  (-1 outside known cycles)
+    half_index             [B, T]        int64  (0 outward, 1 return, -1 unknown)
     clean_a, clean_b       [B, T, J, 3]  the uncorrupted inputs (training only)
     clean_valid_a/b        [B, T, J]     bool
     corruption_mask_a/b    [B, T, J]     bool   (true where the input was altered)
@@ -144,6 +149,8 @@ class DualViewSample:
         joint_names: Names of the ``J`` joints (the common skeleton).
         cycle_bounds: Complete cycles as ``(start, end)`` frame ranges,
             increasing and non-overlapping.  Empty when unknown.
+        cycle_mids: Turn-around frame of each cycle (``start < mid < end``);
+            empty when unknown, otherwise one entry per cycle.
         reference: Optional ``[T, J, 3]`` reference pose in its native frame.
         reference_valid: Optional ``[T, J]`` validity of ``reference``.
         transform_a: Optional canonical transform of View A.
@@ -160,6 +167,7 @@ class DualViewSample:
     timestamps: np.ndarray
     joint_names: tuple[str, ...]
     cycle_bounds: tuple[tuple[int, int], ...] = ()
+    cycle_mids: tuple[int, ...] = ()
     reference: np.ndarray | None = None
     reference_valid: np.ndarray | None = None
     transform_a: CanonicalTransformRecord | None = None
@@ -196,6 +204,12 @@ class DualViewSample:
             if start < previous_end or end <= start or end > frames:
                 raise ValueError(f"cycle_bounds must be increasing, non-overlapping ranges within [0, {frames}): {bounds}")
             previous_end = end
+        mids = tuple(int(m) for m in self.cycle_mids)
+        if mids and len(mids) != len(bounds):
+            raise ValueError("cycle_mids must be empty or have one entry per cycle")
+        for (start, end), mid in zip(bounds, mids):
+            if not start < mid < end:
+                raise ValueError(f"cycle middle {mid} must lie strictly inside ({start}, {end})")
         if (self.reference is None) != (self.reference_valid is None):
             raise ValueError("reference and reference_valid must be provided together")
         if self.reference is not None:
@@ -216,6 +230,7 @@ class DualViewSample:
         object.__setattr__(self, "timestamps", _readonly(timestamps, dtype=np.float64))
         object.__setattr__(self, "joint_names", tuple(self.joint_names))
         object.__setattr__(self, "cycle_bounds", bounds)
+        object.__setattr__(self, "cycle_mids", mids)
         object.__setattr__(self, "metadata", _freeze(dict(self.metadata)))
 
     @property
@@ -232,6 +247,11 @@ class DualViewSample:
     def has_cycles(self) -> bool:
         """Whether at least one complete cycle is annotated."""
         return bool(self.cycle_bounds)
+
+    @property
+    def has_cycle_mids(self) -> bool:
+        """Whether every annotated cycle carries a middle frame."""
+        return bool(self.cycle_bounds) and len(self.cycle_mids) == len(self.cycle_bounds)
 
     @property
     def key(self) -> str:
@@ -256,6 +276,7 @@ class FusionBatch(TypedDict, total=False):
     phase: torch.Tensor
     phase_valid: torch.Tensor
     cycle_index: torch.Tensor
+    half_index: torch.Tensor
     clean_a: torch.Tensor
     clean_b: torch.Tensor
     clean_valid_a: torch.Tensor
@@ -315,6 +336,7 @@ def sample_from_pose_pair_trial(
     *,
     dataset: str,
     cycle_bounds: Sequence[tuple[int, int]] = (),
+    cycle_mids: Sequence[int] = (),
     canonicalize: bool = True,
     reference: np.ndarray | None = None,
     reference_valid: np.ndarray | None = None,
@@ -333,6 +355,7 @@ def sample_from_pose_pair_trial(
         skeleton: Target common skeleton.
         dataset: Dataset identifier stored in the sample.
         cycle_bounds: Complete cycles as ``(start, end)`` frame ranges.
+        cycle_mids: Turn-around frame per cycle (empty when unknown).
         canonicalize: Whether to map each view into the pelvis body frame.
         reference: Optional ``[T, 70, 3]`` reference pose in its native frame.
         reference_valid: Optional ``[T, 70]`` validity of ``reference``.
@@ -365,6 +388,7 @@ def sample_from_pose_pair_trial(
         timestamps=np.asarray(trial.timestamps, dtype=np.float64),
         joint_names=skeleton.joint_names,
         cycle_bounds=tuple(cycle_bounds),
+        cycle_mids=tuple(cycle_mids),
         reference=None if reference is None else np.asarray(reference, dtype=np.float32)[:, select],
         reference_valid=None if reference_valid is None else np.asarray(reference_valid, dtype=bool)[:, select],
         transform_a=transform_a,

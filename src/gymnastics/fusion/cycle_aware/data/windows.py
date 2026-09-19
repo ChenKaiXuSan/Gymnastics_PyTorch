@@ -25,7 +25,7 @@ Corruption:
 Output dictionary (``T = length``, ``J`` joints):
     pose_a, pose_b [T, J, 3]      valid_a, valid_b [T, J]
     frame_mask [T]                delta_t [T]           timestamps [T]
-    phase [T]  phase_valid [T]    cycle_index [T]
+    phase [T]  phase_valid [T]    cycle_index [T]   half_index [T]
     reference [T, J, 3]           reference_valid [T, J]   (zeros/false if absent)
     clean_a, clean_b, clean_valid_a, clean_valid_b, corruption_mask_a/b (if corrupted)
     window_start (scalar)  dataset, subject_id, sequence_id, window_id (str)
@@ -109,6 +109,7 @@ class _Window:
     phase: np.ndarray
     phase_valid: np.ndarray
     cycle_index: np.ndarray
+    half_index: np.ndarray
 
 
 class CycleWindowDataset(Dataset[dict[str, Any]]):
@@ -149,9 +150,9 @@ class CycleWindowDataset(Dataset[dict[str, Any]]):
         self.length = window.length if window.length is not None else max((s.num_frames for s in self.samples), default=2)
         stride = window.stride(split, self.length)
         for prepared in self.samples:
-            phase, phase_valid, cycle_index = phase_from_cycle_bounds(prepared.num_frames, prepared.cycle_bounds)
+            phase, phase_valid, cycle_index, half_index = phase_from_cycle_bounds(prepared.num_frames, prepared.cycle_bounds, prepared.cycle_mids)
             for start in window_starts(prepared.num_frames, self.length, stride):
-                self._windows.append(_Window(prepared, start, phase, phase_valid, cycle_index))
+                self._windows.append(_Window(prepared, start, phase, phase_valid, cycle_index, half_index))
 
     def set_epoch(self, epoch: int) -> None:
         """Change the corruption seed for a new training epoch."""
@@ -199,6 +200,8 @@ class CycleWindowDataset(Dataset[dict[str, Any]]):
         phase_valid[:available] = torch.from_numpy(descriptor.phase_valid[start:stop])
         cycle_index = torch.full((length,), -1, dtype=torch.int64)
         cycle_index[:available] = torch.from_numpy(descriptor.cycle_index[start:stop])
+        half_index = torch.full((length,), -1, dtype=torch.int64)
+        half_index[:available] = torch.from_numpy(descriptor.half_index[start:stop])
 
         item: dict[str, Any] = {
             "pose_a": pad_points(sample.view_a),
@@ -211,6 +214,7 @@ class CycleWindowDataset(Dataset[dict[str, Any]]):
             "phase": phase,
             "phase_valid": phase_valid,
             "cycle_index": cycle_index,
+            "half_index": half_index,
             "reference": pad_points(sample.reference) if sample.reference is not None else torch.zeros((length, joints, 3)),
             "reference_valid": pad_mask(sample.reference_valid) if sample.reference_valid is not None else torch.zeros((length, joints), dtype=torch.bool),
             "window_start": torch.tensor(start, dtype=torch.int64),

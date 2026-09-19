@@ -39,6 +39,7 @@ def make_sample(
     seed: int = 0,
     with_reference: bool = False,
     cycles: bool = True,
+    mids: bool = False,
 ) -> DualViewSample:
     """Build a synthetic :class:`DualViewSample` with complete cycles."""
     clean = periodic_pose(skeleton, frames, period, seed=seed)
@@ -49,6 +50,8 @@ def make_sample(
     valid_b = np.ones(clean.shape[:2], dtype=bool)
     valid_b[:, -1] = False  # one joint always missing in view B
     bounds = tuple((s, s + period) for s in range(0, frames - period + 1, period)) if cycles else ()
+    # The generating sinusoid peaks a quarter period after the start.
+    cycle_mids = tuple(s + period // 4 for s, _ in bounds) if (cycles and mids) else ()
     return DualViewSample(
         dataset="synthetic",
         subject_id=subject,
@@ -60,6 +63,7 @@ def make_sample(
         timestamps=np.arange(frames, dtype=np.float64) / fps,
         joint_names=skeleton.joint_names,
         cycle_bounds=bounds,
+        cycle_mids=cycle_mids,
         reference=clean if with_reference else None,
         reference_valid=np.ones(clean.shape[:2], dtype=bool) if with_reference else None,
         metadata={"fps": fps},

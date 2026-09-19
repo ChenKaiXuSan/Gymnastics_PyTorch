@@ -16,3 +16,5 @@ options:
   fold_json: configs/fusion/folds/paper_137_a6_split.json
   # Optional explicit person list (null = every person in the fold file).
   persons: null
+  # Records must carry cycle middles (`gymnastics align cycles private`).
+  require_cycle_mids: true

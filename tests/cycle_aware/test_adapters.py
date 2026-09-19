@@ -8,6 +8,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from gymnastics.alignment.cycle_records import cycle_record_path, write_cycle_record
+from gymnastics.alignment.cycles import CycleSpan, DetectionSettings
 from gymnastics.common.skeletons.mhr70 import MHR70_INDEX, mhr_names
 from gymnastics.fusion.cycle_aware.data.freeman import FreeManDataModule, coco17_to_mhr70
 from gymnastics.fusion.cycle_aware.data.gymnastics import GymnasticsDataModule, concatenate_cycles, reference_from_triangulation
@@ -93,18 +95,35 @@ def test_reference_from_triangulation_matches_frame_pairs():
     assert reference[0, 5, 0] == 2.0 and reference[2, 0, 0] == 0.0
 
 
+def _write_alignment_records(root: Path, persons, *, cycles: int = 3, length: int = 40, with_mid: bool = True) -> None:
+    for person in persons:
+        entries = []
+        for c in range(cycles):
+            fs = 100 + length * c
+            face = {"start": fs, "end": fs + length}
+            side = {"start": fs - 3, "end": fs - 3 + length}
+            if with_mid:
+                face["mid"], side["mid"] = fs + 17, fs - 3 + 17
+            entries.append({"cycle_index": c, "face_video_frames": face, "side_video_frames": side})
+        path = root / f"person_{person}" / f"alignment_record_{person}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"metadata": {"person_id": person, "offset_side_to_face": -3, "fps": FPS}, "cycles": entries}))
+
+
 def test_gymnastics_datamodule_with_injected_loaders(tmp_path: Path):
     fold = tmp_path / "fold.json"
     fold.write_text(json.dumps({"train": ["1", "2", "3"], "val": ["4"], "test": ["5"]}))
     trials = {p: [_trial(p, c, 100 + 40 * c, 40) for c in range(3)] for p in ("1", "2", "3", "4", "5")}
+    _write_alignment_records(tmp_path / "split_cycle", trials)
 
     def reference_loader(person_id, cycle_id):
         cycle = int(cycle_id.split("_")[1])
         joints = np.ones((40, 70, 3), dtype=np.float32) * (cycle + 1)
         return joints, [(100 + 40 * cycle + i, 97 + 40 * cycle + i) for i in range(40)]
 
+    options = {"fold_json": str(fold), "split_cycle_root": str(tmp_path / "split_cycle")}
     datamodule = GymnasticsDataModule(
-        {"name": "gymnastics", "batch_size": 2, "window": {"num_cycles": 2, "samples_per_cycle": 8}, "options": {"fold_json": str(fold)}},
+        {"name": "gymnastics", "batch_size": 2, "window": {"num_cycles": 2, "samples_per_cycle": 8}, "options": options},
         trial_loader=lambda person: trials[person],
         reference_loader=reference_loader,
     )
@@ -113,6 +132,7 @@ def test_gymnastics_datamodule_with_injected_loaders(tmp_path: Path):
     assert datamodule.split.train == ("1", "2", "3") and datamodule.split.test == ("5",)
     sample = datamodule.samples[0]
     assert sample.dataset == "gymnastics" and sample.num_joints == 20 and sample.cycle_bounds == ((0, 40), (40, 80), (80, 120))
+    assert sample.cycle_mids == (17, 57, 97)
     assert sample.metadata["canonicalized"] and sample.transform_a is not None
     assert sample.reference_valid.all()
     # Canonical frame: pelvis at the origin.
@@ -123,6 +143,15 @@ def test_gymnastics_datamodule_with_injected_loaders(tmp_path: Path):
     assert not batch["reference_valid"].any()
     test_batch = next(iter(datamodule.test_dataloader()))
     assert test_batch["reference_valid"].any()
+    assert (batch["half_index"] >= 0).all()
+    # Records without middles are rejected unless explicitly allowed.
+    _write_alignment_records(tmp_path / "no_mid", trials, with_mid=False)
+    strict = GymnasticsDataModule({"name": "gymnastics", "options": {**options, "split_cycle_root": str(tmp_path / "no_mid")}}, trial_loader=lambda person: trials[person], reference_loader=reference_loader)
+    with pytest.raises(ValueError, match="align cycles"):
+        strict.setup("fit")
+    lenient = GymnasticsDataModule({"name": "gymnastics", "options": {**options, "split_cycle_root": str(tmp_path / "no_mid"), "require_cycle_mids": False}}, trial_loader=lambda person: trials[person], reference_loader=reference_loader)
+    lenient.setup("fit")
+    assert lenient.samples[0].cycle_mids == () and lenient.samples[0].cycle_bounds == sample.cycle_bounds
 
 
 def test_coco17_and_unity22_scatter_into_mhr70():
@@ -151,22 +180,33 @@ def test_freeman_datamodule_with_injected_loader(tmp_path: Path):
             trials.append((PosePairTrial(**{**trial.__dict__, "trial_id": f"session_{subject}_{session}", "source_metadata": {}}), reference_path))
         return trials
 
-    datamodule = FreeManDataModule(
-        {"name": "freeman", "batch_size": 2, "window": {"num_cycles": 2, "samples_per_cycle": 8}, "options": {"subjects": [1, 2, 3, 4], "estimate_cycles": True, "min_period_s": 0.3, "max_period_s": 1.5}},
-        session_loader=session_loader,
-    )
+    records_root = tmp_path / "records"
+    settings = DetectionSettings(theta_ref=-2.0, theta_ref_mode="manual")
+    for subject in (1, 2, 3, 4):
+        for session in range(2):
+            spans = [CycleSpan(0, 8, 20), CycleSpan(20, 28, 40), CycleSpan(40, 48, 60)] if session == 0 else []
+            write_cycle_record(cycle_record_path(records_root, f"{subject:02d}", f"session_{subject}_{session}"), dataset="freeman", subject_id=f"{subject:02d}", sequence_id=f"session_{subject}_{session}", fps=FPS, frames=60, spans=spans, detection=settings, views=("c04", "c07"))
+    options = {"subjects": [1, 2, 3, 4], "cycle_records_root": str(records_root)}
+    datamodule = FreeManDataModule({"name": "freeman", "batch_size": 2, "window": {"num_cycles": 2, "samples_per_cycle": 8}, "options": options}, session_loader=session_loader)
     datamodule.setup()
     assert len(datamodule.samples) == 8
     sample = datamodule.samples[0]
     assert sample.dataset == "freeman" and sample.subject_id == "01"
-    assert sample.has_cycles  # twist period 20 frames at 30 fps is inside [0.3 s, 1.5 s]
+    assert sample.cycle_bounds == ((0, 20), (20, 40), (40, 60)) and sample.cycle_mids == (8, 28, 48)
+    assert not datamodule.samples[1].has_cycles and datamodule.samples[1].metadata["cycle_record"]
     assert sample.reference is not None and np.allclose(sample.reference[sample.reference_valid], 1.0)  # 100 cm -> 1 m
     assert datamodule.split.train == ("01", "02") and datamodule.split.val == ("03",) and datamodule.split.test == ("04",)
     batch = next(iter(datamodule.train_dataloader()))
-    assert batch["phase_valid"].any()
+    assert batch["phase_valid"].any() and (batch["half_index"][batch["phase_valid"]] >= 0).all()
+    # Missing records are an error by default and tolerated when disabled.
+    with pytest.raises(FileNotFoundError):
+        FreeManDataModule({"name": "freeman", "options": {**options, "cycle_records_root": str(tmp_path / "nowhere")}}, session_loader=session_loader).setup()
+    lenient = FreeManDataModule({"name": "freeman", "options": {**options, "cycle_records_root": str(tmp_path / "nowhere"), "require_cycle_records": False}}, session_loader=session_loader)
+    lenient.setup()
+    assert not lenient.samples[0].has_cycles
 
 
-def test_unity_datamodule_with_injected_loader():
+def test_unity_datamodule_with_injected_loader(tmp_path: Path):
     def sequence_loader():
         result = []
         for name in ("continuous_left_060_r00", "continuous_right_060_r00", "other_sequence"):
@@ -176,8 +216,11 @@ def test_unity_datamodule_with_injected_loader():
             result.append((trial, gt, np.ones((80, 22), dtype=bool)))
         return result
 
+    records_root = tmp_path / "records"
+    for name in ("continuous_left_060_r00", "continuous_right_060_r00", "other_sequence"):
+        write_cycle_record(cycle_record_path(records_root, name, name), dataset="unity", subject_id=name, sequence_id=name, fps=FPS, frames=80, spans=[CycleSpan(0, 10, 40), CycleSpan(40, 50, 80)], detection=DetectionSettings(), views=("cam0", "cam1"))
     datamodule = UnityDataModule(
-        {"name": "unity", "batch_size": 2, "window": {"num_cycles": 2, "samples_per_cycle": 8}, "options": {"estimate_cycles": True, "min_period_s": 0.3, "max_period_s": 1.5}},
+        {"name": "unity", "batch_size": 2, "window": {"num_cycles": 2, "samples_per_cycle": 8}, "options": {"cycle_records_root": str(records_root)}},
         sequence_loader=sequence_loader,
     )
     datamodule.setup()
@@ -185,7 +228,7 @@ def test_unity_datamodule_with_injected_loader():
     assert datamodule.split.test == ("continuous_right_060_r00",)
     assert datamodule.split.val == ("other_sequence",)
     sample = datamodule.samples[0]
-    assert sample.dataset == "unity" and sample.has_cycles
-    assert sample.reference_valid.sum() == 80 * 13 - 0 or sample.reference_valid.any()
+    assert sample.dataset == "unity" and sample.cycle_bounds == ((0, 40), (40, 80)) and sample.cycle_mids == (10, 50)
+    assert sample.reference_valid.sum() == 80 * 13
     batch = next(iter(datamodule.test_dataloader()))
     assert batch["reference_valid"].any() and "clean_a" not in batch

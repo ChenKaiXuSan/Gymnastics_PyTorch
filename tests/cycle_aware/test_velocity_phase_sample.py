@@ -6,7 +6,6 @@ import torch
 
 from gymnastics.fusion.cycle_aware.phase import (
     PhaseEncoding,
-    estimate_cycle_bounds,
     normalize_sample_to_phase,
     phase_from_cycle_bounds,
 )
@@ -44,10 +43,17 @@ def test_velocity_masks_invalid_pairs_and_validates_shapes():
 
 
 def test_phase_from_cycle_bounds():
-    phase, valid, index = phase_from_cycle_bounds(10, [(2, 6), (6, 10)])
+    phase, valid, index, half = phase_from_cycle_bounds(10, [(2, 6), (6, 10)])
     assert not valid[:2].any() and valid[2:].all()
     np.testing.assert_allclose(phase[2:6], [0.0, 0.25, 0.5, 0.75])
     assert index.tolist() == [-1, -1, 0, 0, 0, 0, 1, 1, 1, 1]
+    assert (half == -1).all()
+    _, _, _, half = phase_from_cycle_bounds(10, [(2, 6), (6, 10)], cycle_mids=[3, 9])
+    assert half.tolist() == [-1, -1, 0, 1, 1, 1, 0, 0, 0, 1]
+    with pytest.raises(ValueError):
+        phase_from_cycle_bounds(10, [(2, 6)], cycle_mids=[6])
+    with pytest.raises(ValueError):
+        phase_from_cycle_bounds(10, [(2, 6), (6, 10)], cycle_mids=[3])
 
 
 def test_phase_encoding_is_periodic_and_masked():
@@ -74,14 +80,19 @@ def test_normalize_sample_to_phase_keeps_physical_time(skeleton):
     assert unchanged.cycle_bounds == ()
 
 
-def test_estimate_cycle_bounds_recovers_period():
-    t = np.arange(200)
-    signal = np.sin(2 * np.pi * t / 25.0) + 0.01 * np.cos(t)
-    bounds = estimate_cycle_bounds(signal, min_period=10, max_period=60)
-    assert len(bounds) >= 5
-    lengths = [e - s for s, e in bounds]
-    assert all(23 <= length <= 27 for length in lengths)
-    assert estimate_cycle_bounds(np.zeros(200), min_period=10, max_period=60) == ()
+def test_normalize_with_middles_puts_mid_at_half_cycle(skeleton):
+    sample = make_sample(skeleton, frames=48, period=16, fps=30.0, mids=True)
+    assert sample.has_cycle_mids and sample.cycle_mids == (4, 20, 36)
+    normalized = normalize_sample_to_phase(sample, samples_per_cycle=8)
+    assert normalized.cycle_bounds == ((0, 8), (8, 16), (16, 24))
+    assert normalized.cycle_mids == (4, 12, 20)
+    # Outward half covers 4 frames in 4 samples (dt = 1/30), the return half
+    # covers 12 frames in 4 samples (dt = 3/30); the middle keeps its time.
+    np.testing.assert_allclose(normalized.timestamps[4], sample.timestamps[4])
+    np.testing.assert_allclose(np.diff(normalized.timestamps[:4]), 1.0 / 30.0)
+    np.testing.assert_allclose(np.diff(normalized.timestamps[4:8]), 3.0 / 30.0)
+    with pytest.raises(ValueError):
+        normalize_sample_to_phase(sample, samples_per_cycle=7)
 
 
 def test_dual_view_sample_validation(skeleton):
@@ -111,6 +122,20 @@ def test_dual_view_sample_validation(skeleton):
             valid_b=sample.valid_b,
             timestamps=sample.timestamps[::-1],
             joint_names=sample.joint_names,
+        )
+    with pytest.raises(ValueError):
+        DualViewSample(
+            dataset="x",
+            subject_id="s",
+            sequence_id="q",
+            view_a=sample.view_a,
+            view_b=sample.view_b,
+            valid_a=sample.valid_a,
+            valid_b=sample.valid_b,
+            timestamps=sample.timestamps,
+            joint_names=sample.joint_names,
+            cycle_bounds=((0, 16),),
+            cycle_mids=(16,),
         )
 
 

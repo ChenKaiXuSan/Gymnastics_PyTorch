@@ -31,9 +31,10 @@ Ground truth:
     is on.
 
 Cycle information:
-    None in the manifest.  ``options.estimate_cycles`` enables the
-    autocorrelation estimator on the trunk twist of View A (the Unity motions
-    are continuous trunk rotations, so this works well).
+    None in the manifest.  Cycles and middles are detected offline by
+    ``gymnastics align cycles unity`` and read from
+    ``options.cycle_records_root``; missing records are an error when
+    ``options.require_cycle_records`` is true (default).
 
 Split:
     Sequence-level.  Unity has a single "subject", so each evaluation
@@ -43,8 +44,8 @@ Split:
 
 Options (``data.options``):
     benchmark_root, sam3d_cache_root, fps, fold ("left_to_right" |
-    "right_to_left"), sequences (explicit list), estimate_cycles,
-    min_period_s, max_period_s
+    "right_to_left"), sequences (explicit list), cycle_records_root,
+    require_cycle_records
 """
 
 from __future__ import annotations
@@ -57,9 +58,9 @@ import numpy as np
 from gymnastics.common.paths import PROJECT_ROOT
 from gymnastics.fusion.rotation_aware.schema import PosePairTrial
 
-from .base import DualViewDataModule, SplitSpec
-from .freeman import with_estimated_cycles
 from ..sample import DualViewSample, sample_from_pose_pair_trial
+from .base import DualViewDataModule, SplitSpec
+from .cycle_records import public_cycles_for_sequence
 
 SequenceLoader = Callable[[], Sequence[tuple[PosePairTrial, np.ndarray | None, np.ndarray | None]]]
 """Returns ``(trial, gt_world_m [T, 22, 3], gt_available [T, 22])`` per sequence."""
@@ -131,25 +132,28 @@ class UnityDataModule(DualViewDataModule):
 
     def load_samples(self) -> Sequence[DualViewSample]:
         options = dict(self.config.options)
-        estimate = bool(options.get("estimate_cycles", True))
+        records_root = _resolve(options.get("cycle_records_root", "local/runs/cycle_records/unity"))
+        require_record = bool(options.get("require_cycle_records", True))
         samples: list[DualViewSample] = []
         for trial, gt, available in self._sequence_loader():
             reference = reference_valid = None
             if self.config.attach_reference and gt is not None and available is not None:
                 reference, reference_valid = unity22_to_mhr70(gt, available)
-            sample = sample_from_pose_pair_trial(
-                trial,
-                self.skeleton,
-                dataset="unity",
-                reference=reference,
-                reference_valid=reference_valid,
-                subject_id=trial.trial_id,
-                sequence_id=trial.trial_id,
-                metadata={"cycles_estimated": False},
+            bounds, mids, record = public_cycles_for_sequence(records_root, trial.trial_id, trial.trial_id, trial, require_record=require_record)
+            samples.append(
+                sample_from_pose_pair_trial(
+                    trial,
+                    self.skeleton,
+                    dataset="unity",
+                    cycle_bounds=bounds,
+                    cycle_mids=mids,
+                    reference=reference,
+                    reference_valid=reference_valid,
+                    subject_id=trial.trial_id,
+                    sequence_id=trial.trial_id,
+                    metadata={"cycle_record": record is not None, "cycle_detection": dict(record.detection) if record is not None else {}},
+                )
             )
-            if estimate:
-                sample = with_estimated_cycles(sample, min_period_s=float(options.get("min_period_s", 0.5)), max_period_s=float(options.get("max_period_s", 6.0)))
-            samples.append(sample)
         return samples
 
     def default_split(self, samples: Sequence[DualViewSample]) -> SplitSpec:

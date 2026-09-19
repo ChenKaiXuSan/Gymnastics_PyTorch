@@ -36,9 +36,12 @@ Ground truth:
     ``attach_reference`` is on and is never read during training.
 
 Cycle information:
-    Exact: the alignment record lists every movement cycle as face/side frame
-    ranges.  Consecutive cycles of a person are concatenated into one sample
-    so the long-term branch can see cycle-to-cycle recurrence.
+    Exact, read from ``alignment_record_<id>.json`` (``gymnastics align``
+    writes the boundaries, ``gymnastics align cycles private`` adds the
+    turn-around middles).  Consecutive cycles of a person are concatenated
+    into one sample so the long-term branch can see cycle-to-cycle
+    recurrence.  With ``options.require_cycle_mids`` (default true) a record
+    without middles is an error.
 
 Split:
     The fixed paper protocol ``configs/fusion/folds/paper_137_a6_split.json``
@@ -47,7 +50,7 @@ Split:
 Options (``data.options``):
     source: "cache" | "raw"
     cache_root, sam3d_root, split_cycle_root, triangulated_root, fold_json,
-    persons (optional explicit list)
+    persons (optional explicit list), require_cycle_mids
 """
 
 from __future__ import annotations
@@ -64,6 +67,7 @@ from gymnastics.fusion.rotation_aware.schema import PosePairTrial, valid_from_po
 
 from ..sample import DualViewSample, sample_from_pose_pair_trial
 from .base import DualViewDataModule, SplitSpec
+from .cycle_records import private_cycles_for_trials
 
 TrialLoader = Callable[[str], Sequence[PosePairTrial]]
 ReferenceLoader = Callable[[str, str], tuple[np.ndarray, list[tuple[int, int]]] | None]
@@ -228,11 +232,18 @@ class GymnasticsDataModule(DualViewDataModule):
     # ----- DualViewDataModule ------------------------------------------------
     def load_samples(self) -> Sequence[DualViewSample]:
         samples: list[DualViewSample] = []
+        split_root = _resolve(self.config.options.get("split_cycle_root", "local/runs/split_cycle"))
+        require_mids = bool(self.config.options.get("require_cycle_mids", True))
         for person_id in self._person_ids():
             trials = list(self._trial_loader(person_id))
             if not trials:
                 continue
             joined, bounds = concatenate_cycles(trials)
+            ordered = sorted(trials, key=lambda t: int(t.face_map[0]))
+            record_path = split_root / f"person_{person_id}" / f"alignment_record_{person_id}.json"
+            record_bounds, mids = private_cycles_for_trials(record_path, ordered, require_mids=require_mids)
+            if record_bounds != bounds:
+                raise ValueError(f"{record_path}: cycle boundaries differ from the cached trials")
             reference = reference_valid = None
             if self.config.attach_reference:
                 reference, reference_valid = reference_from_triangulation(joined, [t.trial_id for t in sorted(trials, key=lambda t: int(t.face_map[0]))], self._reference_loader)
@@ -244,6 +255,7 @@ class GymnasticsDataModule(DualViewDataModule):
                     self.skeleton,
                     dataset="gymnastics",
                     cycle_bounds=bounds,
+                    cycle_mids=mids,
                     reference=reference,
                     reference_valid=reference_valid,
                     subject_id=person_id,

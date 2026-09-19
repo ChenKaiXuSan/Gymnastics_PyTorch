@@ -12,7 +12,7 @@ options:
   fold: left_to_right
   # Optional explicit sequence ids (null = every continuous sequence).
   sequences: null
-  # Continuous trunk rotations are periodic: estimate cycles by default.
-  estimate_cycles: true
-  min_period_s: 0.5
-  max_period_s: 6.0
+  # Records written by `gymnastics align cycles unity` (cycles + middles).
+  cycle_records_root: local/runs/cycle_records/unity
+  # Error when a sequence has no record (records with zero cycles are fine).
+  require_cycle_records: true
