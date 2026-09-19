@@ -161,3 +161,23 @@ def test_annotate_sequence_writes_public_record(tmp_path: Path):
     record = read_cycle_record(path)
     assert record.has_mids and record.frames == 300 and record.detection["direction"] in {"ccw", "cw"}
     assert annotate_cycles.main(["freeman", "--help"]) if False else True
+
+
+def test_index_exports_private_records_and_writes_index(tmp_path: Path):
+    split_root = tmp_path / "split_cycle"
+    record = split_root / "person_3" / "alignment_record_3.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"metadata": {"person_id": "3", "offset_side_to_face": -2, "fps": 60.0, "cycle_detection": DetectionSettings(theta_ref=None, theta_ref_mode="legacy_align").to_dict()}, "cycles": [
+        {"cycle_index": 0, "face_video_frames": {"start": 10, "mid": 40, "end": 70}, "side_video_frames": {"start": 8, "mid": 38, "end": 68}},
+    ]}))
+    records_root = tmp_path / "cycle_records"
+    write_cycle_record(cycle_record_path(records_root / "unity", "seq", "seq"), dataset="unity", subject_id="seq", sequence_id="seq", fps=60.0, frames=97, spans=[], detection=DetectionSettings(), views=("cam0", "cam1"))
+    assert annotate_cycles.main(["index", "--records-root", str(records_root), "--log-root", str(split_root)]) == 0
+    exported = read_cycle_record(records_root / "gymnastics" / "subject_3" / "all_cycles.json")
+    assert exported.dataset == "gymnastics" and exported.cycles == ((10, 40, 70),) and exported.frames is None
+    payload = json.loads((records_root / "gymnastics" / "subject_3" / "all_cycles.json").read_text())
+    assert payload["cycles"][0]["side_frames"] == {"start": 8, "mid": 38, "end": 68}
+    assert payload["metadata"]["source_sha256"]
+    index = json.loads((records_root / "index.json").read_text())
+    assert index["datasets"]["gymnastics"]["cycles"] == 1 and index["datasets"]["unity"]["sequences"] == 1
+    assert "gymnastics" in index["sources"] and (records_root / "README.md").is_file()

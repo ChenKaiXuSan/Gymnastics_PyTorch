@@ -171,10 +171,12 @@ conda run -n gymnastic gymnastics fuse cycle-aware experiment=smoke
 # Private data.
 conda run -n gymnastic gymnastics fuse cycle-aware data=gymnastics trainer.max_epochs=50
 
-# Precompute cycles + middles (once per dataset).
+# Precompute cycles + middles (once per dataset), then build the unified tree
+# local/runs/cycle_records/{gymnastics,freeman,unity} + index.json + README.md.
 conda run -n gymnastic gymnastics align cycles private
 conda run -n gymnastic gymnastics align cycles freeman
 conda run -n gymnastic gymnastics align cycles unity
+conda run -n gymnastic gymnastics align cycles index
 
 # FreeMan (subject-disjoint) on a subject subset.
 conda run -n gymnastic gymnastics fuse cycle-aware data=freeman 'data.options.subjects=[1,2,3,4,5,6]'

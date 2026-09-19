@@ -202,7 +202,7 @@ def read_cycle_record(path: Path) -> CycleRecord:
             sequence_id=str(metadata.pop("sequence_id")),
             fps=float(metadata.pop("fps")),
             cycles=cycles,
-            frames=int(metadata.pop("frames")) if "frames" in metadata else None,
+            frames=int(frames_value) if (frames_value := metadata.pop("frames", None)) is not None else None,
             detection=detection,
             metadata=metadata,
         )

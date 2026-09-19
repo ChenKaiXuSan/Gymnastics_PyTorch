@@ -233,6 +233,7 @@ training:
 conda run -n gymnastic gymnastics align cycles private      # adds "mid" to the 137 records
 conda run -n gymnastic gymnastics align cycles freeman      # local/runs/cycle_records/freeman
 conda run -n gymnastic gymnastics align cycles unity        # local/runs/cycle_records/unity
+conda run -n gymnastic gymnastics align cycles index        # unified tree + index.json + README.md
 ```
 
 ### Configuration

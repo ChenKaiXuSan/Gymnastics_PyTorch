@@ -63,6 +63,7 @@ gymnastics align
 gymnastics align cycles private
 gymnastics align cycles freeman
 gymnastics align cycles unity
+gymnastics align cycles index      # local/runs/cycle_records/{gymnastics,freeman,unity} + index.json
 
 # Triangulate SAM3D face/side 2D keypoints into pseudo-GT 3D joints.
 gymnastics triangulate
