@@ -76,8 +76,9 @@ class DataConfig:
         corruption: Training corruption parameters.
         validate_with_corruption: Replay a fixed corruption on validation
             windows so the recovery loss is comparable across epochs.
-        split: Explicit subject split; empty entries fall back to the adapter
-            default.
+        split: Explicit subject split.  When any of its three lists is
+            non-empty the whole split is used as given (empty lists stay
+            empty); when all three are empty the adapter default applies.
         max_subjects_per_split: Optional cap for quick experiments.
         cache_dir: Optional directory for the converted-sample cache
             (:mod:`.sample_cache`); ``None`` disables caching.
@@ -163,13 +164,9 @@ class DualViewDataModule(pl.LightningDataModule, ABC):
         """Return the dataset's default subject-disjoint split."""
 
     def _effective_split(self, samples: Sequence[DualViewSample]) -> SplitSpec:
-        default = self.default_split(samples)
         requested = self.config.split
-        split = SplitSpec(
-            train=requested.train or default.train,
-            val=requested.val or default.val,
-            test=requested.test or default.test,
-        )
+        explicit = bool(requested.train or requested.val or requested.test)
+        split = requested if explicit else self.default_split(samples)
         cap = self.config.max_subjects_per_split
         if cap is not None:
             split = SplitSpec(train=split.train[:cap], val=split.val[:cap], test=split.test[:cap])

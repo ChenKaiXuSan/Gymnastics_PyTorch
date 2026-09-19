@@ -113,6 +113,10 @@ def test_explicit_split_and_cap():
     assert datamodule.split == SplitSpec(train=("subject_03",), val=("subject_00",), test=("subject_01",))
     with pytest.raises(ValueError):
         SyntheticDataModule({"name": "synthetic", "options": {"subjects": 2}, "split": {"train": ["ghost"]}}).setup()
+    # A partial explicit split keeps the other lists empty instead of falling back.
+    partial = SyntheticDataModule({"name": "synthetic", "options": {"subjects": 4, "sequences_per_subject": 1, "frames": 24, "period": 12}, "split": {"train": ["subject_00"]}, "window": {"samples_per_cycle": 8, "num_cycles": 1}})
+    partial.setup()
+    assert partial.split == SplitSpec(train=("subject_00",), val=(), test=())
 
 
 def test_sample_cache_round_trip(tmp_path, skeleton):
