@@ -26,6 +26,7 @@ from torch.utils.data import DataLoader
 from ..corruptions import CorruptionConfig
 from ..sample import DualViewSample, collate_fusion_batch
 from ..skeleton import CommonSkeleton, build_common_skeleton
+from .folds import read_fold_file
 from .sample_cache import cache_key, load_samples, save_samples
 from .windows import CycleWindowDataset, WindowConfig
 
@@ -78,7 +79,11 @@ class DataConfig:
             windows so the recovery loss is comparable across epochs.
         split: Explicit subject split.  When any of its three lists is
             non-empty the whole split is used as given (empty lists stay
-            empty); when all three are empty the adapter default applies.
+            empty).
+        fold_json: Path of a fold file (``train`` / ``val`` / ``test`` subject
+            lists, see :mod:`.folds`); used when ``split`` is empty.  When
+            both are empty the adapter default applies.  Adapters that load
+            subjects on demand restrict loading to the fold's subjects.
         max_subjects_per_split: Optional cap for quick experiments.
         cache_dir: Optional directory for the converted-sample cache
             (:mod:`.sample_cache`); ``None`` disables caching.
@@ -96,6 +101,7 @@ class DataConfig:
     corruption: CorruptionConfig = field(default_factory=CorruptionConfig)
     validate_with_corruption: bool = True
     split: SplitSpec = field(default_factory=SplitSpec)
+    fold_json: str | None = None
     max_subjects_per_split: int | None = None
     cache_dir: str | None = None
     options: Mapping[str, Any] = field(default_factory=dict)
@@ -163,10 +169,27 @@ class DualViewDataModule(pl.LightningDataModule, ABC):
     def default_split(self, samples: Sequence[DualViewSample]) -> SplitSpec:
         """Return the dataset's default subject-disjoint split."""
 
+    def fold_split(self) -> SplitSpec | None:
+        """The split defined by ``config.fold_json`` (``None`` when unset)."""
+        if not self.config.fold_json:
+            return None
+        from gymnastics.common.paths import PROJECT_ROOT
+
+        path = Path(self.config.fold_json)
+        fold = read_fold_file(path if path.is_absolute() else PROJECT_ROOT / path)
+        return SplitSpec(train=tuple(fold["train"]), val=tuple(fold["val"]), test=tuple(fold["test"]))
+
+    def fold_subjects(self) -> tuple[str, ...] | None:
+        """All subjects named by the fold file, or ``None`` when unset."""
+        split = self.fold_split()
+        if split is None:
+            return None
+        return tuple(sorted(set(split.train) | set(split.val) | set(split.test), key=lambda s: (len(s), s)))
+
     def _effective_split(self, samples: Sequence[DualViewSample]) -> SplitSpec:
         requested = self.config.split
         explicit = bool(requested.train or requested.val or requested.test)
-        split = requested if explicit else self.default_split(samples)
+        split = requested if explicit else (self.fold_split() or self.default_split(samples))
         cap = self.config.max_subjects_per_split
         if cap is not None:
             split = SplitSpec(train=split.train[:cap], val=split.val[:cap], test=split.test[:cap])
@@ -191,7 +214,8 @@ class DualViewDataModule(pl.LightningDataModule, ABC):
 
         root = Path(self.config.cache_dir)
         root = root if root.is_absolute() else PROJECT_ROOT / root
-        key = cache_key(self.config.name, self.config.skeleton, self.config.options, self.config.attach_reference)
+        options = {**dict(self.config.options), "fold_json": self.config.fold_json}
+        key = cache_key(self.config.name, self.config.skeleton, options, self.config.attach_reference)
         return root / f"{self.config.name}_{key}"
 
     def _load_or_convert(self) -> list[DualViewSample]:

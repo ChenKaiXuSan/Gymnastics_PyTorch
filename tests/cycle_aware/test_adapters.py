@@ -232,3 +232,23 @@ def test_unity_datamodule_with_injected_loader(tmp_path: Path):
     assert sample.reference_valid.sum() == 80 * 13
     batch = next(iter(datamodule.test_dataloader()))
     assert batch["reference_valid"].any() and "clean_a" not in batch
+
+
+def test_gymnastics_fold_json_restricts_persons(tmp_path: Path):
+    fold = tmp_path / "fold_01.json"
+    fold.write_text(json.dumps({"train": ["1", "2"], "val": ["3"], "test": ["4"]}))
+    trials = {p: [_trial(p, c, 100 + 40 * c, 40) for c in range(2)] for p in ("1", "2", "3", "4", "5")}
+    _write_alignment_records(tmp_path / "split_cycle", trials, cycles=2)
+    loaded: list[str] = []
+
+    def loader(person):
+        loaded.append(person)
+        return trials[person]
+
+    datamodule = GymnasticsDataModule(
+        {"name": "gymnastics", "fold_json": str(fold), "window": {"num_cycles": 1, "samples_per_cycle": 8}, "options": {"split_cycle_root": str(tmp_path / "split_cycle")}, "attach_reference": False},
+        trial_loader=loader,
+    )
+    datamodule.setup()
+    assert sorted(loaded) == ["1", "2", "3", "4"]  # person 5 is not in the fold
+    assert datamodule.split.train == ("1", "2") and datamodule.split.val == ("3",) and datamodule.split.test == ("4",)

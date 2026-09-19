@@ -95,7 +95,7 @@ python -m pytest tests/test_sam3d_triangulation.py tests/test_compare_fused_tria
 | `src/gymnastics/analysis/` | Metric comparison, plotting, reports, cohort/repeated-cycle analysis, and result inspection. |
 | `src/gymnastics/calibration/` | Camera calibration utilities. |
 | `src/gymnastics/common/` | Shared paths and canonical MHR70 metadata. |
-| `legacy/prepare_dataset/` | Old DPT/RAFT/YOLO/Detectron2 preprocessing path, kept for reference. The motion-classification code was removed in 2026-09; recover it from git history if needed. |
+| `pegasus/` | NQSV job scripts for the cycle-aware fusion model (5-fold, single seed, 50 epochs); see `pegasus/README.md`. |
 | `third_party/` | Pinned upstream SAM3 and SAM-3D-Body repositories. |
 | `local/` | Ignored checkpoints, videos, run outputs, and caches. |
 

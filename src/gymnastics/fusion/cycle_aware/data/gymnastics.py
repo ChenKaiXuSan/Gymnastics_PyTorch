@@ -226,6 +226,9 @@ class GymnasticsDataModule(DualViewDataModule):
         persons = self.config.options.get("persons")
         if persons:
             return [str(p) for p in persons]
+        fold_subjects = self.fold_subjects()
+        if fold_subjects is not None:
+            return list(fold_subjects)
         fold = json.loads(_resolve(self.config.options.get("fold_json", "configs/fusion/folds/paper_137_a6_split.json")).read_text(encoding="utf-8"))
         return sorted({str(p) for split in ("train", "val", "test") for p in fold.get(split, [])}, key=lambda s: (len(s), s))
 

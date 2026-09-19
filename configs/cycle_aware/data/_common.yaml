@@ -23,6 +23,10 @@ split:
   train: []
   val: []
   test: []
+# Fold file with train/val/test subject lists (used when split is empty), e.g.
+# configs/cycle_aware/folds/gymnastics/fold_01.json or
+# configs/fusion/folds/freeman/fold_01.json. null = adapter default split.
+fold_json: null
 # Cap subjects per split for quick experiments (null = all).
 max_subjects_per_split: null
 # Directory for the converted-sample cache (null = convert on every run).

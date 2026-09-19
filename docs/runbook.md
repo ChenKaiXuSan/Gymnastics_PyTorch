@@ -261,6 +261,6 @@ conda run -n gymnastic gymnastics fuse deterministic --sam3d-root /path/to/gymna
 
 ## 旧流程
 
-旧的 DPT、RAFT、YOLO 和 Detectron2 数据准备代码位于 `legacy/prepare_dataset/`，配置位于 `configs/legacy/prepare_dataset.yaml`。它们仅供参考，不属于当前活动流程。
+旧的 DPT、RAFT、YOLO 和 Detectron2 数据准备代码（`legacy/prepare_dataset/`）与动作分类代码已于 2026-09 从仓库移除；需要时从 git 历史（提交 7286a02 之前）恢复。
 
 更多三角化细节见[三角化说明](triangulation.md)。

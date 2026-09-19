@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -72,3 +73,41 @@ def test_full_hydra_smoke_run(tmp_path: Path):
     assert any(path.name.startswith("epoch") and path.suffix == ".ckpt" for path in (run_dir / "checkpoints").iterdir())
     restored = CycleAwareFusionModule.load_from_checkpoint(run_dir / "checkpoints" / "last.ckpt", map_location="cpu")
     assert restored.model.config.hidden_dim == 16
+
+
+def test_fold_files_and_sweep(tmp_path: Path):
+    from gymnastics.fusion.cycle_aware.data.folds import make_subject_folds, read_fold_file, write_fold_files
+    from gymnastics.fusion.cycle_aware.train import run_folds
+
+    subjects = [f"subject_{i:02d}" for i in range(6)]
+    folds = make_subject_folds(subjects, k=3, seed=0, stratify=lambda s: "a" if int(s[-2:]) % 2 else "b")
+    assert len(folds) == 3
+    for fold in folds:
+        assert not (set(fold["train"]) & set(fold["test"])) and not (set(fold["val"]) & set(fold["test"]))
+        assert set(fold["train"]) | set(fold["val"]) | set(fold["test"]) == set(subjects)
+    assert sorted(folds[0]["test"] + folds[1]["test"] + folds[2]["test"]) == subjects  # every subject tested once
+    assert all(fold["train"] for fold in folds)
+    folds_dir = tmp_path / "folds"
+    paths = write_fold_files(folds, folds_dir, dataset="synthetic")
+    assert read_fold_file(paths[0])["test"] == folds[0]["test"]
+
+    cfg = compose_config(["experiment=smoke", f"output_root={tmp_path}", "run_name=sweep", f"folds_dir={folds_dir}", "data.options.subjects=6", "fold_ids=[1,3]"])
+    sweep = run_folds(cfg)
+    assert sweep["folds"] == ["fold_01", "fold_03"]
+    assert "test/pa_mpjpe" in sweep["summary"] and sweep["summary"]["test/pa_mpjpe"]["folds"] == 2
+    assert (tmp_path / "sweep" / "summary.csv").is_file() and (tmp_path / "sweep" / "fold_01" / "result.json").is_file()
+    fold_result = json.loads((tmp_path / "sweep" / "fold_01" / "result.json").read_text())
+    assert fold_result["data"]["subjects"] == {"train": len(folds[0]["train"]), "val": len(folds[0]["val"]), "test": len(folds[0]["test"])}
+
+
+def test_summarize_sweep_collects_fold_results(tmp_path: Path):
+    from gymnastics.fusion.cycle_aware.summarize import summarize_sweep
+
+    for fold, value in (("fold_01", 0.1), ("fold_02", 0.3)):
+        (tmp_path / fold).mkdir()
+        (tmp_path / fold / "result.json").write_text(json.dumps({"test_metrics": {"test/pa_mpjpe": value, "test/total": 1.0}}))
+    (tmp_path / "fold_03").mkdir()  # job not finished
+    payload = summarize_sweep(tmp_path)
+    assert payload["missing"] == ["fold_03"] and list(payload["folds"]) == ["fold_01", "fold_02"]
+    assert payload["summary"]["test/pa_mpjpe"]["mean"] == pytest.approx(0.2)
+    assert (tmp_path / "summary.csv").read_text().splitlines()[0] == "fold,test/pa_mpjpe,test/total"

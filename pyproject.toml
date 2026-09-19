@@ -58,7 +58,6 @@ norecursedirs = [
   ".worktrees",
   "build",
   "dist",
-  "legacy",
   "local",
   "paper",
   "third_party",

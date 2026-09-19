@@ -6,6 +6,11 @@ Usage (repository root):
     conda run -n gymnastic gymnastics fuse cycle-aware data=gymnastics trainer.max_epochs=50
     conda run -n gymnastic gymnastics fuse cycle-aware data=freeman experiment=no_film
 
+Cross-validation (one run per fold file, then a summary):
+
+    conda run -n gymnastic gymnastics fuse cycle-aware data=gymnastics \
+        folds_dir=configs/cycle_aware/folds/gymnastics run_name=gym_v1_5fold
+
 Configuration is composed from ``configs/cycle_aware`` (``config.yaml`` and
 its groups ``model``, ``data``, ``loss``, ``corruption``, ``trainer`` and
 ``experiment``); every argument is a Hydra override.  Outputs (checkpoints,
@@ -22,7 +27,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import pytorch_lightning as pl
 from hydra import compose, initialize_config_dir
@@ -135,6 +140,55 @@ def run(cfg: DictConfig) -> dict[str, Any]:
     return result
 
 
+def _summarise(results: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    """Mean and standard deviation of every test metric over the folds."""
+    from .summarize import summarise
+
+    return summarise(dict(results))  # type: ignore[arg-type]
+
+
+def run_folds(cfg: DictConfig) -> dict[str, Any]:
+    """Run ``run`` once per fold file below ``cfg.folds_dir`` and summarise.
+
+    Each fold uses ``data.fold_json = <folds_dir>/fold_NN.json`` and writes to
+    ``<output_root>/<run_name>/fold_NN``; the sweep directory receives
+    ``summary.json`` (per-fold test metrics plus mean and sd) and
+    ``summary.csv`` (one row per fold).
+    """
+    import csv
+
+    folds_dir = Path(str(cfg.folds_dir))
+    folds_dir = folds_dir if folds_dir.is_absolute() else PROJECT_ROOT / folds_dir
+    fold_files = sorted(folds_dir.glob("fold_*.json"))
+    wanted = cfg.get("fold_ids")
+    if wanted:
+        wanted_names = {f"fold_{int(i):02d}" for i in wanted}
+        fold_files = [f for f in fold_files if f.stem in wanted_names]
+    if not fold_files:
+        raise FileNotFoundError(f"no fold files selected in {folds_dir}")
+    sweep_name = str(cfg.run_name)
+    sweep_dir = Path(str(cfg.output_root))
+    sweep_dir = (sweep_dir if sweep_dir.is_absolute() else PROJECT_ROOT / sweep_dir) / sweep_name
+    sweep_dir.mkdir(parents=True, exist_ok=True)
+    results: dict[str, dict[str, Any]] = {}
+    for fold_file in fold_files:
+        fold_cfg = OmegaConf.merge(cfg, OmegaConf.create({"folds_dir": None, "fold_ids": None, "run_name": f"{sweep_name}/{fold_file.stem}", "data": {"fold_json": str(fold_file)}}))
+        print(f"[sweep] {fold_file.stem}: {fold_file}")
+        results[fold_file.stem] = run(fold_cfg)  # type: ignore[arg-type]
+        payload = {"folds_dir": str(folds_dir), "folds": results, "summary": _summarise(results)}
+        (sweep_dir / "summary.json").write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    names = sorted({name for fold in results.values() for name in fold.get("test_metrics", {})})
+    with (sweep_dir / "summary.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["fold", *names])
+        for fold_name, fold in results.items():
+            writer.writerow([fold_name, *[fold.get("test_metrics", {}).get(name, "") for name in names]])
+        summary = _summarise(results)
+        writer.writerow(["mean", *[summary[name]["mean"] for name in names]])
+        writer.writerow(["sd", *[summary[name]["sd"] for name in names]])
+    return {"sweep_dir": str(sweep_dir), "folds": list(results), "summary": _summarise(results)}
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Command-line entry: every argument is a Hydra override."""
     import sys
@@ -143,6 +197,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     cfg = compose_config(overrides)
     if bool(cfg.get("print_config", False)):
         print(OmegaConf.to_yaml(cfg, resolve=True))
+        return 0
+    if cfg.get("folds_dir"):
+        sweep = run_folds(cfg)
+        print(json.dumps({"sweep_dir": sweep["sweep_dir"], "folds": sweep["folds"], "summary": sweep["summary"]}, indent=2))
         return 0
     result = run(cfg)
     print(json.dumps({"run_dir": result["run_dir"], "data": result["data"]}, indent=2))

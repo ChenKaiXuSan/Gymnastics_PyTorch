@@ -110,7 +110,7 @@
 
 ## 旧流程
 
-旧的 DPT、RAFT、YOLO 和 Detectron2 数据准备代码保存在 `legacy/prepare_dataset/`，配置位于 `configs/legacy/prepare_dataset.yaml`。它们仅供参考，不属于当前 SAM3D-Body 优先的活动流程。
+旧的 DPT、RAFT、YOLO 和 Detectron2 数据准备代码已于 2026-09 从仓库移除，不属于当前 SAM3D-Body 优先的活动流程；需要时从 git 历史恢复。
 
 ## 相关文档
 

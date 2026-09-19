@@ -124,6 +124,9 @@ class FreeManDataModule(DualViewDataModule):
         subjects = self.config.options.get("subjects")
         if subjects:
             return sorted({int(s) for s in subjects})
+        fold_subjects = self.fold_subjects()
+        if fold_subjects is not None:
+            return sorted({int(s) for s in fold_subjects})
         root = _resolve(self.config.options.get("benchmark_root", "local/runs/freeman_benchmark_cluster"))
         return sorted(int(path.stem.split("_")[1]) for path in (root / "manifests").glob("subject_*_sessions.json"))
 

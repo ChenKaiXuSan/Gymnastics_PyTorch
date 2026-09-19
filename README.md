@@ -265,6 +265,11 @@ conda run -n gymnastic gymnastics fuse cycle-aware data=unity data.options.fold=
 Outputs (resolved config, CSV logs, checkpoints, `result.json`) are written
 below `local/runs/cycle_aware/<run_name>`.
 
+Cross-validation (5 folds, single seed, 50 epochs is the fixed protocol):
+`folds_dir=configs/cycle_aware/folds/gymnastics` runs the folds sequentially;
+on the cluster use the job scripts in `pegasus/` (one gpu job per fold) and
+`python -m gymnastics.fusion.cycle_aware.summarize <sweep_dir>` afterwards.
+
 ### Testing
 
 ```bash
@@ -294,7 +299,6 @@ Presets: `no_film`, `no_cross_view`, `no_short_motion`, `no_long_motion`,
 - `docs/`: current workflow, module, and runbook documentation.
 - `notebooks/`: exploratory analysis separated from importable code.
 - `scripts/`: operational scripts only.
-- `legacy/`: frozen historical code excluded from installation and default tests.
 - `third_party/`: pinned upstream repositories.
 - `paper/image_and_vision_computing/`: local manuscript workspace; generated builds are not
   part of the Python package.

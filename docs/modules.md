@@ -23,8 +23,6 @@ All active code belongs to the `gymnastics` package under `src/`.
   evaluation layer may read that data.
 - Project-specific SAM3D adapters may import the pinned third-party checkout;
   upstream source must not be copied into `src/gymnastics`.
-- Historical preprocessing remains in `legacy/prepare_dataset/` and is excluded
-  from installation and default tests.
 - Runtime files belong below `local/`, never inside an importable package.
 
 ## Supporting directories

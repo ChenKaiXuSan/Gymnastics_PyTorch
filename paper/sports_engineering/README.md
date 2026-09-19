@@ -1,8 +1,7 @@
 # Sports Engineering submission candidate
 
 This directory is an independent journal-formatted version of the two-view 3D
-pose-fusion paper. The earlier manuscript remains unchanged in
-`../neurocomputing/`.
+pose-fusion paper.
 
 The article is positioned as an evaluation of a low-infrastructure
 post-estimation workflow. Its central evidence is that body-frame

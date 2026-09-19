@@ -21,7 +21,6 @@ DEFAULT_FUSED_ROOT = Path("local/runs/fuse_experiments")
 # default for this comparison).
 DEFAULT_FUSED_METHOD = "avg_body_current"
 DEFAULT_TRIANGULATED_ROOT = Path("/home/data/xchen/gymnastics/sam3d_triangulated/person")
-# Matches build_fuse_report.py's CMP_DIR so the report picks up fresh comparisons.
 DEFAULT_OUT_DIR = Path("local/runs/analysis/fused_vs_triangulated")
 PELVIS_INDICES = (9, 10)
 SOURCES = ("face", "side", "fuse")

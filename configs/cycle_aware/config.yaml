@@ -24,6 +24,12 @@ num_cycles: 2
 
 seed: 0
 run_name: ${data.name}_${model.name}_seed${seed}
+# Cross-validation sweep: a directory of fold files (fold_01.json, ...). When set,
+# one run per fold is executed below <output_root>/<run_name>/fold_NN and a
+# summary.json/summary.csv with per-fold test metrics and mean +- sd is written.
+# fold_ids limits the sweep to the listed fold numbers (null = all files).
+folds_dir: null
+fold_ids: null
 # All outputs (config, checkpoints, CSV logs) go below this ignored root.
 output_root: local/runs/cycle_aware
 # Run trainer.test on the held-out split once fitting finishes.
