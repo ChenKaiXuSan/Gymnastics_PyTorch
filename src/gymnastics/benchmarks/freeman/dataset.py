@@ -29,6 +29,14 @@ def _read_lines(path: Path) -> tuple[str, ...]:
     )
 
 
+def _read_ignore_list(shared_path: Path) -> frozenset[str]:
+    """Sessions FreeMan ships as unusable (e.g. a view was never recorded)."""
+    path = shared_path / "ignore_list.txt"
+    if not path.is_file():
+        return frozenset()
+    return frozenset(_read_lines(path))
+
+
 def _validation_split_path(root: Path) -> Path:
     candidates = [
         path
@@ -178,6 +186,7 @@ def load_subject_sessions(
     subject_path = Path(subject_root).resolve()
     shared_path = Path(shared_root).resolve()
     subject_id = _subject_from_root(subject_path)
+    ignored_sessions = _read_ignore_list(shared_path)
     sessions: list[FreeManSession] = []
     seen: set[tuple[int, str]] = set()
     for fps_value in fps_values:
@@ -196,6 +205,8 @@ def load_subject_sessions(
         for session_id in session_ids:
             session_subject = _subject_from_session(session_id)
             if session_subject != subject_id:
+                continue
+            if session_id in ignored_sessions:
                 continue
             identity = (fps, session_id)
             if identity in seen:

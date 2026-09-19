@@ -47,6 +47,11 @@ _COMMANDS = {
         "main",
         True,
     ),
+    "benchmark:freeman-train": (
+        "gymnastics.benchmarks.freeman.training_cli",
+        "main",
+        True,
+    ),
     "benchmark:unity": ("gymnastics.benchmarks.unity.cli", "main", True),
 }
 
@@ -110,6 +115,11 @@ def _parser() -> argparse.ArgumentParser:
     benchmark_commands.add_parser(
         "freeman",
         help="run the full-release FreeMan benchmark",
+        add_help=False,
+    )
+    benchmark_commands.add_parser(
+        "freeman-train",
+        help="train and evaluate the fusion model on FreeMan subject-disjoint folds",
         add_help=False,
     )
     benchmark_commands.add_parser(
