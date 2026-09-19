@@ -11,6 +11,14 @@ Cross-validation (one run per fold file, then a summary):
     conda run -n gymnastic gymnastics fuse cycle-aware data=gymnastics \
         folds_dir=configs/cycle_aware/folds/gymnastics run_name=gym_v1_5fold
 
+Transfer / evaluation of an existing checkpoint (no training):
+
+    conda run -n gymnastic gymnastics fuse cycle-aware data=gymnastics test_only=true \
+        checkpoint=local/runs/cycle_aware/freeman_all40_v1_reference_supervised_5fold_seed0/fold_01/checkpoints/last.ckpt
+
+``checkpoint`` without ``test_only`` initialises the model from those weights
+and then trains (fine-tuning).
+
 Configuration is composed from ``configs/cycle_aware`` (``config.yaml`` and
 its groups ``model``, ``data``, ``loss``, ``corruption``, ``trainer`` and
 ``experiment``); every argument is a Hydra override.  Outputs (checkpoints,
@@ -63,15 +71,24 @@ def compose_config(overrides: Sequence[str] = (), *, config_name: str = "config"
 
 
 def build_module(cfg: DictConfig) -> CycleAwareFusionModule:
-    """Instantiate the LightningModule from the ``model``, ``loss`` and ``optimizer`` nodes."""
+    """Instantiate the LightningModule from the ``model``, ``loss``, ``optimizer`` and ``evaluation`` nodes.
+
+    With ``cfg.checkpoint`` set, the model weights are loaded from that
+    checkpoint (architecture taken from the checkpoint's hyper-parameters) and
+    the loss / optimizer / evaluation settings come from ``cfg``.
+    """
+    loss = OmegaConf.to_container(cfg.loss, resolve=True)
+    optimizer = OmegaConf.to_container(cfg.optimizer, resolve=True)
+    evaluation = OmegaConf.to_container(cfg.get("evaluation") or {}, resolve=True)
+    checkpoint = cfg.get("checkpoint")
+    if checkpoint:
+        path = Path(str(checkpoint))
+        path = path if path.is_absolute() else PROJECT_ROOT / path
+        return CycleAwareFusionModule.load_from_checkpoint(str(path), map_location="cpu", loss_config=loss, optimizer_config=optimizer, evaluation_config=evaluation)
     model = OmegaConf.to_container(cfg.model, resolve=True)
     assert isinstance(model, dict)
     model.pop("name", None)
-    return CycleAwareFusionModule(
-        CycleAwareModelConfig.from_mapping(model),
-        OmegaConf.to_container(cfg.loss, resolve=True),
-        OmegaConf.to_container(cfg.optimizer, resolve=True),
-    )
+    return CycleAwareFusionModule(CycleAwareModelConfig.from_mapping(model), loss, optimizer, evaluation)
 
 
 def build_trainer(cfg: DictConfig, run_dir: Path) -> pl.Trainer:
@@ -127,15 +144,18 @@ def run(cfg: DictConfig) -> dict[str, Any]:
     datamodule = build_datamodule(OmegaConf.to_container(cfg.data, resolve=True))  # type: ignore[arg-type]
     module = build_module(cfg)
     trainer = build_trainer(cfg, run_dir)
-    trainer.fit(module, datamodule=datamodule)
-    result: dict[str, Any] = {
-        "run_dir": str(run_dir),
-        "data": datamodule.summary(),
-        "fit_metrics": {k: float(v) for k, v in trainer.logged_metrics.items()},
-    }
-    if bool(cfg.get("test_after_fit", True)) and not bool(cfg.trainer.get("fast_dev_run", False)):
+    test_only = bool(cfg.get("test_only", False))
+    if test_only and not cfg.get("checkpoint"):
+        raise ValueError("test_only=true requires checkpoint=<path>")
+    result: dict[str, Any] = {"run_dir": str(run_dir), "checkpoint": str(cfg.get("checkpoint") or ""), "test_only": test_only}
+    if not test_only:
+        trainer.fit(module, datamodule=datamodule)
+        result["fit_metrics"] = {k: float(v) for k, v in trainer.logged_metrics.items()}
+    result["data"] = datamodule.summary()
+    if (test_only or bool(cfg.get("test_after_fit", True))) and not bool(cfg.trainer.get("fast_dev_run", False)):
         test_metrics = trainer.test(module, datamodule=datamodule, verbose=False)
         result["test_metrics"] = {k: float(v) for row in test_metrics for k, v in row.items()}
+        result["data"] = datamodule.summary()
     (run_dir / "result.json").write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
     return result
 

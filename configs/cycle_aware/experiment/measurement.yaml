@@ -1,0 +1,7 @@
+# @package _global_
+# Measurement-quality regularisation: stronger periodicity plus the half-cycle
+# (turn-around) symmetry prior; judged by ROM / peak-velocity retention, not MPJPE.
+run_name: ${data.name}_${model.name}_measurement_seed${seed}
+loss:
+  periodicity_weight: 0.5
+  half_symmetry_weight: 0.2

@@ -2,10 +2,16 @@
 recovery_weight: 1.0
 # "smooth_l1", "l1" or "l2".
 recovery_kind: smooth_l1
+# "pseudo": clean two-view target (label-free, default).
+# "reference": attached reference pose where available (needs
+# data.train_with_reference=true; not allowed for the private data).
+recovery_target: pseudo
 # Huber transition point in canonical units.
 recovery_beta: 0.05
 # Maximum clean-view disagreement (canonical units) for an averaged target.
 consensus_distance: 0.15
 periodicity_weight: 0.1
 symmetry_weight: 0.1
+# Half-cycle (turn-around) time-reversal symmetry; 0 = off.
+half_symmetry_weight: 0.0
 residual_weight: 0.01

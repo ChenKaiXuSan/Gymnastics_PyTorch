@@ -73,10 +73,18 @@ class DataConfig:
         window: Window geometry.
         phase_normalize: Resample cycles to ``samples_per_cycle`` samples.
         attach_reference: Attach reference poses to val/test samples when the
-            adapter can provide them (never used in training).
+            adapter can provide them.
+        train_with_reference: Also keep reference poses on *training* samples
+            (needed by ``loss.recovery_target=reference``).  Off by default so
+            the label-free protocol stays leakage-free; adapters whose
+            reference is derived from the inputs (private triangulation)
+            refuse it.
         corruption: Training corruption parameters.
         validate_with_corruption: Replay a fixed corruption on validation
             windows so the recovery loss is comparable across epochs.
+        test_with_corruption: Replay the fixed corruption on test windows too,
+            which enables the corrupted-joint reference metrics (robustness
+            evaluation); off by default (clean-input evaluation).
         split: Explicit subject split.  When any of its three lists is
             non-empty the whole split is used as given (empty lists stay
             empty).
@@ -98,8 +106,10 @@ class DataConfig:
     window: WindowConfig = field(default_factory=WindowConfig)
     phase_normalize: bool = True
     attach_reference: bool = True
+    train_with_reference: bool = False
     corruption: CorruptionConfig = field(default_factory=CorruptionConfig)
     validate_with_corruption: bool = True
+    test_with_corruption: bool = False
     split: SplitSpec = field(default_factory=SplitSpec)
     fold_json: str | None = None
     max_subjects_per_split: int | None = None
@@ -199,11 +209,17 @@ class DualViewDataModule(pl.LightningDataModule, ABC):
             raise ValueError(f"split references unknown subjects: {unknown}")
         return split
 
+    @property
+    def reference_allowed_in_training(self) -> bool:
+        """Whether this adapter's reference may supervise training (override to refuse)."""
+        return True
+
     def _samples_for(self, split: str) -> list[DualViewSample]:
         members = set(self.split.members(split))
         selected = [sample for sample in self.samples if sample.subject_id in members]
-        if split == "train" or not self.config.attach_reference:
-            # References are evaluation-only: strip them from training samples.
+        keep_in_training = self.config.train_with_reference and self.reference_allowed_in_training
+        if (split == "train" and not keep_in_training) or not self.config.attach_reference:
+            # References are evaluation-only unless train_with_reference is set.
             selected = [replace(sample, reference=None, reference_valid=None) if sample.reference is not None else sample for sample in selected]
         return selected
 
@@ -230,6 +246,8 @@ class DualViewDataModule(pl.LightningDataModule, ABC):
         return samples
 
     def setup(self, stage: str | None = None) -> None:
+        if self.config.train_with_reference and not self.reference_allowed_in_training:
+            raise ValueError(f"{type(self).__name__}: its reference is derived from the fused inputs and must not supervise training")
         if not self.samples:
             self.samples = self._load_or_convert()
             if not self.samples:
@@ -243,6 +261,8 @@ class DualViewDataModule(pl.LightningDataModule, ABC):
             if split == "train":
                 corruption = self.config.corruption
             elif split == "val" and self.config.validate_with_corruption:
+                corruption = self.config.corruption
+            elif split == "test" and self.config.test_with_corruption:
                 corruption = self.config.corruption
             self._datasets[split] = CycleWindowDataset(
                 self._samples_for(split),

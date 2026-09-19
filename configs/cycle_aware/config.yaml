@@ -11,6 +11,7 @@ defaults:
   - corruption: default
   - trainer: default
   - optimizer: default
+  - evaluation: default
   # Optional ablation / experiment preset (configs/cycle_aware/experiment/*.yaml);
   # it is composed last so its @package _global_ values win.
   - experiment: null
@@ -30,6 +31,10 @@ run_name: ${data.name}_${model.name}_seed${seed}
 # fold_ids limits the sweep to the listed fold numbers (null = all files).
 folds_dir: null
 fold_ids: null
+# Existing checkpoint: with test_only=true it is evaluated on the selected data
+# (transfer / zero-shot); without, training starts from its weights (fine-tune).
+checkpoint: null
+test_only: false
 # All outputs (config, checkpoints, CSV logs) go below this ignored root.
 output_root: local/runs/cycle_aware
 # Run trainer.test on the held-out split once fitting finishes.

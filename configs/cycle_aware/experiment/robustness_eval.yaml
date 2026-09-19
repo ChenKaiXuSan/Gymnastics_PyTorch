@@ -1,0 +1,6 @@
+# @package _global_
+# Robustness evaluation: replay the fixed corruption on the test windows so the
+# corrupted-joint reference metrics (pa_mpjpe_corrupted vs _base) are logged.
+run_name: ${data.name}_${model.name}_robustness_seed${seed}
+data:
+  test_with_corruption: true

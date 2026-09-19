@@ -1,9 +1,11 @@
 """Self-supervised objectives of the cycle-aware fusion model.
 
-No 3D ground truth is used anywhere in training.  Four objectives shape the
-fused pose ``P_hat`` and the residual ``Delta_P`` returned by the model:
+By default no 3D ground truth is used anywhere in training.  Five objectives
+shape the fused pose ``P_hat`` and the residual ``Delta_P`` returned by the
+model:
 
-    L = w_rec * L_recovery + w_per * L_periodicity + w_sym * L_symmetry + w_res * L_residual
+    L = w_rec * L_recovery + w_per * L_periodicity + w_sym * L_symmetry
+        + w_half * L_half_symmetry + w_res * L_residual
 
 Recovery / reconstruction (``L_recovery``):
     The model receives *corrupted* views (see :mod:`.corruptions`) and must
@@ -20,6 +22,29 @@ Recovery / reconstruction (``L_recovery``):
     threshold prevents the average of two strongly disagreeing views, which is
     usually wrong for both, from becoming a target.  Frames the corruption did
     not touch contribute an identity term that keeps clean inputs unchanged.
+
+    On clean inputs this target *is* the two-view average, so a model trained
+    with it alone has no reason to deviate from the average when both views
+    look plausible (observed on the private data: learned == arithmetic).
+    ``recovery_target = "reference"`` replaces the target by an external
+    reference pose wherever one is attached to the training window (FreeMan
+    multi-view references, Unity ground truth; never the triangulated
+    pseudo-reference of the private data, which is derived from the same
+    views).  The reference lives in its own world frame, so it is first
+    brought into the frame of the (detached) weighted base pose by a
+    per-frame similarity (Procrustes) transform; joints without a reference
+    fall back to the pseudo-target.  This gives the reliability head and the
+    residual a real signal about which view is closer to the truth.
+
+Half-cycle (turn-around) symmetry (``L_half_symmetry``):
+    Cycles with a recorded middle are resampled so that the middle sits at
+    phase 0.5; the return half is then approximately the time reversal of the
+    outward half, i.e. sample ``k`` of a cycle mirrors sample ``S - k``:
+
+        L_half_symmetry = mean_k |P_hat(start + k) - P_hat(start + S - k)|^2,  0 < k < S/2
+
+    It is a measurement-quality prior (cycle shape), off by default; real
+    motion has some hysteresis, so its weight must stay small.
 
 Periodicity (``L_periodicity``):
     In phase-normalised windows, sample ``t`` and sample ``t + S`` (``S =
@@ -62,6 +87,7 @@ from .outputs import PoseFusionOutput
 from .skeleton import CommonSkeleton
 
 RECOVERY_KINDS = ("smooth_l1", "l1", "l2")
+RECOVERY_TARGETS = ("pseudo", "reference")
 
 
 @dataclass(frozen=True)
@@ -71,25 +97,32 @@ class LossConfig:
     Attributes:
         recovery_weight: Weight of the recovery term.
         recovery_kind: ``"smooth_l1"``, ``"l1"`` or ``"l2"``.
+        recovery_target: ``"pseudo"`` (clean two-view target, label-free) or
+            ``"reference"`` (attached reference pose where available).
         recovery_beta: Transition point of the smooth-L1 penalty (canonical units).
         consensus_distance: Maximum clean-view disagreement for an averaged target.
         periodicity_weight: Weight of the periodicity term.
         symmetry_weight: Weight of the bilateral bone-length term.
+        half_symmetry_weight: Weight of the half-cycle (turn-around) symmetry term.
         residual_weight: Weight of the residual regulariser.
     """
 
     recovery_weight: float = 1.0
     recovery_kind: str = "smooth_l1"
+    recovery_target: str = "pseudo"
     recovery_beta: float = 0.05
     consensus_distance: float = 0.15
     periodicity_weight: float = 0.1
     symmetry_weight: float = 0.1
+    half_symmetry_weight: float = 0.0
     residual_weight: float = 0.01
 
     def __post_init__(self) -> None:
         if self.recovery_kind not in RECOVERY_KINDS:
             raise ValueError(f"recovery_kind must be one of {RECOVERY_KINDS}")
-        if min(self.recovery_weight, self.periodicity_weight, self.symmetry_weight, self.residual_weight) < 0:
+        if self.recovery_target not in RECOVERY_TARGETS:
+            raise ValueError(f"recovery_target must be one of {RECOVERY_TARGETS}")
+        if min(self.recovery_weight, self.periodicity_weight, self.symmetry_weight, self.half_symmetry_weight, self.residual_weight) < 0:
             raise ValueError("loss weights must be non-negative")
         if self.recovery_beta <= 0 or self.consensus_distance < 0:
             raise ValueError("recovery_beta must be positive and consensus_distance non-negative")
@@ -123,6 +156,7 @@ class LossBreakdown:
         recovery: Unweighted recovery term.
         periodicity: Unweighted periodicity term.
         symmetry: Unweighted bilateral symmetry term.
+        half_symmetry: Unweighted half-cycle symmetry term.
         residual: Unweighted residual regulariser.
         total: Weighted sum used for optimisation.
     """
@@ -130,6 +164,7 @@ class LossBreakdown:
     recovery: Tensor
     periodicity: Tensor
     symmetry: Tensor
+    half_symmetry: Tensor
     residual: Tensor
     total: Tensor
 
@@ -139,6 +174,7 @@ class LossBreakdown:
             "recovery": self.recovery,
             "periodicity": self.periodicity,
             "symmetry": self.symmetry,
+            "half_symmetry": self.half_symmetry,
             "residual": self.residual,
             "total": self.total,
         }
@@ -246,6 +282,77 @@ def residual_loss(delta: Tensor, valid: Tensor) -> Tensor:
     return masked_mean(delta.square().sum(dim=-1), valid.bool())
 
 
+def reference_target(
+    reference: Tensor,
+    reference_valid: Tensor,
+    anchor: Tensor,
+    anchor_valid: Tensor,
+) -> tuple[Tensor, Tensor]:
+    """Bring a world-frame reference into the frame of ``anchor`` per frame.
+
+    A similarity (Procrustes) transform is fitted per frame on the joints
+    valid in both, from the reference onto the detached anchor, so the target
+    keeps the reference's internal configuration but the anchor's rotation,
+    translation and scale.  Frames with fewer than three usable joints get no
+    target.
+
+    Args:
+        reference: ``[B, T, J, 3]`` reference pose (world frame, any units).
+        reference_valid: ``[B, T, J]`` validity of the reference.
+        anchor: ``[B, T, J, 3]`` pose defining the target frame (detached).
+        anchor_valid: ``[B, T, J]`` validity of the anchor.
+
+    Returns:
+        Tuple ``(target, target_valid)`` with shapes ``[B, T, J, 3]`` and
+        ``[B, T, J]``.
+    """
+    from .metrics import procrustes_align
+
+    batch, frames, joints, _ = reference.shape
+    usable = reference_valid.bool() & anchor_valid.bool()
+    with torch.no_grad():
+        aligned = procrustes_align(
+            reference.reshape(batch * frames, joints, 3),
+            anchor.detach().reshape(batch * frames, joints, 3),
+            usable.reshape(batch * frames, joints),
+        ).reshape(batch, frames, joints, 3)
+        enough = usable.sum(dim=-1, keepdim=True) >= 3
+    target_valid = usable & enough
+    return torch.where(target_valid[..., None], aligned, torch.zeros_like(aligned)), target_valid
+
+
+def half_symmetry_loss(prediction: Tensor, valid: Tensor, phase: Tensor, phase_valid: Tensor, cycle_index: Tensor, half_index: Tensor, samples_per_cycle: int) -> Tensor:
+    """Time-reversal symmetry about the cycle middle.
+
+    Sample ``k`` of a cycle (``0 < k < S/2``) is compared with sample
+    ``S - k`` of the same cycle.  Only cycles resampled with a known middle
+    (``half_index >= 0``) participate.
+
+    Args:
+        prediction: ``[B, T, J, 3]`` fused pose.
+        valid: ``[B, T, J]`` validity of the fused pose.
+        phase: ``[B, T]`` phase in ``[0, 1)`` (multiples of ``1/S``).
+        phase_valid: ``[B, T]`` bool.
+        cycle_index: ``[B, T]`` cycle index (``-1`` outside cycles).
+        half_index: ``[B, T]`` half index (``-1`` when no middle is known).
+        samples_per_cycle: ``S``.
+
+    Returns:
+        Scalar loss (zero when no mirror pairs exist).
+    """
+    batch, frames = phase.shape
+    S = int(samples_per_cycle)
+    k = torch.round(phase * S).long()
+    mirror = torch.arange(frames, device=phase.device)[None, :] - 2 * k + S  # t' = t - k + (S - k)
+    first_half = phase_valid & (half_index == 0) & (k > 0) & (mirror >= 0) & (mirror < frames)
+    mirror_safe = mirror.clamp(0, frames - 1)
+    same_cycle = torch.gather(cycle_index, 1, mirror_safe) == cycle_index
+    mirrored_valid = torch.gather(valid.bool(), 1, mirror_safe[..., None].expand(-1, -1, valid.shape[-1]))
+    mirrored = torch.gather(prediction, 1, mirror_safe[..., None, None].expand(-1, -1, *prediction.shape[2:]))
+    mask = (first_half & same_cycle)[..., None] & valid.bool() & mirrored_valid
+    return masked_mean((prediction - mirrored).square().sum(dim=-1), mask)
+
+
 def compute_losses(
     output: PoseFusionOutput,
     batch: Mapping[str, Any],
@@ -279,18 +386,33 @@ def compute_losses(
     target, target_valid = pseudo_target(clean_a, clean_b, clean_valid_a, clean_valid_b, consensus_distance=config.consensus_distance)
     target_valid = target_valid & frame_mask[..., None]
     fused_valid = output.valid & frame_mask[..., None]
+    if config.recovery_target == "reference":
+        reference_valid = batch.get("reference_valid")
+        if reference_valid is not None and bool(reference_valid.any()):
+            ref_target, ref_valid = reference_target(batch["reference"], reference_valid & frame_mask[..., None], output.base_pose, fused_valid)
+            # Reference where available, pseudo-target elsewhere.
+            target = torch.where(ref_valid[..., None], ref_target, target)
+            target_valid = target_valid | ref_valid
     recovery = recovery_loss(output.pose, fused_valid, target, target_valid, kind=config.recovery_kind, beta=config.recovery_beta)
     cycle_index = batch.get("cycle_index")
     if cycle_index is None:
         periodicity = output.pose.new_zeros(())
+        half_symmetry = output.pose.new_zeros(())
     else:
-        periodicity = periodicity_loss(output.pose, fused_valid, cycle_index.to(output.pose.device), samples_per_cycle)
+        cycle_index = cycle_index.to(output.pose.device)
+        periodicity = periodicity_loss(output.pose, fused_valid, cycle_index, samples_per_cycle)
+        half_index = batch.get("half_index")
+        if config.half_symmetry_weight > 0 and half_index is not None:
+            half_symmetry = half_symmetry_loss(output.pose, fused_valid, batch["phase"].to(output.pose.device), batch["phase_valid"].to(output.pose.device), cycle_index, half_index.to(output.pose.device), samples_per_cycle)
+        else:
+            half_symmetry = output.pose.new_zeros(())
     symmetry = symmetry_loss(output.pose, fused_valid, skeleton)
     residual = residual_loss(output.delta_pose, fused_valid)
     total = (
         config.recovery_weight * recovery
         + config.periodicity_weight * periodicity
         + config.symmetry_weight * symmetry
+        + config.half_symmetry_weight * half_symmetry
         + config.residual_weight * residual
     )
-    return LossBreakdown(recovery=recovery, periodicity=periodicity, symmetry=symmetry, residual=residual, total=total)
+    return LossBreakdown(recovery=recovery, periodicity=periodicity, symmetry=symmetry, half_symmetry=half_symmetry, residual=residual, total=total)

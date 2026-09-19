@@ -12,11 +12,16 @@ window:
   eval_stride: null
 # Resample every annotated cycle to samples_per_cycle samples.
 phase_normalize: true
-# Attach reference poses (evaluation splits only; never used in training).
+# Attach reference poses to validation / test samples.
 attach_reference: true
+# Keep references on training samples too (loss.recovery_target=reference).
+# Refused by the gymnastics adapter (its reference is derived from the inputs).
+train_with_reference: false
 corruption: ${corruption}
 # Replay a fixed corruption on validation windows for comparable losses.
 validate_with_corruption: true
+# Replay the fixed corruption on test windows (robustness evaluation).
+test_with_corruption: false
 # Explicit subject split: if any list is non-empty the whole split is used as
 # given (empty lists stay empty); all empty = adapter default.
 split:

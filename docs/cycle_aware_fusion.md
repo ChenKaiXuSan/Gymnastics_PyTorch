@@ -105,7 +105,26 @@ L = w_rec · L_recovery + w_per · L_periodicity + w_sym · L_symmetry + w_res �
 * `L_periodicity`: squared distance between samples one cycle apart in
   consecutive cycles (active only where phase is valid).
 * `L_symmetry`: absolute difference of mirrored bone lengths.
+* `L_half_symmetry` (off by default, preset `experiment=measurement`):
+  time-reversal symmetry about the recorded cycle middle, sample `k` versus
+  sample `S − k` of the same cycle; a cycle-shape prior for measurement
+  quality.
 * `L_residual`: mean squared `ΔP`.
+
+**Why the label-free model equals the average on clean inputs.** With the
+pseudo-target, clean consensus frames have the two-view average as their
+optimum, so the reliability head stays at 0.5 / 0.5 and the residual at
+zero; the 5-fold private result (PA-MPJPE 27.5 mm for both) confirms it.
+The model only differs from the average when an input is corrupted (−44 %
+error on corrupted joints).  `loss.recovery_target=reference` with
+`data.train_with_reference=true` (preset `experiment=reference_supervised`)
+replaces the target by the attached reference pose, brought into the frame
+of the detached weighted base by a per-frame similarity transform, on
+datasets whose reference is independent of the inputs (FreeMan, Unity); the
+private adapter refuses it because its triangulated pseudo-reference is
+derived from the same two views.  A checkpoint trained that way is applied
+to the private data with `checkpoint=<path> test_only=true` (zero-shot) or
+fine-tuned label-free with `checkpoint=<path>`.
 
 ### 1.5 Evaluation
 

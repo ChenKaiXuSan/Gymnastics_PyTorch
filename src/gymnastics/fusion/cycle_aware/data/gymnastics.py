@@ -233,6 +233,11 @@ class GymnasticsDataModule(DualViewDataModule):
         return sorted({str(p) for split in ("train", "val", "test") for p in fold.get(split, [])}, key=lambda s: (len(s), s))
 
     # ----- DualViewDataModule ------------------------------------------------
+    @property
+    def reference_allowed_in_training(self) -> bool:
+        """The triangulated pseudo-reference comes from the same two views: never a training target."""
+        return False
+
     def load_samples(self) -> Sequence[DualViewSample]:
         samples: list[DualViewSample] = []
         split_root = _resolve(self.config.options.get("split_cycle_root", "local/runs/split_cycle"))

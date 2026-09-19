@@ -15,14 +15,26 @@ Steps:
     predict_step     returns the fused pose and reliability weights
 
 Logged quantities (prefix ``train/``, ``val/``, ``test/``):
-    total, recovery, periodicity, symmetry, residual      loss terms
+    total, recovery, periodicity, symmetry, half_symmetry, residual   loss terms
     weight_a_mean, weight_entropy                          reliability statistics
-    corrupted_error                                        |P_hat - P*| on corrupted joints
-    pa_mpjpe                                               Procrustes-aligned error versus
-                                                           the reference
+    corrupted_error(_base)                                 |P_hat - P*| on corrupted joints
+    pa_mpjpe(_base|_face|_side)                            Procrustes-aligned error versus the
+                                                           reference for the model, the weighted
+                                                           base and each input view
+    pa_mpjpe_corrupted(_base)                              the same restricted to corrupted joints
+                                                           (test_with_corruption)
+    svf_fraction, both_fail_fraction                       share of frames where exactly one /
+                                                           both views exceed the failure threshold
+    pa_mpjpe_svf(_base|_face|_side|_oracle)                errors on single-view-failure frames
+    rom_retention, peak_omega_retention (_base)            measurement preservation relative to
+                                                           the two inputs (and _vs_reference)
     ta_mpjpe                                               translation-aligned error, only
                                                            when the reference shares the
                                                            canonical frame (synthetic data)
+
+``EvaluationConfig`` (``configs/cycle_aware/evaluation``) sets the failure
+threshold (in reference units, metres for the real references) and which of
+the optional diagnostics run.
 
 Optimisation:
     AdamW with linear warm-up followed by cosine decay to
@@ -38,6 +50,7 @@ import pytorch_lightning as pl
 import torch
 
 from .losses import LossBreakdown, LossConfig, compute_losses, masked_mean, pseudo_target
+from .measurement import retention_ratios
 from .metrics import per_joint_error
 from .model import CycleAwareFusionModel, CycleAwareModelConfig
 from .outputs import PoseFusionOutput
@@ -82,6 +95,40 @@ class OptimizerConfig:
         return cls(**payload)
 
 
+@dataclass(frozen=True)
+class EvaluationConfig:
+    """Optional diagnostics (``configs/cycle_aware/evaluation``).
+
+    Attributes:
+        failure_threshold: Per-frame mean PA error (reference units, metres
+            for the real references) above which a view counts as failed.
+        single_view_failure: Log errors on frames where exactly one view failed.
+        per_view_error: Log the PA error of each input view.
+        measurement: Log ROM / peak-velocity retention ratios.
+    """
+
+    failure_threshold: float = 0.15
+    single_view_failure: bool = True
+    per_view_error: bool = True
+    measurement: bool = True
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any] | "EvaluationConfig" | None) -> "EvaluationConfig":
+        """Build from a mapping; ``None`` gives defaults."""
+        if value is None:
+            return cls()
+        if isinstance(value, cls):
+            return value
+        try:
+            from omegaconf import OmegaConf
+
+            if OmegaConf.is_config(value):
+                value = OmegaConf.to_container(value, resolve=True)  # type: ignore[assignment]
+        except ImportError:  # pragma: no cover
+            pass
+        return cls(**dict(value))
+
+
 class CycleAwareFusionModule(pl.LightningModule):
     """Lightning training wrapper.
 
@@ -90,6 +137,7 @@ class CycleAwareFusionModule(pl.LightningModule):
         skeleton: Common skeleton (from the model).
         loss_config: :class:`LossConfig`.
         optimizer_config: :class:`OptimizerConfig`.
+        evaluation_config: :class:`EvaluationConfig`.
     """
 
     def __init__(
@@ -97,6 +145,7 @@ class CycleAwareFusionModule(pl.LightningModule):
         model_config: CycleAwareModelConfig | Mapping[str, Any] | None = None,
         loss_config: LossConfig | Mapping[str, Any] | None = None,
         optimizer_config: OptimizerConfig | Mapping[str, Any] | None = None,
+        evaluation_config: EvaluationConfig | Mapping[str, Any] | None = None,
         *,
         skeleton: CommonSkeleton | None = None,
     ) -> None:
@@ -105,6 +154,7 @@ class CycleAwareFusionModule(pl.LightningModule):
         self.skeleton = self.model.skeleton
         self.loss_config = LossConfig.from_mapping(loss_config)
         self.optimizer_config = OptimizerConfig.from_mapping(optimizer_config)
+        self.evaluation_config = EvaluationConfig.from_mapping(evaluation_config)
         # Saved under the constructor argument names so that
         # ``load_from_checkpoint`` can rebuild the exact same architecture.
         self.save_hyperparameters(
@@ -112,6 +162,7 @@ class CycleAwareFusionModule(pl.LightningModule):
                 "model_config": self.model.config.to_dict(),
                 "loss_config": self.loss_config.to_dict(),
                 "optimizer_config": asdict(self.optimizer_config),
+                "evaluation_config": asdict(self.evaluation_config),
             }
         )
 
@@ -140,6 +191,7 @@ class CycleAwareFusionModule(pl.LightningModule):
         metrics["weight_a_mean"] = masked_mean(weight_a, valid)
         entropy = -(output.weight_a * torch.log(output.weight_a.clamp_min(1e-8)) + output.weight_b * torch.log(output.weight_b.clamp_min(1e-8)))[..., 0]
         metrics["weight_entropy"] = masked_mean(entropy, valid)
+        corrupted = None
         if "clean_a" in batch:
             target, target_valid = pseudo_target(batch["clean_a"], batch["clean_b"], batch["clean_valid_a"], batch["clean_valid_b"], consensus_distance=self.loss_config.consensus_distance)
             corrupted = (batch["corruption_mask_a"] | batch["corruption_mask_b"]) & target_valid & valid
@@ -149,6 +201,7 @@ class CycleAwareFusionModule(pl.LightningModule):
             metrics["corrupted_error_base"] = masked_mean(base_error, corrupted)
         reference_valid = batch.get("reference_valid")
         if reference_valid is not None and bool(reference_valid.any()):
+            reference = batch["reference"]
             usable = reference_valid & valid
             alignments = [("pa_mpjpe", "procrustes")]
             canonical = batch.get("reference_canonical")
@@ -156,11 +209,64 @@ class CycleAwareFusionModule(pl.LightningModule):
             # lives in the same canonical body frame as the prediction.
             if canonical is not None and bool(canonical.all()):
                 alignments.append(("ta_mpjpe", "translation"))
+            errors: dict[str, torch.Tensor] = {}
+            masks: dict[str, torch.Tensor] = {}
             for name, align in alignments:
-                error, mask = per_joint_error(output.pose, batch["reference"], usable, align=align)
-                metrics[name] = masked_mean(error, mask)
-                base_error, _ = per_joint_error(output.base_pose, batch["reference"], usable, align=align)
-                metrics[f"{name}_base"] = masked_mean(base_error, mask)
+                errors[name], masks[name] = per_joint_error(output.pose, reference, usable, align=align)
+                metrics[name] = masked_mean(errors[name], masks[name])
+                base_error, _ = per_joint_error(output.base_pose, reference, usable, align=align)
+                metrics[f"{name}_base"] = masked_mean(base_error, masks[name])
+                if name == "pa_mpjpe":
+                    errors["base"] = base_error
+            cfg = self.evaluation_config
+            if cfg.per_view_error or cfg.single_view_failure:
+                face_error, face_mask = per_joint_error(batch["pose_a"], reference, reference_valid & batch["valid_a"] & frame_mask, align="procrustes")
+                side_error, side_mask = per_joint_error(batch["pose_b"], reference, reference_valid & batch["valid_b"] & frame_mask, align="procrustes")
+                if cfg.per_view_error:
+                    metrics["pa_mpjpe_face"] = masked_mean(face_error, face_mask)
+                    metrics["pa_mpjpe_side"] = masked_mean(side_error, side_mask)
+            if corrupted is not None:
+                # Reference error restricted to the joints the corruption touched.
+                metrics["pa_mpjpe_corrupted"] = masked_mean(errors["pa_mpjpe"], masks["pa_mpjpe"] & corrupted)
+                metrics["pa_mpjpe_corrupted_base"] = masked_mean(errors["base"], masks["pa_mpjpe"] & corrupted)
+            if cfg.single_view_failure:
+                # Frame-level mean error of each view; a view "fails" above the threshold.
+                def frame_error(error: torch.Tensor, mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+                    count = mask.sum(dim=-1)
+                    return torch.where(mask, error, torch.zeros_like(error)).sum(dim=-1) / count.clamp_min(1), count > 0
+                fa, fa_ok = frame_error(face_error, face_mask)
+                fb, fb_ok = frame_error(side_error, side_mask)
+                measured = fa_ok & fb_ok & batch["frame_mask"]
+                fail_a, fail_b = fa > cfg.failure_threshold, fb > cfg.failure_threshold
+                single = measured & (fail_a ^ fail_b)
+                both = measured & fail_a & fail_b
+                denominator = measured.sum().clamp_min(1).to(fa.dtype)
+                metrics["svf_fraction"] = single.sum().to(fa.dtype) / denominator
+                metrics["both_fail_fraction"] = both.sum().to(fa.dtype) / denominator
+                if bool(single.any()):
+                    joint_single = single[..., None] & masks["pa_mpjpe"]
+                    metrics["pa_mpjpe_svf"] = masked_mean(errors["pa_mpjpe"], joint_single)
+                    metrics["pa_mpjpe_svf_base"] = masked_mean(errors["base"], joint_single)
+                    metrics["pa_mpjpe_svf_face"] = masked_mean(face_error, single[..., None] & face_mask)
+                    metrics["pa_mpjpe_svf_side"] = masked_mean(side_error, single[..., None] & side_mask)
+                    # Oracle: the better view on every single-failure frame.
+                    oracle = torch.where(fail_a[..., None], side_error, face_error)
+                    oracle_mask = torch.where(fail_a[..., None], side_mask, face_mask)
+                    metrics["pa_mpjpe_svf_oracle"] = masked_mean(oracle, single[..., None] & oracle_mask)
+            if cfg.measurement and "cycle_index" in batch:
+                cycle_index = batch["cycle_index"]
+                delta_t = batch["delta_t"]
+                for prefix, pose, pose_valid in (("", output.pose, valid), ("base_", output.base_pose, valid)):
+                    ratios = retention_ratios(pose, pose_valid, batch["pose_a"], batch["valid_a"] & frame_mask, batch["pose_b"], batch["valid_b"] & frame_mask, cycle_index, delta_t, self.skeleton, reference=reference, reference_valid=reference_valid & frame_mask)
+                    for name, value in ratios.items():
+                        if torch.isfinite(value):
+                            metrics[f"{name}_base" if prefix else name] = value
+        elif self.evaluation_config.measurement and "cycle_index" in batch:
+            for prefix, pose in (("", output.pose), ("_base", output.base_pose)):
+                ratios = retention_ratios(pose, valid, batch["pose_a"], batch["valid_a"] & frame_mask, batch["pose_b"], batch["valid_b"] & frame_mask, batch["cycle_index"], batch["delta_t"], self.skeleton)
+                for name, value in ratios.items():
+                    if torch.isfinite(value):
+                        metrics[f"{name}{prefix}"] = value
         return metrics
 
     def _log_all(self, prefix: str, losses: LossBreakdown | None, metrics: Mapping[str, torch.Tensor], batch_size: int) -> None:

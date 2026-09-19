@@ -1,0 +1,10 @@
+# Optional evaluation diagnostics (see lightning_module.EvaluationConfig).
+# Per-frame mean PA error above which an input view counts as "failed";
+# reference units (metres for the triangulated, FreeMan and Unity references).
+failure_threshold: 0.15
+# Errors on frames where exactly one view failed (model / base / views / oracle).
+single_view_failure: true
+# PA error of each input view on its own.
+per_view_error: true
+# ROM and peak angular-velocity retention (measurement preservation).
+measurement: true
