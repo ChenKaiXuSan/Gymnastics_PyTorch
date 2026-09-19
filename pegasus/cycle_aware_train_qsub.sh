@@ -13,8 +13,8 @@
 #   EPOCHS     epochs (default 50)
 #   OVERRIDES  extra Hydra overrides, space separated, e.g. "model.hidden_dim=256 loss.periodicity_weight=0.3"
 #
-#PBS -A SKIING
-#PBS -q gpu
+#PBS -A HP260146
+#PBS -q gen_S
 #PBS -l gpunum_job=1
 #PBS -l elapstim_req=12:00:00
 #PBS -b 1

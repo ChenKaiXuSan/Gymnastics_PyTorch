@@ -1,6 +1,9 @@
 # Pegasus job scripts (cycle-aware fusion)
 
-NQSV job scripts for the cluster gpu queue (`#PBS -A SKIING -q gpu`). The
+NQSV job scripts. Default budget `HP260146` on queue `gen_S` (the HP260146
+project cannot use the `gpu` queue); `ACCOUNT=SKIING QUEUE=gpu` switches to
+the SKIING budget on the gpu queue. `cycle_aware_fold_qsub_hp.sh` is an
+equivalent copy of the fold script pinned to `gen_S`. The
 repository is mounted at `/work/HP260146/chenkaixu/Gymnastics_PyTorch` on
 the nodes and the private data root at `/work/HP260146/chenkaixu/gymnastics`;
 the jobs use the `sam_3d_body` conda environment (torch 2.10 + CUDA,
