@@ -39,7 +39,7 @@ def test_window_dataset_phase_normalises_and_pads(skeleton):
     halves = with_mids[0]["half_index"]
     assert halves[:4].tolist() == [0] * 4 and halves[4:8].tolist() == [1] * 4 and halves[8:12].tolist() == [0] * 4
     torch.testing.assert_close(item["delta_t"], torch.full((16,), 2.0 / 30.0))
-    assert item["reference_valid"].all()
+    assert item["reference_valid"].all() and not bool(item["reference_canonical"])
     padded = dataset[3]
     assert padded["frame_mask"][:8].all() and not padded["frame_mask"][8:].any()
     assert not padded["reference_valid"].any()

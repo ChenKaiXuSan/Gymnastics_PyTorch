@@ -193,6 +193,16 @@ Every run writes `config.yaml`, `logs/` (CSV), `checkpoints/` and
 `result.json` below `local/runs/cycle_aware/<run_name>`. `python -m
 gymnastics.fusion.cycle_aware.train` is equivalent to the CLI.
 
+On a large shared CPU box cap the threads and keep the DataLoader in-process
+(`trainer.num_threads=32 data.num_workers=0`); the default of one torch
+thread per core plus forked workers oversubscribes the machine. Measured on
+HP260146 (96 cores, no GPU): about 0.5 s per batch of 8 windows, i.e. roughly
+1.5 min per epoch over the 96 training people.
+
+`ta_mpjpe` (translation-only alignment) is logged only for references that
+share the canonical body frame (synthetic data); for the triangulated,
+FreeMan and Unity references use `pa_mpjpe`.
+
 ## 5. Tests
 
 ```bash

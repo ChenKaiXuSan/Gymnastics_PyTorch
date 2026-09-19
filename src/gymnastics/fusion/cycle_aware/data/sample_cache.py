@@ -58,6 +58,7 @@ def save_samples(directory: Path, samples: Sequence[DualViewSample], *, config: 
                         "sequence_id": sample.sequence_id,
                         "joint_names": list(sample.joint_names),
                         "metadata": _plain(sample.metadata),
+                        "reference_canonical": bool(sample.reference_canonical),
                     }
                 )
             ),
@@ -111,6 +112,7 @@ def load_samples(directory: Path) -> list[DualViewSample] | None:
                     cycle_mids=tuple(int(m) for m in data["cycle_mids"].tolist()) if "cycle_mids" in data else (),
                     reference=data["reference"] if "reference" in data else None,
                     reference_valid=data["reference_valid"] if "reference_valid" in data else None,
+                    reference_canonical=bool(header.get("reference_canonical", False)),
                     transform_a=transform,
                     metadata=header["metadata"],
                 )

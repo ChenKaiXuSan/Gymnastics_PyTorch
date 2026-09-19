@@ -75,6 +75,7 @@ class SyntheticDataModule(DualViewDataModule):
                         cycle_bounds=bounds,
                         reference=clean.astype(np.float32),
                         reference_valid=np.ones((frames, joints), dtype=bool),
+                        reference_canonical=True,
                         metadata={"fps": fps, "period": period},
                     )
                 )

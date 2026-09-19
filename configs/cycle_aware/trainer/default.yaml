@@ -11,3 +11,5 @@ limit_test_batches: 1.0
 enable_progress_bar: true
 deterministic: false
 num_sanity_val_steps: 1
+# Intra-op CPU threads for torch (null = torch default, i.e. all cores).
+num_threads: null

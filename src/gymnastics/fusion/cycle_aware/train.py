@@ -75,7 +75,9 @@ def build_trainer(cfg: DictConfig, run_dir: Path) -> pl.Trainer:
     assert isinstance(trainer_cfg, dict)
     callbacks: list[pl.Callback] = []
     if not trainer_cfg.get("fast_dev_run", False):
-        callbacks.append(ModelCheckpoint(dirpath=str(run_dir / "checkpoints"), filename="{epoch:03d}-{val/total:.4f}", monitor="val/total", mode="min", save_last=True, save_top_k=1))
+        # The metric name contains a slash; without auto_insert_metric_name=False
+        # Lightning would turn it into a sub-directory.
+        callbacks.append(ModelCheckpoint(dirpath=str(run_dir / "checkpoints"), filename="epoch{epoch:03d}-val_total{val/total:.4f}", auto_insert_metric_name=False, monitor="val/total", mode="min", save_last=True, save_top_k=1))
         callbacks.append(LearningRateMonitor(logging_interval="step"))
     logger = CSVLogger(save_dir=str(run_dir), name="logs")
     return pl.Trainer(
@@ -106,6 +108,13 @@ def run(cfg: DictConfig) -> dict[str, Any]:
         training metrics and the test metrics (if run).
     """
     pl.seed_everything(int(cfg.seed), workers=True)
+    num_threads = cfg.trainer.get("num_threads")
+    if num_threads:
+        # On large shared CPU boxes the default (one thread per core) plus
+        # DataLoader workers oversubscribes the machine; cap it explicitly.
+        import torch
+
+        torch.set_num_threads(int(num_threads))
     run_dir = Path(str(cfg.output_root))
     run_dir = (run_dir if run_dir.is_absolute() else PROJECT_ROOT / run_dir) / str(cfg.run_name)
     run_dir.mkdir(parents=True, exist_ok=True)

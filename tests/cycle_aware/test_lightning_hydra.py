@@ -40,7 +40,7 @@ def test_fast_dev_run_with_trainer(tmp_path: Path):
     trainer.fit(module, datamodule=datamodule)
     trainer.test(module, datamodule=datamodule, verbose=False)
     metrics = trainer.logged_metrics
-    assert "test/total" in metrics and "test/pa_mpjpe" in metrics
+    assert "test/total" in metrics and "test/pa_mpjpe" in metrics and "test/ta_mpjpe" in metrics  # synthetic: canonical reference
 
 
 def test_hydra_compose_and_ablation_switching():
@@ -69,5 +69,6 @@ def test_full_hydra_smoke_run(tmp_path: Path):
     assert any(key.startswith("train/total") for key in result["fit_metrics"])
     assert "test/total" in result["test_metrics"] and "test/pa_mpjpe" in result["test_metrics"]
     assert (run_dir / "checkpoints" / "last.ckpt").is_file()
+    assert any(path.name.startswith("epoch") and path.suffix == ".ckpt" for path in (run_dir / "checkpoints").iterdir())
     restored = CycleAwareFusionModule.load_from_checkpoint(run_dir / "checkpoints" / "last.ckpt", map_location="cpu")
     assert restored.model.config.hidden_dim == 16

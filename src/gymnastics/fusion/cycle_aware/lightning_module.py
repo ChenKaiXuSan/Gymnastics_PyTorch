@@ -18,8 +18,11 @@ Logged quantities (prefix ``train/``, ``val/``, ``test/``):
     total, recovery, periodicity, symmetry, residual      loss terms
     weight_a_mean, weight_entropy                          reliability statistics
     corrupted_error                                        |P_hat - P*| on corrupted joints
-    pa_mpjpe, ta_mpjpe                                     Procrustes / translation aligned
-                                                           error versus the reference
+    pa_mpjpe                                               Procrustes-aligned error versus
+                                                           the reference
+    ta_mpjpe                                               translation-aligned error, only
+                                                           when the reference shares the
+                                                           canonical frame (synthetic data)
 
 Optimisation:
     AdamW with linear warm-up followed by cosine decay to
@@ -147,7 +150,13 @@ class CycleAwareFusionModule(pl.LightningModule):
         reference_valid = batch.get("reference_valid")
         if reference_valid is not None and bool(reference_valid.any()):
             usable = reference_valid & valid
-            for name, align in (("pa_mpjpe", "procrustes"), ("ta_mpjpe", "translation")):
+            alignments = [("pa_mpjpe", "procrustes")]
+            canonical = batch.get("reference_canonical")
+            # A translation-only comparison is meaningful only when the reference
+            # lives in the same canonical body frame as the prediction.
+            if canonical is not None and bool(canonical.all()):
+                alignments.append(("ta_mpjpe", "translation"))
+            for name, align in alignments:
                 error, mask = per_joint_error(output.pose, batch["reference"], usable, align=align)
                 metrics[name] = masked_mean(error, mask)
                 base_error, _ = per_joint_error(output.base_pose, batch["reference"], usable, align=align)

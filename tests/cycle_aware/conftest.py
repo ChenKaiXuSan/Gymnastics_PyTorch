@@ -66,6 +66,7 @@ def make_sample(
         cycle_mids=cycle_mids,
         reference=clean if with_reference else None,
         reference_valid=np.ones(clean.shape[:2], dtype=bool) if with_reference else None,
+        reference_canonical=False,
         metadata={"fps": fps},
     )
 

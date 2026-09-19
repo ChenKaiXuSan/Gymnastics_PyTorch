@@ -213,6 +213,7 @@ def normalize_sample_to_phase(sample: DualViewSample, samples_per_cycle: int) ->
         cycle_mids=tuple(new_mids),
         reference=reference,
         reference_valid=reference_valid,
+        reference_canonical=sample.reference_canonical,
         transform_a=transform,
         metadata=metadata,
     )

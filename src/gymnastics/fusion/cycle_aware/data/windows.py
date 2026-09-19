@@ -217,6 +217,7 @@ class CycleWindowDataset(Dataset[dict[str, Any]]):
             "half_index": half_index,
             "reference": pad_points(sample.reference) if sample.reference is not None else torch.zeros((length, joints, 3)),
             "reference_valid": pad_mask(sample.reference_valid) if sample.reference_valid is not None else torch.zeros((length, joints), dtype=torch.bool),
+            "reference_canonical": torch.tensor(bool(sample.reference_canonical)),
             "window_start": torch.tensor(start, dtype=torch.int64),
             "dataset": sample.dataset,
             "subject_id": sample.subject_id,

@@ -59,6 +59,7 @@ Tensor shapes in :class:`FusionBatch` (``B`` windows, ``T`` samples, ``J`` joint
     corruption_mask_a/b    [B, T, J]     bool   (true where the input was altered)
     reference              [B, T, J, 3]  float32 (optional, evaluation only)
     reference_valid        [B, T, J]     bool
+    reference_canonical    [B]           bool   (reference shares the canonical frame)
 """
 
 from __future__ import annotations
@@ -153,6 +154,10 @@ class DualViewSample:
             empty when unknown, otherwise one entry per cycle.
         reference: Optional ``[T, J, 3]`` reference pose in its native frame.
         reference_valid: Optional ``[T, J]`` validity of ``reference``.
+        reference_canonical: True when ``reference`` is expressed in the same
+            canonical body frame as ``view_a`` (synthetic data); false for
+            world-frame references, for which only Procrustes-aligned errors
+            are meaningful.
         transform_a: Optional canonical transform of View A.
         metadata: Free-form provenance (JSON-serialisable).
     """
@@ -170,6 +175,7 @@ class DualViewSample:
     cycle_mids: tuple[int, ...] = ()
     reference: np.ndarray | None = None
     reference_valid: np.ndarray | None = None
+    reference_canonical: bool = False
     transform_a: CanonicalTransformRecord | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
@@ -285,6 +291,7 @@ class FusionBatch(TypedDict, total=False):
     corruption_mask_b: torch.Tensor
     reference: torch.Tensor
     reference_valid: torch.Tensor
+    reference_canonical: torch.Tensor
     window_start: torch.Tensor
     dataset: list[str]
     subject_id: list[str]
