@@ -6,7 +6,7 @@
 #   bash pegasus/submit_cycle_aware_5fold.sh freeman_all40              # all 40 subjects, session-balanced folds
 #   bash pegasus/submit_cycle_aware_5fold.sh gymnastics no_film         # ablation preset -> gymnastics_v1_no_film_5fold
 #   SEED=1 bash pegasus/submit_cycle_aware_5fold.sh gymnastics          # other seed
-#   OVERRIDES="model.hidden_dim=256|loss.periodicity_weight=0" bash pegasus/submit_cycle_aware_5fold.sh gymnastics
+#   OVERRIDES="model.hidden_dim=256::loss.periodicity_weight=0" bash pegasus/submit_cycle_aware_5fold.sh gymnastics
 #   ACCOUNT=HP260146 bash pegasus/submit_cycle_aware_5fold.sh gymnastics no_film   # HP260146 project, gen_S queue
 #
 # After the jobs finish, summarise with

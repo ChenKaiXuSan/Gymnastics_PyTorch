@@ -14,8 +14,9 @@
 #   EXPERIMENT optional Hydra experiment preset (no_film, no_cross_view, ...)
 #   SEED       seed (default 0)
 #   EPOCHS     epochs (default 50)
-#   OVERRIDES  extra Hydra overrides separated by "|" (qsub -v values cannot
-#              contain spaces), e.g. "test_only=true|checkpoint=path/last.ckpt"
+#   OVERRIDES  extra Hydra overrides separated by "::" (qsub -v values cannot
+#              contain spaces or shell characters), e.g.
+#              "test_only=true::checkpoint=path/last.ckpt"
 #
 # Usually submitted for all folds at once by pegasus/submit_cycle_aware_5fold.sh.
 #
@@ -62,8 +63,8 @@ ARGS=("data=$DATA" "data.fold_json=$FOLD_JSON" "run_name=$SWEEP/$FOLD" "seed=$SE
       "trainer.max_epochs=$EPOCHS" "trainer.enable_progress_bar=false" "data.num_workers=${NUM_WORKERS:-0}")
 [ -n "$EXPERIMENT" ] && ARGS+=("experiment=$EXPERIMENT")
 if [ -n "$OVERRIDES" ]; then
-  # "|"-separated list -> one argument per override (spaces are also accepted).
-  IFS='| ' read -r -a EXTRA_ARGS <<<"$OVERRIDES"
+  # "::"-separated list -> one argument per override (spaces are also accepted).
+  IFS=' ' read -r -a EXTRA_ARGS <<<"${OVERRIDES//::/ }"
   ARGS+=("${EXTRA_ARGS[@]}")
 fi
 

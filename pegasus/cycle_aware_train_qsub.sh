@@ -11,8 +11,9 @@
 #   EXPERIMENT optional Hydra experiment preset (no_film, no_cross_view, ...)
 #   SEED       seed (default 0)
 #   EPOCHS     epochs (default 50)
-#   OVERRIDES  extra Hydra overrides separated by "|" (qsub -v values cannot
-#              contain spaces), e.g. "model.hidden_dim=256|loss.periodicity_weight=0.3"
+#   OVERRIDES  extra Hydra overrides separated by "::" (qsub -v values cannot
+#              contain spaces or shell characters), e.g.
+#              "model.hidden_dim=256::loss.periodicity_weight=0.3"
 #
 #PBS -A HP260146
 #PBS -q gen_S
@@ -48,8 +49,8 @@ ARGS=("data=$DATA" "run_name=$RUN_NAME" "seed=$SEED" "trainer.max_epochs=$EPOCHS
       "trainer.enable_progress_bar=false" "data.num_workers=${NUM_WORKERS:-0}")
 [ -n "$EXPERIMENT" ] && ARGS+=("experiment=$EXPERIMENT")
 if [ -n "$OVERRIDES" ]; then
-  # "|"-separated list -> one argument per override (spaces are also accepted).
-  IFS='| ' read -r -a EXTRA_ARGS <<<"$OVERRIDES"
+  # "::"-separated list -> one argument per override (spaces are also accepted).
+  IFS=' ' read -r -a EXTRA_ARGS <<<"${OVERRIDES//::/ }"
   ARGS+=("${EXTRA_ARGS[@]}")
 fi
 
