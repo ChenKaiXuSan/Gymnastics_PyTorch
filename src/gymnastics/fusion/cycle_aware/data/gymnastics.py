@@ -63,7 +63,7 @@ from typing import Callable, Sequence
 import numpy as np
 
 from gymnastics.common.paths import PROJECT_ROOT
-from gymnastics.fusion.rotation_aware.schema import PosePairTrial, valid_from_points
+from gymnastics.fusion.core.schema import PosePairTrial, valid_from_points
 
 from ..sample import DualViewSample, sample_from_pose_pair_trial
 from .base import DualViewDataModule, SplitSpec
@@ -188,7 +188,7 @@ class GymnasticsDataModule(DualViewDataModule):
             cache_root = _resolve(options.get("cache_root", "local/runs/fuse_rotation_aware/cache"))
 
             def load_from_cache(person_id: str) -> Sequence[PosePairTrial]:
-                from gymnastics.fusion.rotation_aware.data import load_cached_trial, resolve_cache_manifest
+                from gymnastics.fusion.core.data import load_cached_trial, resolve_cache_manifest
 
                 person_dir = cache_root / f"person_{person_id}"
                 _, manifest = resolve_cache_manifest(person_dir)
@@ -200,8 +200,8 @@ class GymnasticsDataModule(DualViewDataModule):
             split_root = _resolve(options.get("split_cycle_root", "local/runs/split_cycle"))
 
             def load_raw(person_id: str) -> Sequence[PosePairTrial]:
-                from gymnastics.fusion.rotation_aware.config import load_skeleton_spec
-                from gymnastics.fusion.rotation_aware.data import load_person_trials
+                from gymnastics.fusion.core.config import load_skeleton_spec
+                from gymnastics.fusion.core.data import load_person_trials
 
                 spec = load_skeleton_spec(PROJECT_ROOT / "configs" / "fusion" / "skeleton_mhr70.yaml")
                 return load_person_trials(person_id, sam3d_root, split_root, spec)

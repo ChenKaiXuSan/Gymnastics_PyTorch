@@ -24,7 +24,7 @@ from typing import Sequence
 import numpy as np
 
 from gymnastics.alignment.cycle_records import CycleRecord, cycle_record_path, read_cycle_record
-from gymnastics.fusion.rotation_aware.schema import PosePairTrial
+from gymnastics.fusion.core.schema import PosePairTrial
 
 
 def private_cycles_for_trials(

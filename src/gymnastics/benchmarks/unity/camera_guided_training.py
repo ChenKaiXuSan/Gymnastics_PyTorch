@@ -17,21 +17,21 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from gymnastics.common.skeletons.mhr70 import mhr_names
-from gymnastics.fusion.rotation_aware.camera import CameraFeatureBundle
-from gymnastics.fusion.rotation_aware.config import (
+from gymnastics.fusion.archive.rotation_aware.camera import CameraFeatureBundle
+from gymnastics.fusion.core.config import (
     SkeletonSpec,
     load_skeleton_spec,
 )
-from gymnastics.fusion.rotation_aware.corruptions import CorruptionConfig
-from gymnastics.fusion.rotation_aware.dataset import collate_pose_pair_windows
-from gymnastics.fusion.rotation_aware.inference import (
+from gymnastics.fusion.archive.rotation_aware.corruptions import CorruptionConfig
+from gymnastics.fusion.archive.rotation_aware.dataset import collate_pose_pair_windows
+from gymnastics.fusion.archive.rotation_aware.inference import (
     _forward,
     _starts,
     overlap_taper,
 )
-from gymnastics.fusion.rotation_aware.losses import LossConfig
-from gymnastics.fusion.rotation_aware.model import RotationAwareFusionModel
-from gymnastics.fusion.rotation_aware.training import train_one_epoch
+from gymnastics.fusion.archive.rotation_aware.losses import LossConfig
+from gymnastics.fusion.archive.rotation_aware.model import RotationAwareFusionModel
+from gymnastics.fusion.archive.rotation_aware.training import train_one_epoch
 
 from .camera_guided_data import (
     UnityCameraGuidedSequence,

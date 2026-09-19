@@ -56,7 +56,7 @@ from typing import Callable, Sequence
 import numpy as np
 
 from gymnastics.common.paths import PROJECT_ROOT
-from gymnastics.fusion.rotation_aware.schema import PosePairTrial
+from gymnastics.fusion.core.schema import PosePairTrial
 
 from ..sample import DualViewSample, sample_from_pose_pair_trial
 from .base import DualViewDataModule, SplitSpec

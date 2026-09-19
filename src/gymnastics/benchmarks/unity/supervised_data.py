@@ -12,17 +12,17 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from gymnastics.fusion.rotation_aware.config import load_skeleton_spec
-from gymnastics.fusion.rotation_aware.dataset import (
+from gymnastics.fusion.core.config import load_skeleton_spec
+from gymnastics.fusion.archive.rotation_aware.dataset import (
     PosePairWindowDataset,
     SplitManifest,
     WindowConfig,
 )
-from gymnastics.fusion.rotation_aware.inference import (
+from gymnastics.fusion.archive.rotation_aware.inference import (
     CanonicalTrial,
     canonicalize_trial,
 )
-from gymnastics.fusion.rotation_aware.schema import PosePairTrial
+from gymnastics.fusion.core.schema import PosePairTrial
 
 from .dataset import group_evaluation_sequences
 from .fusion import build_pose_pair_trial

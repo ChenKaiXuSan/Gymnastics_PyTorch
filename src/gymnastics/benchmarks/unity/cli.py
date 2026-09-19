@@ -79,8 +79,8 @@ from .sam3d import load_sam3d_camera_cache, run_sam3d_inference
 from .schema import MethodSequence, UnityBenchmark
 from gymnastics.common.skeletons.mhr70 import mhr_names
 from gymnastics.fusion.deterministic.experiment_matrix import ALL_METHODS
-from gymnastics.fusion.rotation_aware.corruptions import CorruptionConfig
-from gymnastics.fusion.rotation_aware.losses import LossConfig
+from gymnastics.fusion.archive.rotation_aware.corruptions import CorruptionConfig
+from gymnastics.fusion.archive.rotation_aware.losses import LossConfig
 
 
 DEFAULT_CONFIG = Path("configs/benchmarks/unity.yaml")

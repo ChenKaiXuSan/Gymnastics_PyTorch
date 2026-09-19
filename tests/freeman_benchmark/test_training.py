@@ -27,8 +27,8 @@ from gymnastics.benchmarks.freeman.training import (
 )
 from gymnastics.benchmarks.freeman.training_cli import paired_subject_comparison
 from gymnastics.common.skeletons.mhr70 import MHR70_NAMES
-from gymnastics.fusion.rotation_aware.data import load_cached_trial
-from gymnastics.fusion.rotation_aware.dataset import build_split_manifest
+from gymnastics.fusion.core.data import load_cached_trial
+from gymnastics.fusion.archive.rotation_aware.dataset import build_split_manifest
 
 PAIR = {
     "session_id": "20220101_fixture_subj05",

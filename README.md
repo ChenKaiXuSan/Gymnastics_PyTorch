@@ -12,7 +12,7 @@ paired face/side videos
   -> SAM3D-Body keypoints
   -> temporal alignment and cycle segmentation
   -> triangulated 3D pseudo-reference
-  -> deterministic or rotation-aware fusion
+  -> deterministic or cycle-aware fusion
   -> analysis, benchmarks and cohort statistics
 ```
 
@@ -24,9 +24,10 @@ src/gymnastics/
 ├── alignment/          # face/side alignment and cycle segmentation
 ├── triangulation/      # extrinsics and pseudo-reference reconstruction
 ├── fusion/
-│   ├── deterministic/  # nine-method comparison matrix
-│   ├── rotation_aware/ # self-supervised paper method
-│   └── cycle_aware/    # cycle-aware dual-view fusion (Lightning + Hydra)
+│   ├── core/           # shared infrastructure: trial schema, skeleton, body frame, cache
+│   ├── deterministic/  # comparison matrix and classical baselines
+│   ├── cycle_aware/    # ACTIVE model: cycle-aware dual-view fusion (Lightning + Hydra)
+│   └── archive/        # frozen paper model (rotation_aware), reproduction only
 ├── benchmarks/         # Unity native-3D and FreeMan public-data benchmarks
 ├── analysis/           # metrics, reports, statistics, visualization
 ├── calibration/        # camera calibration
@@ -66,21 +67,11 @@ conda run -n gymnastic gymnastics triangulate
 # Run the deterministic fusion matrix.
 conda run -n gymnastic gymnastics fuse deterministic --methods avg_body_current
 
-# Run the rotation-aware paper method.
-conda run -n gymnastic gymnastics fuse rotation-aware --help
-
-# Train the cycle-aware dual-view fusion model (Hydra overrides).
+# Train the cycle-aware dual-view fusion model (the active model; Hydra overrides).
 conda run -n gymnastic gymnastics fuse cycle-aware experiment=smoke
 
-# Train the rotation-conditioned and cross-view-only attention ablations.
-# All production rotation-aware configs use the same fixed 137-person
-# train/validation/test split (96/27/14).
-conda run -n gymnastic gymnastics fuse rotation-aware train \
-  --config configs/fusion/rotation_aware_cross_attention.yaml \
-  --run-id paper137_a10_b64_e100_s0 --ablation A10
-conda run -n gymnastic gymnastics fuse rotation-aware train \
-  --config configs/fusion/rotation_aware_cross_attention.yaml \
-  --run-id paper137_a11_b64_e100_s0 --ablation A11
+# Archived paper model (reproduction only; see src/gymnastics/fusion/archive/README.md).
+conda run -n gymnastic gymnastics fuse rotation-aware --help
 
 # Analyze saved sequences.
 conda run -n gymnastic gymnastics analyze
@@ -316,7 +307,7 @@ Additional workflow documentation:
 - [Results summary](docs/results_summary.md)
 - [Runbook](docs/runbook.md)
 - [Module map](docs/modules.md)
-- [Rotation-aware fusion](docs/rotation_aware_fusion.md)
+- [Rotation-aware fusion (archived paper model)](docs/rotation_aware_fusion.md)
 - [Cycle-aware fusion](docs/cycle_aware_fusion.md)
 - [Triangulation](docs/triangulation.md)
 

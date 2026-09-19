@@ -8,7 +8,7 @@ motion.
 
 Research Motivation:
     The existing rotation-aware fusion model of this repository
-    (``gymnastics.fusion.rotation_aware``) treats a window of poses as an
+    (``gymnastics.fusion.archive.rotation_aware``) treats a window of poses as an
     unstructured temporal signal.  Gymnastics trunk-rotation exercises, gait,
     and most rehabilitation movements are repeated cycles.  Cycle structure
     carries two kinds of information that a plain temporal model cannot

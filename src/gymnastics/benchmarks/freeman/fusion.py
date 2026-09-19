@@ -25,7 +25,7 @@ from gymnastics.fusion.deterministic.experiment_matrix import (
     smooth_sequence,
 )
 from gymnastics.common.skeletons.mhr70 import MHR70_NAMES
-from gymnastics.fusion.rotation_aware.schema import PosePairTrial
+from gymnastics.fusion.core.schema import PosePairTrial
 
 from .schema import MethodPrediction, PosePairInput
 
@@ -321,12 +321,12 @@ def _default_runtime_loader(
 ) -> RotationRuntime:
     import torch
 
-    from gymnastics.fusion.rotation_aware.cli import (
+    from gymnastics.fusion.archive.rotation_aware.cli import (
         build_fusion_model,
         load_config as load_rotation_config,
     )
-    from gymnastics.fusion.rotation_aware.config import load_skeleton_spec
-    from gymnastics.fusion.rotation_aware.training import load_checkpoint
+    from gymnastics.fusion.core.config import load_skeleton_spec
+    from gymnastics.fusion.archive.rotation_aware.training import load_checkpoint
 
     rotation_settings = benchmark_config.get("rotation_aware", {})
     rotation_config_path = _resolved_project_path(
@@ -419,7 +419,7 @@ def fuse_rotation_aware(
     runtime = loader(checkpoint_path, config)
     _validate_zero_shot_runtime(runtime)
     if inference_runner is None:
-        from gymnastics.fusion.rotation_aware.inference import run_inference
+        from gymnastics.fusion.archive.rotation_aware.inference import run_inference
 
         inference_runner = run_inference
     window = runtime.resolved_config.get("window", {})

@@ -600,8 +600,8 @@ def rotation_aware_quality_scores(
     """Reuse the fixed quality feature from the rotation-aware mainline."""
     import torch
 
-    from gymnastics.fusion.rotation_aware.features import compute_quality_features
-    from gymnastics.fusion.rotation_aware.trunk import extract_trunk_features
+    from gymnastics.fusion.core.features import compute_quality_features
+    from gymnastics.fusion.core.trunk import extract_trunk_features
 
     tensor = torch.from_numpy(np.asarray(points, dtype=np.float32)).unsqueeze(0)
     valid = torch.isfinite(tensor).all(dim=-1)
@@ -1272,7 +1272,7 @@ def main() -> None:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     quality_skeleton = None
     if "extrinsic_r_quality_average" in args.methods:
-        from gymnastics.fusion.rotation_aware.config import load_skeleton_spec
+        from gymnastics.fusion.core.config import load_skeleton_spec
 
         quality_skeleton = load_skeleton_spec(args.skeleton_path)
     all_person_metrics: List[PersonMetric] = []

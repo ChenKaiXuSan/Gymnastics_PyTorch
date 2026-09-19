@@ -31,7 +31,7 @@ _COMMANDS = {
         False,
     ),
     "fuse:rotation-aware": (
-        "gymnastics.fusion.rotation_aware.cli",
+        "gymnastics.fusion.archive.rotation_aware.cli",
         "main",
         True,
     ),

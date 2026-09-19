@@ -28,11 +28,11 @@ from gymnastics.fusion.deterministic.experiment_matrix import (
     sim3_align_to_reference,
     smooth_sequence,
 )
-from gymnastics.fusion.rotation_aware.config import SkeletonSpec, load_skeleton_spec
-from gymnastics.fusion.rotation_aware.inference import run_inference
+from gymnastics.fusion.core.config import SkeletonSpec, load_skeleton_spec
+from gymnastics.fusion.archive.rotation_aware.inference import run_inference
 from torch import nn
-from gymnastics.fusion.rotation_aware.schema import PosePairTrial
-from gymnastics.fusion.rotation_aware.training import load_checkpoint
+from gymnastics.fusion.core.schema import PosePairTrial
+from gymnastics.fusion.archive.rotation_aware.training import load_checkpoint
 
 from .dataset import group_evaluation_sequences
 from .mapping import (
@@ -105,7 +105,7 @@ def load_rotation_aware_model(
         raise ValueError("rotation-aware checkpoint has no ablation")
     hidden_channels = int(training.get("hidden_channels", 128))
     skeleton = load_skeleton_spec(Path(skeleton_path))
-    from gymnastics.fusion.rotation_aware.cli import build_fusion_model
+    from gymnastics.fusion.archive.rotation_aware.cli import build_fusion_model
 
     model = build_fusion_model(skeleton, training)
     payload = load_checkpoint(

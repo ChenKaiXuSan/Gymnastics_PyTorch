@@ -13,7 +13,7 @@ body frame, and the MHR70 skeleton metadata.
 ### 1.1 Inputs and coordinate frame
 
 Both views are mapped independently into the pelvis-centred canonical body
-frame (`gymnastics.fusion.rotation_aware.geometry.canonicalize_pose`): origin
+frame (`gymnastics.fusion.core.geometry.canonicalize_pose`): origin
 at the hip midpoint, x from left to right hip, y along pelvis→thorax, z
 completing a right-handed frame, and lengths divided by the median torso
 length of the sequence. The two views are therefore directly comparable

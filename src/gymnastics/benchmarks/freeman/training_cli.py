@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 
 from gymnastics.common.paths import PROJECT_ROOT
-from gymnastics.fusion.rotation_aware.cli import load_config as load_rotation_config
+from gymnastics.fusion.archive.rotation_aware.cli import load_config as load_rotation_config
 
 from .evaluation import SessionMetrics, _holm_adjust, aggregate_metrics
 from .training import (

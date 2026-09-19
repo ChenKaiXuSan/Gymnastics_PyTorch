@@ -19,8 +19,8 @@ from gymnastics.fusion.deterministic.experiment_matrix import (
     build_pair_index,
     load_triangulated_sequence,
 )
-from gymnastics.fusion.rotation_aware.config import SkeletonSpec, load_skeleton_spec
-from gymnastics.fusion.rotation_aware.evaluation import _external_errors
+from gymnastics.fusion.core.config import SkeletonSpec, load_skeleton_spec
+from gymnastics.fusion.archive.rotation_aware.evaluation import _external_errors
 
 
 LEARNED_JOINT_METHODS = ("A0", "A1", "A2", "A6")

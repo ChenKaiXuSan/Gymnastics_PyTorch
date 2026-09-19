@@ -17,7 +17,7 @@ Research Motivation:
 
 Common Coordinate System:
     ``view_a`` and ``view_b`` are expressed in the project's canonical
-    *pelvis-centred body frame* (``gymnastics.fusion.rotation_aware.geometry``):
+    *pelvis-centred body frame* (``gymnastics.fusion.core.geometry``):
 
     * origin at the pelvis (midpoint of the hips) of the same view,
     * x-axis from the left hip to the right hip,
@@ -74,7 +74,7 @@ import numpy as np
 import torch
 
 from gymnastics.common.paths import CONFIG_ROOT
-from gymnastics.fusion.rotation_aware.schema import PosePairTrial
+from gymnastics.fusion.core.schema import PosePairTrial
 
 from .skeleton import CommonSkeleton
 
@@ -301,7 +301,7 @@ class FusionBatch(TypedDict, total=False):
 
 @lru_cache(maxsize=1)
 def _mhr70_spec():
-    from gymnastics.fusion.rotation_aware.config import load_skeleton_spec
+    from gymnastics.fusion.core.config import load_skeleton_spec
 
     return load_skeleton_spec(CONFIG_ROOT / "fusion" / "skeleton_mhr70.yaml")
 
@@ -321,7 +321,7 @@ def canonicalize_view(points: np.ndarray, valid: np.ndarray) -> tuple[np.ndarray
         Tuple ``(canonical_points, canonical_valid, transform)``.  Frames in
         which the pelvis frame could not be observed are marked invalid.
     """
-    from gymnastics.fusion.rotation_aware.geometry import canonicalize_pose
+    from gymnastics.fusion.core.geometry import canonicalize_pose
 
     tensor = torch.from_numpy(np.array(points, dtype=np.float32, copy=True)).unsqueeze(0)
     mask = torch.from_numpy(np.array(valid, dtype=bool, copy=True)).unsqueeze(0)

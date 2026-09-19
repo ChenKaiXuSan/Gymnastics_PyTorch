@@ -14,7 +14,7 @@ from gymnastics.common.skeletons.mhr70 import MHR70_INDEX, mhr_names
 from gymnastics.fusion.cycle_aware.data.freeman import FreeManDataModule, coco17_to_mhr70
 from gymnastics.fusion.cycle_aware.data.gymnastics import GymnasticsDataModule, concatenate_cycles, reference_from_triangulation
 from gymnastics.fusion.cycle_aware.data.unity import UnityDataModule, unity22_to_mhr70
-from gymnastics.fusion.rotation_aware.schema import PosePairTrial
+from gymnastics.fusion.core.schema import PosePairTrial
 
 FPS = 30.0
 

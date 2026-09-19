@@ -90,7 +90,7 @@ python -m pytest tests/test_sam3d_triangulation.py tests/test_compare_fused_tria
 | `src/gymnastics/sam3d/` | SAM3D-Body inference and keypoint extraction from raw videos. |
 | `src/gymnastics/alignment/` | Face/side time alignment, audio/keypoint offset selection, cycle segmentation with turn-around middles (`cycles.py`, `cycle_records.py`, `annotate_cycles.py`), and split-cycle videos. |
 | `src/gymnastics/triangulation/` | 3D triangulation from SAM3D 2D keypoints, camera helpers, and visualizations. |
-| `src/gymnastics/fusion/` | Deterministic, rotation-aware, and cycle-aware multi-view fusion. The cycle-aware model (`fusion/cycle_aware`, `configs/cycle_aware`, `gymnastics fuse cycle-aware`) is a Lightning/Hydra implementation documented in `docs/cycle_aware_fusion.md`. |
+| `src/gymnastics/fusion/` | Multi-view fusion. `fusion/core` holds the model-agnostic infrastructure (trial schema, skeleton spec, canonical body frame, trunk/quality features, person cache). `fusion/cycle_aware` is the **active model** (`configs/cycle_aware`, `gymnastics fuse cycle-aware`, Lightning/Hydra, see `docs/cycle_aware_fusion.md`). `fusion/deterministic` is the comparison matrix plus classical baselines. `fusion/archive/rotation_aware` is the archived paper model (frozen, see `fusion/archive/README.md`). |
 | `src/gymnastics/benchmarks/` | Unity native-3D and FreeMan public-data benchmarks. |
 | `src/gymnastics/analysis/` | Metric comparison, plotting, reports, cohort/repeated-cycle analysis, and result inspection. |
 | `src/gymnastics/calibration/` | Camera calibration utilities. |
@@ -193,21 +193,28 @@ biased and it is not a valid recommendation.
 | `local/archive/classification_removed_2026-09-19/` | 33G | Archived outputs of the removed motion-classification task (`train/`, `total_5_class/`); see its README. Nothing in the pipeline reads them. |
 | `local/runs/calibration_vis` | 977M | Camera calibration parameters and visualizations. |
 
-## Rotation-Aware Paper Mainline
+## Model Policy (2026-09-19)
 
-The deterministic `gymnastics fuse deterministic` experiment matrix remains the comparison
-suite. The paper mainline is the isolated, self-supervised method:
+All new modelling work uses only the cycle-aware architecture
+(`gymnastics.fusion.cycle_aware`, `gymnastics fuse cycle-aware`). The
+rotation-aware model was moved to `gymnastics.fusion.archive.rotation_aware`
+and is frozen: it is kept solely to regenerate the Sports Engineering paper
+artefacts (ablations A0–A11, B1/B2, FreeMan zero-shot and subject-disjoint
+rows, cohort OOF). Do not add experiments, losses or configs to it; bug fixes
+go to `gymnastics.fusion.core` when they concern the shared infrastructure.
 
-```text
-rotation_aware_self_supervised
-```
+The deterministic `gymnastics fuse deterministic` experiment matrix (including
+the classical baselines in `classical_baselines.py`) remains the comparison
+suite for every model.
 
-It uses only SAM3D face/side 3D keypoints and the split-cycle alignment offset
-during training. Triangulated 3D keypoints are loaded only by the evaluation
-layer and are never used for pseudo-targets, fusion weights, checkpoint
-selection, or training losses.
+## Archived Rotation-Aware Model (paper reproduction only)
 
-Run the mainline with:
+The archived method uses only SAM3D face/side 3D keypoints and the
+split-cycle alignment offset during training. Triangulated 3D keypoints are
+loaded only by the evaluation layer and are never used for pseudo-targets,
+fusion weights, checkpoint selection, or training losses.
+
+Reproduce the paper runs with:
 
 ```bash
 conda run -n gymnastic gymnastics fuse rotation-aware prepare --config configs/fusion/rotation_aware.yaml
