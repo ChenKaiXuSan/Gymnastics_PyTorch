@@ -104,7 +104,7 @@ def fused_wrist_theta(
     Returns:
         ``[T]`` unwrapped angle.
     """
-    from cycle_alignment.main import IDX, kpts_world_to_body
+    from cycle_alignment.features import IDX, kpts_world_to_body
 
     if view_a.shape != view_b.shape:
         raise ValueError("both views must have shape [T, 70, 3]")
