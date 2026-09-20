@@ -8,6 +8,9 @@
 #   SEED=1 bash pegasus/submit_fusion_5fold.sh gymnastics          # other seed
 #   OVERRIDES="model.hidden_dim=256::loss.periodicity_weight=0" bash pegasus/submit_fusion_5fold.sh gymnastics
 #   ACCOUNT=HP260146 bash pegasus/submit_fusion_5fold.sh gymnastics no_film   # HP260146 project, gen_S queue
+#   bash /path/to/worktree/pegasus/submit_fusion_5fold.sh freeman_all40      # jobs run the checkout that holds
+#                                                                            # this script (pinned git worktree);
+#                                                                            # symlink its local/ to the main repo
 #
 # After the jobs finish, summarise with
 #   PYTHONPATH=src python -m fusion.summarize local/runs/cycle_aware/<sweep>
@@ -33,7 +36,7 @@ mkdir -p local/runs/cycle_aware/joblogs
 for fold_file in "$FOLDS_DIR"/fold_*.json; do
   FOLD="$(basename "$fold_file" .json)"
   LOG="local/runs/cycle_aware/joblogs/${SWEEP}_${FOLD}.log"
-  VARS="DATA=$DATA,FOLD=$FOLD,SWEEP=$SWEEP,FOLDS_DIR=$FOLDS_DIR,SEED=$SEED,EPOCHS=$EPOCHS"
+  VARS="REPO=$REPO,DATA=$DATA,FOLD=$FOLD,SWEEP=$SWEEP,FOLDS_DIR=$FOLDS_DIR,SEED=$SEED,EPOCHS=$EPOCHS"
   [ -n "$EXPERIMENT" ] && VARS="$VARS,EXPERIMENT=$EXPERIMENT"
   [ -n "${OVERRIDES:-}" ] && VARS="$VARS,OVERRIDES=$OVERRIDES"
   echo "qsub -N ca_${FOLD} -o $LOG -v $VARS $JOB_SCRIPT"

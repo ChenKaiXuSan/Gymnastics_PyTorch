@@ -29,7 +29,7 @@
 #PBS -j o
 
 set -u
-REPO=/work/HP260146/chenkaixu/Gymnastics_PyTorch
+REPO="${REPO:-/work/HP260146/chenkaixu/Gymnastics_PyTorch}"
 cd "$REPO" || exit 1
 : "${DATA:?DATA (gymnastics|freeman) must be passed via qsub -v}"
 : "${FOLD:?FOLD (fold_01..fold_05) must be passed via qsub -v}"
