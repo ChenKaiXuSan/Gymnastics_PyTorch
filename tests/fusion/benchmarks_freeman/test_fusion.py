@@ -17,7 +17,7 @@ from fusion.benchmarks.freeman.fusion import (
 )
 from fusion.benchmarks.freeman.schema import PosePairInput, ViewPrediction
 from common.skeletons.mhr70 import MHR70_NAMES
-from fusion.baselines.experiment_matrix import ALL_METHODS
+from fusion.baselines.methods import ALL_METHODS
 
 
 def _view(

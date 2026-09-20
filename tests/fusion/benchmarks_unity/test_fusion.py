@@ -13,7 +13,7 @@ from fusion.benchmarks.unity.fusion import (
     run_rotation_aware_fusion,
 )
 from fusion.benchmarks.unity.schema import UnityBenchmark
-from fusion.baselines.experiment_matrix import (
+from fusion.baselines.methods import (
     ALL_METHODS,
     current_body_average,
 )

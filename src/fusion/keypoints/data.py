@@ -13,7 +13,7 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from fusion.baselines.experiment_matrix import (
+from fusion.baselines.data import (
     build_aligned_timeline,
     load_sam3d_world_by_frame,
     load_split_alignment_offset,

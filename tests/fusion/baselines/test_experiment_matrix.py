@@ -1,27 +1,29 @@
 import numpy as np
 import pytest
 
-from fusion.baselines.experiment_matrix import (
-    ALL_METHODS,
-    AVAILABLE_METHODS,
-    EXTRINSIC_METHODS,
-    align_side_with_extrinsic_rotation,
-    apply_sim3,
+from fusion.baselines.data import (
     build_aligned_timeline,
+    iter_person_ids,
+    load_aligned_cycle_cache,
+    load_extrinsic_rotation,
+    load_split_alignment_offset,
+    sam3d_person_root,
+)
+from fusion.baselines.evaluation import joint_errors
+from fusion.baselines.methods import (
+    align_side_with_extrinsic_rotation,
+    ALL_METHODS,
+    apply_sim3,
+    AVAILABLE_METHODS,
     bodypart_weights,
     estimate_joint_weights,
     estimate_sim3,
+    EXTRINSIC_METHODS,
     fit_similarity,
     fuse_extrinsic_rotation,
     fuse_quality_weighted,
     fuse_weighted,
-    iter_person_ids,
-    joint_errors,
-    load_aligned_cycle_cache,
-    load_extrinsic_rotation,
-    load_split_alignment_offset,
     root_align_to_reference,
-    sam3d_person_root,
     smooth_sequence,
 )
 
@@ -285,8 +287,8 @@ def test_build_aligned_timeline_converts_positions_to_frame_ids(monkeypatch):
     def fake_offset(face_theta, side_theta):
         return -1
 
-    monkeypatch.setattr("fusion.baselines.experiment_matrix.compute_theta_unwrap_from_world", fake_theta)
-    monkeypatch.setattr("fusion.baselines.experiment_matrix.estimate_offset_by_dtw", fake_offset)
+    monkeypatch.setattr("fusion.baselines.data.compute_theta_unwrap_from_world", fake_theta)
+    monkeypatch.setattr("fusion.baselines.data.estimate_offset_by_dtw", fake_offset)
 
     face_by_frame = {
         10: np.full((2, 3), 10.0, dtype=np.float32),
@@ -312,7 +314,7 @@ def test_build_aligned_timeline_uses_split_offset_override(monkeypatch):
     def fail_if_called(face_theta, side_theta):
         raise AssertionError("DTW should not run when split offset is provided")
 
-    monkeypatch.setattr("fusion.baselines.experiment_matrix.estimate_offset_by_dtw", fail_if_called)
+    monkeypatch.setattr("fusion.baselines.data.estimate_offset_by_dtw", fail_if_called)
 
     face_by_frame = {
         10: np.full((2, 3), 10.0, dtype=np.float32),

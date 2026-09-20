@@ -164,7 +164,7 @@ def _cmd_evaluate(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
 
 
 def _cmd_baselines(args: argparse.Namespace, config: Mapping[str, Any]) -> int:
-    from fusion.baselines.experiment_matrix import BASELINE_METHODS
+    from fusion.baselines.methods import BASELINE_METHODS
 
     section = _section(config)
     thresholds, scale = _benchmark_settings(section)

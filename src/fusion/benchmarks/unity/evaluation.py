@@ -8,10 +8,10 @@ from typing import Mapping, Sequence
 
 import numpy as np
 
-from fusion.baselines.experiment_matrix import (
-    Sim3Transform,
+from fusion.baselines.methods import (
     apply_sim3,
     fit_similarity,
+    Sim3Transform,
 )
 
 from .mapping import (

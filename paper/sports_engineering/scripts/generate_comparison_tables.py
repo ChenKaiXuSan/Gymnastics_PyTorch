@@ -14,11 +14,11 @@ from scipy.stats import spearmanr, wilcoxon
 
 from fusion.analysis.cohort_cycle.joints import MAJOR_JOINT_INDICES
 from common.skeletons import MHR70_NAMES
-from fusion.baselines.experiment_matrix import (
-    NO_EXTRINSIC_METHODS,
+from fusion.baselines.data import (
     build_pair_index,
     load_triangulated_sequence,
 )
+from fusion.baselines.methods import NO_EXTRINSIC_METHODS
 from fusion.keypoints.config import SkeletonSpec, load_skeleton_spec
 from fusion.archive.rotation_aware.evaluation import _external_errors
 

@@ -69,7 +69,7 @@ side（yaw −90°）被假定为**恰好相隔 90°**，基线 `3.5 * sqrt(2) �
 - **绝对尺度不可用**：任何以三角化结果换算毫米的结论都不成立。
 - **逐人可比性受损**：10% 的尺度离散会直接进入逐人 MPJPE 对比。
 - 融合评测已通过 per-sequence Sim3 对齐吸收掉了尺度与朝向失配
-  （见 `fuse/experiment_matrix.py::align_candidate`），所以**方法间排名不受影响**；
+  （见 `fusion/baselines/evaluation.py::align_candidate`），所以**方法间排名不受影响**；
   受影响的是任何依赖三角化绝对尺度或跨人尺度一致性的结论。
 
 ## 可选的修复路径（未实施）

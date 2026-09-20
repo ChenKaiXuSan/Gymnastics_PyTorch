@@ -26,11 +26,11 @@ from typing import Any
 
 import numpy as np
 
-from fusion.baselines.experiment_matrix import (
+from fusion.baselines.methods import (
     BASELINE_METHODS,
+    build_body_frame,
     CLASSICAL_METHODS,
     EXTERNAL_REFINER_METHODS,
-    build_body_frame,
     kpts_body_to_world,
     kpts_world_to_body,
 )

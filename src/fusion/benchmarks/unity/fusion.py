@@ -14,11 +14,10 @@ import torch
 
 from common.skeletons.mhr70 import mhr_names
 from fusion.baselines.classical_baselines import fuse_baseline
-from fusion.baselines.experiment_matrix import (
+from fusion.baselines.methods import (
     ALL_METHODS,
-    BASELINE_METHODS,
-    STABLE_SIM3_JOINTS,
     apply_sim3,
+    BASELINE_METHODS,
     bodypart_weights,
     current_body_average,
     estimate_joint_weights,
@@ -27,6 +26,7 @@ from fusion.baselines.experiment_matrix import (
     root_align_to_reference,
     sim3_align_to_reference,
     smooth_sequence,
+    STABLE_SIM3_JOINTS,
 )
 from fusion.keypoints.config import SkeletonSpec, load_skeleton_spec
 from fusion.archive.rotation_aware.inference import run_inference

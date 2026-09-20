@@ -376,7 +376,7 @@ def main() -> None:
     if not args.skip_private_reevaluation:
         for method in ("extrinsic_r_average", "extrinsic_r_quality_average"):
             reevaluate_roots[method] = PRIVATE_EXTRINSIC_ROOT / method
-        from fusion.baselines.experiment_matrix import BASELINE_METHODS
+        from fusion.baselines.methods import BASELINE_METHODS
 
         for method in BASELINE_METHODS:
             reevaluate_roots[method] = PRIVATE_EXTERNAL_ROOT / method

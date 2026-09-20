@@ -78,7 +78,7 @@ from .report import write_report
 from .sam3d import load_sam3d_camera_cache, run_sam3d_inference
 from .schema import MethodSequence, UnityBenchmark
 from common.skeletons.mhr70 import mhr_names
-from fusion.baselines.experiment_matrix import ALL_METHODS
+from fusion.baselines.methods import ALL_METHODS
 from fusion.archive.rotation_aware.corruptions import CorruptionConfig
 from fusion.archive.rotation_aware.losses import LossConfig
 

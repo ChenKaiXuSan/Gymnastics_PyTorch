@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import wilcoxon
 
-from fusion.baselines.experiment_matrix import (
+from fusion.baselines.methods import (
     apply_sim3,
     fit_similarity,
 )

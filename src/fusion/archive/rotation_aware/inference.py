@@ -10,7 +10,7 @@ from typing import Any, Mapping
 import numpy as np
 import torch
 
-from fusion.baselines.experiment_matrix import kpts_world_to_body
+from fusion.baselines.methods import kpts_world_to_body
 
 from .camera import CameraFeatureBundle
 from fusion.keypoints.config import SkeletonSpec

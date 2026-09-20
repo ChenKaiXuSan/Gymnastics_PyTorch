@@ -13,16 +13,16 @@ from typing import Any, Callable
 import numpy as np
 
 from fusion.baselines.classical_baselines import fuse_baseline
-from fusion.baselines.experiment_matrix import (
+from fusion.baselines.methods import (
     ALL_METHODS,
     BASELINE_METHODS,
-    STABLE_SIM3_JOINTS,
     bodypart_weights,
     current_body_average,
     fuse_weighted,
     root_align_to_reference,
     sim3_align_to_reference,
     smooth_sequence,
+    STABLE_SIM3_JOINTS,
 )
 from common.skeletons.mhr70 import MHR70_NAMES
 from fusion.keypoints.schema import PosePairTrial

@@ -11,11 +11,11 @@ from fusion.baselines.classical_baselines import (
     jitter_weighted_body_average,
     kalman_body_fusion,
 )
-from fusion.baselines.experiment_matrix import (
+from fusion.baselines.methods import (
     ALL_METHODS,
-    NO_EXTRINSIC_METHODS,
     current_body_average,
     kpts_world_to_body,
+    NO_EXTRINSIC_METHODS,
 )
 
 

@@ -112,7 +112,7 @@ Qin 2026, D3PRefiner, Theia3D.
 
 Implemented as shared label-free methods in
 `src/fusion/baselines/classical_baselines.py`, registered in
-`experiment_matrix.BASELINE_METHODS` and dispatched by the private matrix,
+`fusion.baselines.methods.BASELINE_METHODS` and dispatched by the private matrix,
 the FreeMan benchmark and the Unity benchmark alike:
 
 | Method id | Row | Notes |

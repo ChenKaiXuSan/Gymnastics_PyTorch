@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from fusion.keypoints.config import load_skeleton_spec
-from fusion.baselines.experiment_matrix import joint_errors
+from fusion.baselines.evaluation import joint_errors
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
