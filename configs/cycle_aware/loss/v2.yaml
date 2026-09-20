@@ -1,0 +1,31 @@
+# Version-2 objectives (see gymnastics/fusion/cycle_aware/losses.py):
+#   L = cycle_weight * L_cycle + reliability_weight * L_rel
+#       + feature_periodicity_weight * L_period + feature_symmetry_weight * L_sym
+#       + residual_weight * L_res
+# No target is built from the current window's own two views.
+
+# Cross-cycle pose supervision (leave-one-cycle-out target from data.cycle_target).
+cycle_weight: 1.0
+cycle_kind: smooth_l1
+# Huber transition point in canonical units (torso lengths).
+cycle_beta: 0.05
+# Reliability cross-entropy on joints where exactly one view was corrupted.
+# CE starts near ln 2 = 0.69 while L_cycle is ~0.01; keep this small.
+reliability_weight: 0.05
+# Feature-level periodicity (F_M at phase phi, cycles i and i+1): 1 - cos.
+feature_periodicity_weight: 0.1
+# Feature-level half-cycle mirror symmetry (phi vs phi + 0.5, L/R swapped): 1 - cos.
+feature_symmetry_weight: 0.1
+# L1 residual regulariser; the only anchor to the measurements now.
+residual_weight: 0.01
+residual_norm: l1
+
+# Version-1 terms, off.
+recovery_weight: 0.0
+recovery_kind: smooth_l1
+recovery_target: pseudo
+recovery_beta: 0.05
+consensus_distance: 0.15
+periodicity_weight: 0.0
+symmetry_weight: 0.0
+half_symmetry_weight: 0.0

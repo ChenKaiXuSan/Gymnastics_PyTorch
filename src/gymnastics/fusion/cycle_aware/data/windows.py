@@ -27,6 +27,7 @@ Output dictionary (``T = length``, ``J`` joints):
     frame_mask [T]                delta_t [T]           timestamps [T]
     phase [T]  phase_valid [T]    cycle_index [T]   half_index [T]
     reference [T, J, 3]           reference_valid [T, J]   (zeros/false if absent)
+    cycle_target [T, J, 3]        cycle_confidence [T, J]  (leave-one-cycle-out target, see cycle_target.py)
     clean_a, clean_b, clean_valid_a, clean_valid_b, corruption_mask_a/b (if corrupted)
     window_start (scalar)  dataset, subject_id, sequence_id, window_id (str)
 """
@@ -41,6 +42,7 @@ import torch
 from torch.utils.data import Dataset
 
 from ..corruptions import CorruptionConfig, corrupt_window, stable_seed
+from ..cycle_target import CycleTargetConfig, cross_cycle_target
 from ..phase import normalize_sample_to_phase, phase_from_cycle_bounds
 from ..sample import DualViewSample
 from ..skeleton import CommonSkeleton
@@ -110,6 +112,8 @@ class _Window:
     phase_valid: np.ndarray
     cycle_index: np.ndarray
     half_index: np.ndarray
+    cycle_target: np.ndarray
+    cycle_confidence: np.ndarray
 
 
 class CycleWindowDataset(Dataset[dict[str, Any]]):
@@ -131,6 +135,7 @@ class CycleWindowDataset(Dataset[dict[str, Any]]):
         corruption: CorruptionConfig | None = None,
         seed: int = 0,
         epoch: int = 0,
+        cycle_target: CycleTargetConfig | None = None,
     ) -> None:
         if split not in {"train", "val", "test", "predict"}:
             raise ValueError("split must be train, val, test or predict")
@@ -138,6 +143,7 @@ class CycleWindowDataset(Dataset[dict[str, Any]]):
         self.window = window
         self.split = split
         self.corruption = corruption if (corruption is not None and corruption.enabled) else None
+        self.cycle_target = cycle_target or CycleTargetConfig(enabled=False)
         self.seed = int(seed)
         self.epoch = int(epoch)
         self.samples: list[DualViewSample] = []
@@ -151,8 +157,13 @@ class CycleWindowDataset(Dataset[dict[str, Any]]):
         stride = window.stride(split, self.length)
         for prepared in self.samples:
             phase, phase_valid, cycle_index, half_index = phase_from_cycle_bounds(prepared.num_frames, prepared.cycle_bounds, prepared.cycle_mids)
+            if self.cycle_target.enabled and phase_normalize and len(prepared.cycle_bounds) >= 2:
+                target, confidence = cross_cycle_target(prepared.view_a, prepared.view_b, prepared.valid_a, prepared.valid_b, prepared.cycle_bounds, samples_per_cycle=window.samples_per_cycle, config=self.cycle_target)
+            else:
+                target = np.zeros_like(prepared.view_a)
+                confidence = np.zeros(prepared.valid_a.shape, dtype=np.float32)
             for start in window_starts(prepared.num_frames, self.length, stride):
-                self._windows.append(_Window(prepared, start, phase, phase_valid, cycle_index, half_index))
+                self._windows.append(_Window(prepared, start, phase, phase_valid, cycle_index, half_index, target, confidence))
 
     def set_epoch(self, epoch: int) -> None:
         """Change the corruption seed for a new training epoch."""
@@ -218,6 +229,8 @@ class CycleWindowDataset(Dataset[dict[str, Any]]):
             "reference": pad_points(sample.reference) if sample.reference is not None else torch.zeros((length, joints, 3)),
             "reference_valid": pad_mask(sample.reference_valid) if sample.reference_valid is not None else torch.zeros((length, joints), dtype=torch.bool),
             "reference_canonical": torch.tensor(bool(sample.reference_canonical)),
+            "cycle_target": pad_points(descriptor.cycle_target),
+            "cycle_confidence": torch.from_numpy(np.pad(descriptor.cycle_confidence[start:stop], ((0, length - available), (0, 0))).astype(np.float32)),
             "window_start": torch.tensor(start, dtype=torch.int64),
             "dataset": sample.dataset,
             "subject_id": sample.subject_id,

@@ -60,6 +60,8 @@ Tensor shapes in :class:`FusionBatch` (``B`` windows, ``T`` samples, ``J`` joint
     reference              [B, T, J, 3]  float32 (optional, evaluation only)
     reference_valid        [B, T, J]     bool
     reference_canonical    [B]           bool   (reference shares the canonical frame)
+    cycle_target           [B, T, J, 3]  float32 leave-one-cycle-out target (cycle_target.py)
+    cycle_confidence       [B, T, J]     float32 in [0, 1], 0 where undefined
 """
 
 from __future__ import annotations
@@ -292,6 +294,8 @@ class FusionBatch(TypedDict, total=False):
     reference: torch.Tensor
     reference_valid: torch.Tensor
     reference_canonical: torch.Tensor
+    cycle_target: torch.Tensor
+    cycle_confidence: torch.Tensor
     window_start: torch.Tensor
     dataset: list[str]
     subject_id: list[str]

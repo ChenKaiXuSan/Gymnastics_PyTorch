@@ -192,6 +192,13 @@ class CycleAwareFusionModule(pl.LightningModule):
         entropy = -(output.weight_a * torch.log(output.weight_a.clamp_min(1e-8)) + output.weight_b * torch.log(output.weight_b.clamp_min(1e-8)))[..., 0]
         metrics["weight_entropy"] = masked_mean(entropy, valid)
         corrupted = None
+        cycle_confidence = batch.get("cycle_confidence")
+        if cycle_confidence is not None and bool((cycle_confidence > 0).any()):
+            # Distance to the leave-one-cycle-out target on confident joints.
+            confident = (cycle_confidence > 0) & valid
+            metrics["cycle_target_error"] = masked_mean(torch.linalg.vector_norm(output.pose - batch["cycle_target"], dim=-1), confident)
+            metrics["cycle_target_error_base"] = masked_mean(torch.linalg.vector_norm(output.base_pose - batch["cycle_target"], dim=-1), confident)
+            metrics["cycle_confidence_mean"] = masked_mean(cycle_confidence, valid)
         if "clean_a" in batch:
             target, target_valid = pseudo_target(batch["clean_a"], batch["clean_b"], batch["clean_valid_a"], batch["clean_valid_b"], consensus_distance=self.loss_config.consensus_distance)
             corrupted = (batch["corruption_mask_a"] | batch["corruption_mask_b"]) & target_valid & valid

@@ -7,7 +7,7 @@ defaults:
   - _self_
   - model: v1
   - data: synthetic
-  - loss: default
+  - loss: v2
   - corruption: default
   - trainer: default
   - optimizer: default

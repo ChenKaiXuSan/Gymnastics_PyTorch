@@ -24,6 +24,7 @@ import pytorch_lightning as pl
 from torch.utils.data import DataLoader
 
 from ..corruptions import CorruptionConfig
+from ..cycle_target import CycleTargetConfig
 from ..sample import DualViewSample, collate_fusion_batch
 from ..skeleton import CommonSkeleton, build_common_skeleton
 from .folds import read_fold_file
@@ -85,6 +86,8 @@ class DataConfig:
         test_with_corruption: Replay the fixed corruption on test windows too,
             which enables the corrupted-joint reference metrics (robustness
             evaluation); off by default (clean-input evaluation).
+        cycle_target: Leave-one-cycle-out cross-cycle target settings
+            (:class:`~gymnastics.fusion.cycle_aware.cycle_target.CycleTargetConfig`).
         split: Explicit subject split.  When any of its three lists is
             non-empty the whole split is used as given (empty lists stay
             empty).
@@ -110,6 +113,7 @@ class DataConfig:
     corruption: CorruptionConfig = field(default_factory=CorruptionConfig)
     validate_with_corruption: bool = True
     test_with_corruption: bool = False
+    cycle_target: CycleTargetConfig = field(default_factory=CycleTargetConfig)
     split: SplitSpec = field(default_factory=SplitSpec)
     fold_json: str | None = None
     max_subjects_per_split: int | None = None
@@ -137,6 +141,7 @@ class DataConfig:
         payload = dict(value)
         window = WindowConfig(**dict(payload.pop("window", {}) or {}))
         corruption = CorruptionConfig.from_mapping(payload.pop("corruption", None))
+        cycle_target = CycleTargetConfig.from_mapping(payload.pop("cycle_target", None))
         split_payload = dict(payload.pop("split", {}) or {})
         split = SplitSpec(**{k: tuple(v or ()) for k, v in split_payload.items()})
         options = dict(payload.pop("options", {}) or {})
@@ -144,7 +149,7 @@ class DataConfig:
         for key in list(payload):
             if key not in known:
                 options[key] = payload.pop(key)
-        return cls(window=window, corruption=corruption, split=split, options=options, **payload)
+        return cls(window=window, corruption=corruption, cycle_target=cycle_target, split=split, options=options, **payload)
 
     def to_dict(self) -> dict[str, Any]:
         """Plain dictionary representation."""
@@ -272,6 +277,7 @@ class DualViewDataModule(pl.LightningDataModule, ABC):
                 phase_normalize=self.config.phase_normalize,
                 corruption=corruption,
                 seed=self.config.seed,
+                cycle_target=self.config.cycle_target,
             )
 
     def dataset(self, split: str) -> CycleWindowDataset:

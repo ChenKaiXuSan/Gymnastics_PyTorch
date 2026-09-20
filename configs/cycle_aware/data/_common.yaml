@@ -22,6 +22,17 @@ corruption: ${corruption}
 validate_with_corruption: true
 # Replay the fixed corruption on test windows (robustness evaluation).
 test_with_corruption: false
+# Leave-one-cycle-out cross-cycle target (gymnastics/fusion/cycle_aware/cycle_target.py).
+cycle_target:
+  enabled: true
+  # Cycles on each side used as candidates (null = every other cycle).
+  neighbors: 2
+  # Dispersion scale of the confidence C = 1 / (1 + (MAD / tau)^2), canonical units.
+  tau: 0.05
+  # Fewer valid candidates than this -> no target (C = 0).
+  min_candidates: 4
+  # "median" or "trimmed_mean".
+  aggregation: median
 # Explicit subject split: if any list is non-empty the whole split is used as
 # given (empty lists stay empty); all empty = adapter default.
 split:
