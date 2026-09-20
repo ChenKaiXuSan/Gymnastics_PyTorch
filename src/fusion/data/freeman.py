@@ -47,9 +47,19 @@ Split:
     split of the loaded subjects (sorted ids); explicit lists via
     ``data.split``.
 
+Session selection:
+    ``options.actions`` keeps only sessions whose FreeMan action label is in
+    the list (group names from :mod:`fusion.benchmarks.freeman.actions`
+    such as ``repetitive`` / ``dance`` / ``exercise`` / ``ball`` or plain
+    labels; null = every session).  ``options.min_cycles`` drops sessions
+    whose record has fewer detected cycles and ``options.max_period_cv``
+    drops sessions whose cycle lengths vary more than that coefficient of
+    variation; both apply after the action filter and default to off.
+
 Options (``data.options``):
     benchmark_root, subjects (list of ints), reference_scale_to_m,
-    cycle_records_root, require_cycle_records
+    cycle_records_root, require_cycle_records, actions, action_table,
+    min_cycles, max_period_cv
 """
 
 from __future__ import annotations
@@ -64,7 +74,7 @@ from fusion.keypoints.schema import PosePairTrial
 
 from ..sample import DualViewSample, sample_from_pose_pair_trial
 from .base import DualViewDataModule, SplitSpec
-from .cycle_records import public_cycles_for_sequence
+from .cycle_records import period_cv, public_cycles_for_sequence
 
 SessionLoader = Callable[[int], Sequence[tuple[PosePairTrial, Path | None]]]
 """Returns ``(trial, keypoints3d_path)`` per session of one subject."""
@@ -141,20 +151,51 @@ class FreeManDataModule(DualViewDataModule):
             return None
         return coco17_to_mhr70(points)
 
+    def _action_filter(self) -> tuple[frozenset[str] | None, dict[str, str]]:
+        """Allowed action labels and the session->label table (``options.actions``)."""
+        from fusion.benchmarks.freeman.actions import DEFAULT_ACTION_TABLE, expand_actions, load_action_table
+
+        selection = self.config.options.get("actions")
+        if not selection:
+            return None, {}
+        table = load_action_table(_resolve(self.config.options.get("action_table", DEFAULT_ACTION_TABLE)))
+        return expand_actions(selection), table
+
+    def _keep_record(self, bounds: Sequence[tuple[int, int]]) -> bool:
+        """``options.min_cycles`` / ``options.max_period_cv`` gates on the detected cycles."""
+        min_cycles = int(self.config.options.get("min_cycles", 0) or 0)
+        if len(bounds) < min_cycles:
+            return False
+        max_cv = self.config.options.get("max_period_cv")
+        if max_cv is not None and len(bounds) >= 2 and period_cv(bounds) > float(max_cv):
+            return False
+        return True
+
     def load_samples(self) -> Sequence[DualViewSample]:
+        from fusion.benchmarks.freeman.actions import session_action
+
         options = dict(self.config.options)
         records_root = _resolve(options.get("cycle_records_root", "local/runs/cycle_records/freeman"))
         require_record = bool(options.get("require_cycle_records", True))
+        allowed_actions, action_table = self._action_filter()
         samples: list[DualViewSample] = []
+        self.skipped_sessions: dict[str, int] = {"action": 0, "cycles": 0}
         for subject in self._subjects():
             subject_id = f"{int(subject):02d}"
             for trial, reference_path in self._session_loader(subject):
+                action = session_action(trial.trial_id, action_table) if action_table else None
+                if allowed_actions is not None and action not in allowed_actions:
+                    self.skipped_sessions["action"] += 1
+                    continue
+                bounds, mids, record = public_cycles_for_sequence(records_root, subject_id, trial.trial_id, trial, require_record=require_record)
+                if not self._keep_record(bounds):
+                    self.skipped_sessions["cycles"] += 1
+                    continue
                 reference = reference_valid = None
                 if self.config.attach_reference:
                     loaded = self._load_reference(reference_path, trial.face.shape[0])
                     if loaded is not None:
                         reference, reference_valid = loaded
-                bounds, mids, record = public_cycles_for_sequence(records_root, subject_id, trial.trial_id, trial, require_record=require_record)
                 samples.append(
                     sample_from_pose_pair_trial(
                         trial,
@@ -166,7 +207,7 @@ class FreeManDataModule(DualViewDataModule):
                         reference_valid=reference_valid,
                         subject_id=subject_id,
                         sequence_id=trial.trial_id,
-                        metadata={"cycle_record": record is not None, "cycle_detection": dict(record.detection) if record is not None else {}},
+                        metadata={"action": action, "cycle_record": record is not None, "cycle_detection": dict(record.detection) if record is not None else {}},
                     )
                 )
         return samples

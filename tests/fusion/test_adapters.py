@@ -206,6 +206,45 @@ def test_freeman_datamodule_with_injected_loader(tmp_path: Path):
     assert not lenient.samples[0].has_cycles
 
 
+def test_freeman_datamodule_session_selection(tmp_path: Path):
+    """``options.actions`` / ``min_cycles`` / ``max_period_cv`` drop sessions, never subjects' identity."""
+    table = tmp_path / "actions.csv"
+    table.write_text(
+        "Date,scene,Session,CamFrameNum,NumCam,SessionFrameNum,Actions,subject,\n"
+        "2022/6/18,1,aaaa01_video,100,8,800,hiphop,subj01,\n"
+        "2022/6/18,1,bbbb01_video,100,8,800,drink,subj01,\n"
+        "2022/6/18,1,cccc01_video,100,8,800,squat,subj01,\n",
+        encoding="utf-8",
+    )
+    sessions = {"20220618_aaaa01_subj01": [CycleSpan(0, 8, 20), CycleSpan(20, 28, 40), CycleSpan(40, 48, 60)],
+                "20220618_bbbb01_subj01": [CycleSpan(0, 8, 20), CycleSpan(20, 28, 40), CycleSpan(40, 48, 60)],
+                "20220618_cccc01_subj01": [CycleSpan(0, 5, 10), CycleSpan(10, 30, 60)]}
+
+    def session_loader(subject: int):
+        trial = _trial("01", 0, 0, 60, offset=0)
+        return [(PosePairTrial(**{**trial.__dict__, "trial_id": name, "source_metadata": {}}), None) for name in sessions]
+
+    records_root = tmp_path / "records"
+    settings = DetectionSettings(theta_ref=-2.0, theta_ref_mode="manual")
+    for name, spans in sessions.items():
+        write_cycle_record(cycle_record_path(records_root, "01", name), dataset="freeman", subject_id="01", sequence_id=name, fps=FPS, frames=60, spans=spans, detection=settings, views=("c04", "c07"))
+
+    def load(**options):
+        module = FreeManDataModule({"name": "freeman", "attach_reference": False, "options": {"subjects": [1], "cycle_records_root": str(records_root), "action_table": str(table), **options}}, session_loader=session_loader)
+        return [s.sequence_id for s in module.load_samples()], module.skipped_sessions
+
+    assert load()[0] == list(sessions)
+    ids, skipped = load(actions=["repetitive"])
+    assert ids == ["20220618_aaaa01_subj01", "20220618_cccc01_subj01"] and skipped == {"action": 1, "cycles": 0}
+    assert load(actions=["dance"])[0] == ["20220618_aaaa01_subj01"]
+    assert load(actions=["squat"])[0] == ["20220618_cccc01_subj01"]
+    assert load(min_cycles=3)[0] == ["20220618_aaaa01_subj01", "20220618_bbbb01_subj01"]
+    ids, skipped = load(actions=["repetitive"], max_period_cv=0.5)
+    assert ids == ["20220618_aaaa01_subj01"] and skipped == {"action": 1, "cycles": 1}
+    module = FreeManDataModule({"name": "freeman", "attach_reference": False, "options": {"subjects": [1], "cycle_records_root": str(records_root), "action_table": str(table), "actions": ["dance"]}}, session_loader=session_loader)
+    assert module.load_samples()[0].metadata["action"] == "hiphop"
+
+
 def test_unity_datamodule_with_injected_loader(tmp_path: Path):
     def sequence_loader():
         result = []

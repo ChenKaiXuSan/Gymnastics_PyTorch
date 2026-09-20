@@ -6,7 +6,7 @@ is the single import through which the training package touches cycle
 information, so the boundary "training never detects cycles" is easy to
 audit.
 
-Two helpers are provided:
+Three helpers are provided:
 
 * :func:`private_cycles_for_trials` maps the ``alignment_record_<id>.json``
   cycles (face video frames, with middles) onto the concatenated
@@ -14,6 +14,8 @@ Two helpers are provided:
 * :func:`public_cycles_for_sequence` reads a ``cycle_record_v1`` file and
   maps its frame ids onto the sample timeline through the trial's
   ``face_map`` (the frame ids of view A).
+* :func:`period_cv` summarises how regular the recorded cycles are, for the
+  adapters' session-selection options.
 """
 
 from __future__ import annotations
@@ -122,3 +124,12 @@ def public_cycles_for_sequence(
     if len(mids) != len(bounds):
         mids = []
     return tuple(bounds), tuple(mids), record
+
+
+def period_cv(bounds: Sequence[tuple[int, int]]) -> float:
+    """Coefficient of variation of the cycle lengths (0 for fewer than two cycles)."""
+    lengths = np.asarray([end - start for start, end in bounds], dtype=np.float64)
+    if lengths.size < 2 or not np.all(lengths > 0):
+        return 0.0
+    return float(lengths.std() / lengths.mean())
+

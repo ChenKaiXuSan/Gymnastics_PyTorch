@@ -14,3 +14,11 @@ options:
   cycle_records_root: local/runs/cycle_records/freeman
   # Error when a sequence has no record (records with zero cycles are fine).
   require_cycle_records: true
+  # Session selection by FreeMan action label (src/fusion/benchmarks/freeman/actions.py):
+  # group names (repetitive = dance + exercise + ball) or plain labels; null = all 905 sessions.
+  actions: [repetitive]
+  action_table: src/configs/shared/freeman_actions.csv
+  # Drop sessions with fewer detected cycles (0 = keep) / with cycle lengths
+  # varying more than this coefficient of variation (null = keep).
+  min_cycles: 3
+  max_period_cv: null
