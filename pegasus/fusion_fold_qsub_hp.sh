@@ -5,7 +5,7 @@
 #        -v DATA=gymnastics,FOLD=fold_01,SWEEP=gym_v1_5fold pegasus/fusion_fold_qsub.sh
 #
 # Variables (qsub -v):
-#   DATA       gymnastics | freeman            (required)
+#   DATA       gymnastics | freeman | sportspose (required)
 #   FOLD       fold_01 .. fold_05              (required)
 #   SWEEP      sweep name; run dir = local/runs/cycle_aware/<SWEEP>/<FOLD>  (default <DATA>_v1_5fold)
 #   FOLDS_DIR  fold-file directory (default: src/configs/fusion/folds/gymnastics
@@ -29,7 +29,7 @@
 set -u
 REPO="${REPO:-/work/HP260146/chenkaixu/Gymnastics_PyTorch}"
 cd "$REPO" || exit 1
-: "${DATA:?DATA (gymnastics|freeman) must be passed via qsub -v}"
+: "${DATA:?DATA (gymnastics|freeman|sportspose) must be passed via qsub -v}"
 : "${FOLD:?FOLD (fold_01..fold_05) must be passed via qsub -v}"
 SWEEP="${SWEEP:-${DATA}_v1_5fold}"
 SEED="${SEED:-0}"
@@ -39,6 +39,7 @@ OVERRIDES="${OVERRIDES:-}"
 case "$DATA" in
   gymnastics) DEFAULT_FOLDS=src/configs/fusion/folds/gymnastics ;;
   freeman)    DEFAULT_FOLDS=src/configs/shared/folds/freeman ;;
+  sportspose) DEFAULT_FOLDS=src/configs/fusion/folds/sportspose ;;
   *) echo "[ca_fold] unsupported DATA=$DATA"; exit 2 ;;
 esac
 FOLDS_DIR="${FOLDS_DIR:-$DEFAULT_FOLDS}"

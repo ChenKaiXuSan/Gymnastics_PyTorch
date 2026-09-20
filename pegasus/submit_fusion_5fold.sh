@@ -4,6 +4,7 @@
 #   bash pegasus/submit_fusion_5fold.sh gymnastics                 # sweep gymnastics_v1_5fold
 #   bash pegasus/submit_fusion_5fold.sh freeman                    # sweep freeman_v1_5fold (17-subject protocol)
 #   bash pegasus/submit_fusion_5fold.sh freeman_all40              # all 40 subjects, session-balanced folds
+#   bash pegasus/submit_fusion_5fold.sh sportspose                 # 24 SportsPose subjects, trial-as-cycle
 #   bash pegasus/submit_fusion_5fold.sh gymnastics no_film         # ablation preset -> gymnastics_v1_no_film_5fold
 #   SEED=1 bash pegasus/submit_fusion_5fold.sh gymnastics          # other seed
 #   OVERRIDES="model.hidden_dim=256::loss.periodicity_weight=0" bash pegasus/submit_fusion_5fold.sh gymnastics
@@ -15,7 +16,7 @@
 # After the jobs finish, summarise with
 #   PYTHONPATH=src python -m fusion.summarize local/runs/cycle_aware/<sweep>
 set -eu
-DATA="${1:?usage: submit_fusion_5fold.sh <gymnastics|freeman|freeman_all40> [experiment]}"
+DATA="${1:?usage: submit_fusion_5fold.sh <gymnastics|freeman|freeman_all40|sportspose> [experiment]}"
 EXPERIMENT="${2:-}"
 SEED="${SEED:-0}"
 EPOCHS="${EPOCHS:-50}"
@@ -25,6 +26,7 @@ case "$DATA" in
   gymnastics)    FOLDS_DIR="${FOLDS_DIR:-src/configs/fusion/folds/gymnastics}" ;;
   freeman)       FOLDS_DIR="${FOLDS_DIR:-src/configs/shared/folds/freeman}" ;;
   freeman_all40) FOLDS_DIR="${FOLDS_DIR:-src/configs/fusion/folds/freeman_all40}"; DATA=freeman ;;
+  sportspose)    FOLDS_DIR="${FOLDS_DIR:-src/configs/fusion/folds/sportspose}" ;;
   *) echo "unsupported dataset $DATA"; exit 2 ;;
 esac
 REPO="$(cd "$(dirname "$0")/.." && pwd)"

@@ -163,6 +163,39 @@ def test_annotate_sequence_writes_public_record(tmp_path: Path):
     assert annotate_cycles.main(["freeman", "--help"]) if False else True
 
 
+def test_sportspose_records_treat_every_clip_as_one_cycle(tmp_path: Path):
+    """``cycles sportspose``: clip boundaries become cycles, only the middle is detected."""
+    from tests.fusion.benchmarks_sportspose.test_dataset import make_release
+
+    from fusion.benchmarks.sportspose.dataset import discover_clips
+    from fusion.benchmarks.sportspose.sam3d import ViewPrediction, _identity, _sha256, _write_prediction, cache_path
+    from fusion.benchmarks.sportspose.schema import SelectedViews
+
+    root = make_release(tmp_path / "SportsPose", subjects=("S00",), clips_per=3)
+    clips = discover_clips(root)
+    config = tmp_path / "sam3d.yaml"
+    config.write_text("model: {}\n", encoding="utf-8")
+    cache_root = tmp_path / "sam3d"
+    # One half-swing of the wrist per clip (27 frames at stride 1 -> the 27 frames of the release).
+    for clip in clips:
+        pose = _world_pose(2 * clip.frames, 2 * clip.frames)[: clip.frames]
+        for view in ("cam0", "cam2"):
+            prediction = ViewPrediction(clip.clip_id, view, np.arange(clip.frames), np.arange(clip.frames), pose, pose[:, :, :2], np.ones((clip.frames, 70), bool), np.ones((clip.frames, 70), bool), ())
+            _write_prediction(cache_path(cache_root, clip, view), prediction, _identity(clip, view, _sha256(config), 1), config_path=config, device=0)
+    views = SelectedViews(subject_key="S00", sequence_key="indoors_tennis", view_a="cam0", view_b="cam2", azimuth_a_deg=0.0, azimuth_b_deg=90.0, separation_deg=90.0, clips=tuple(c.clip_id for c in clips))
+    views_path = tmp_path / "selected_views.json"
+    views_path.write_text(json.dumps({"groups": [views.to_dict()], "failures": []}), encoding="utf-8")
+    benchmark_config = tmp_path / "sportspose.yaml"
+    benchmark_config.write_text(f"paths:\n  dataset_root: {root}\n  sam3d_cache_root: {cache_root}\n  views_path: {views_path}\ndataset: {{}}\n", encoding="utf-8")
+    records_root = tmp_path / "records"
+    assert annotate_cycles.main(["sportspose", "--config", str(benchmark_config), "--out-root", str(records_root), "--no-plot", "--smooth-window", "5"]) == 0
+    record = read_cycle_record(cycle_record_path(records_root, "S00", "indoors_tennis"))
+    assert record.dataset == "sportspose" and record.frames == 3 * 27 and record.has_mids
+    assert [(s, e) for s, _, e in record.cycles] == [(0, 27), (27, 54), (54, 81)]
+    assert all(s < m < e for s, m, e in record.cycles)
+    assert record.detection["theta_ref_mode"] == "trial_as_cycle" and record.metadata["trial_as_cycle"] and record.metadata["clips"] == [c.clip_id for c in clips]
+
+
 def test_index_exports_private_records_and_writes_index(tmp_path: Path):
     split_root = tmp_path / "split_cycle"
     record = split_root / "person_3" / "alignment_record_3.json"

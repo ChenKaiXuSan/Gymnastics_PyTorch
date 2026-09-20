@@ -32,6 +32,7 @@ in `cycle_alignment` (`cycle_alignment/cycles.py`) and writes record files
 | private | `python -m cycle_alignment align` (boundaries) + `python -m cycle_alignment cycles private` (middles) | `local/runs/split_cycle/person_<id>/alignment_record_<id>.json` |
 | FreeMan | `python -m cycle_alignment cycles freeman` | `local/runs/cycle_records/freeman/subject_NN/<session>.json` |
 | Unity | `python -m cycle_alignment cycles unity` | `local/runs/cycle_records/unity/subject_<seq>/<seq>.json` |
+| SportsPose | `python -m cycle_alignment cycles sportspose` | `local/runs/cycle_records/sportspose/subject_<S>/<day>_<activity>.json` (one clip = one cycle, middle detected) |
 
 One shared definition is used everywhere: the right-wrist azimuth in the
 pelvis body frame (smoothed, unwrapped) starts a cycle each time it crosses
@@ -179,6 +180,7 @@ docstring.
 | Private gymnastics | `data/gymnastics.py` | person id | `alignment_record_<id>.json` (`require_cycle_mids`); consecutive cycles concatenated | triangulated pseudo-reference matched by face/side frame pairs |
 | FreeMan | `data/freeman.py` | subject number | `cycle_records/freeman` (`require_cycle_records`) | `keypoints3d_optim` scaled to metres, COCO17 → MHR70 positions |
 | Unity | `data/unity.py` | sequence id | `cycle_records/unity` (`require_cycle_records`) | native Unity22 joints → MHR70 positions |
+| SportsPose | `data/sportspose.py` | S-id (24 people) | `cycle_records/sportspose`: the ~5 trials of one action on one day are concatenated and each trial is one cycle | markerless multi-view COCO17 (metres) → MHR70 positions |
 | Synthetic | `data/synthetic.py` | generated | exact | generating motion |
 
 The private adapter uses the rotation-aware person cache by default
@@ -186,17 +188,23 @@ The private adapter uses the rotation-aware person cache by default
 `src/configs/shared/folds/paper_137_a6_split.json`. FreeMan reads the SAM3D
 cache of the zero-shot benchmark (`local/runs/freeman_benchmark_cluster`);
 Unity reads the benchmark manifest plus `local/runs/unity_benchmark/sam3d`.
-Converted samples can be cached with `data.cache_dir` (on by default for the
-three real datasets).
+SportsPose reads `local/runs/sportspose_benchmark/{selected_views.json,sam3d}`
+produced by `python -m fusion benchmark-sportspose {select-views,infer}`: per
+subject and sequence (day + activity) the camera facing the subject is view A
+and the camera ~90° from it is view B, mirroring the private face/side pair.
+FreeMan keeps only the repetitive action classes by default
+(`data.options.actions=[repetitive]`, `min_cycles=3`; see
+`fusion.benchmarks.freeman.actions`). Converted samples can be cached with
+`data.cache_dir` (on by default for the real datasets).
 
 ## 3. Configuration
 
 ```
 src/configs/fusion/
 ├── config.yaml              root: samples_per_cycle, num_cycles, seed, run_name, output_root
-├── model/v1.yaml            architecture and ablation switches
+├── model/v1_1.yaml          architecture v1.1 (default) and ablation switches; model/v1.yaml = v1.0 base
 ├── data/{synthetic,gymnastics,freeman,unity}.yaml   (+ _common.yaml)
-├── loss/default.yaml
+├── loss/{v3,v2,v1_recovery}.yaml   v3 = default
 ├── corruption/{default,none}.yaml
 ├── trainer/{default,debug}.yaml
 ├── optimizer/default.yaml
@@ -227,7 +235,11 @@ python -m fusion train data=gymnastics trainer.max_epochs=50
 python -m cycle_alignment cycles private
 python -m cycle_alignment cycles freeman
 python -m cycle_alignment cycles unity
+python -m cycle_alignment cycles sportspose   # after `python -m fusion benchmark-sportspose infer`
 python -m cycle_alignment cycles index
+
+# SportsPose, 5 subject-disjoint folds (trials of one action as cycles).
+python -m fusion train data=sportspose data.fold_json=src/configs/fusion/folds/sportspose/fold_01.json
 
 # FreeMan (subject-disjoint) on a subject subset.
 python -m fusion train data=freeman 'data.options.subjects=[1,2,3,4,5,6]'

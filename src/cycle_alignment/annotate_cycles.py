@@ -21,6 +21,13 @@ Sub-commands::
         Same for the continuous Unity sequences ->
         ``local/runs/cycle_records/unity/subject_<sequence>/<sequence>.json``.
 
+    python -m cycle_alignment cycles sportspose [--config src/configs/benchmarks/sportspose.yaml]
+        Trial-as-cycle records for SportsPose: every clip of one subject, day
+        and activity is one cycle on the concatenated timeline of
+        ``fusion.benchmarks.sportspose.trials``; only the middle (extremum of
+        the fused wrist azimuth inside the clip) is detected ->
+        ``local/runs/cycle_records/sportspose/subject_<S>/<day>_<activity>.json``.
+
     python -m cycle_alignment cycles index [--records-root local/runs/cycle_records]
         Collects everything into one tree: exports the private alignment
         records as ``cycle_record_v1`` files under ``gymnastics/``, gathers
@@ -65,7 +72,7 @@ from cycle_alignment.cycles import (
     detect_cycles,
     hand_theta_unwrapped,
 )
-from common.paths import DATA_ROOT, PROJECT_ROOT
+from common.paths import DATA_ROOT, FREEMAN_ROOT, PROJECT_ROOT, SPORTSPOSE_ROOT
 
 
 def _resolve(path: str | Path) -> Path:
@@ -346,6 +353,46 @@ def run_unity(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_sportspose(args: argparse.Namespace) -> int:
+    from fusion.benchmarks.sportspose.cli import load_config, read_selected_views
+    from fusion.benchmarks.sportspose.dataset import discover_clips, group_clips
+    from fusion.benchmarks.sportspose.trials import build_sequence_trial, load_clip_predictions
+
+    config = load_config(args.config)
+    paths = config["paths"]
+    cache_root = _resolve(str(paths["sam3d_cache_root"]))
+    views = read_selected_views(_resolve(str(paths["views_path"])))
+    dataset = dict(config.get("dataset") or {})
+    clips = discover_clips(_resolve(str(paths["dataset_root"])), days=dataset.get("days"), subjects=args.subjects or dataset.get("subjects"), activities=dataset.get("activities"))
+    out_root = _resolve(args.out_root)
+    settings = DetectionSettings(smooth_window=int(args.smooth_window), theta_ref=None, theta_ref_mode="trial_as_cycle")
+    totals = {"sequences": 0, "cycles": 0, "skipped": 0}
+    for (subject_key, sequence_key), group in group_clips(clips).items():
+        selected = views.get((subject_key, sequence_key))
+        if selected is None:
+            totals["skipped"] += 1
+            continue
+        try:
+            predictions = [load_clip_predictions(cache_root, clip, selected) for clip in group]
+        except FileNotFoundError:
+            print(f"  ✗ {subject_key}/{sequence_key}: SAM3D cache incomplete, skipped")
+            totals["skipped"] += 1
+            continue
+        trial, bounds, _ = build_sequence_trial(group, predictions, selected)
+        theta = fused_wrist_theta(trial.face, trial.side, valid_a=trial.valid_face, valid_b=trial.valid_side, smooth_window=settings.smooth_window)
+        spans = annotate_mid_points(theta, bounds)
+        path = cycle_record_path(out_root, subject_key, sequence_key)
+        write_cycle_record(path, dataset="sportspose", subject_id=subject_key, sequence_id=sequence_key, fps=trial.fps, frames=int(trial.face.shape[0]), spans=spans, detection=settings, views=(selected.view_a, selected.view_b), extra_metadata={"clips": [c.clip_id for c in group], "trial_as_cycle": True})
+        if not args.no_plot:
+            save_theta_plot(theta, trial.fps, spans, settings, path.with_name(f"{sequence_key}_theta_cycles.png"), f"sportspose {subject_key}/{sequence_key}: {len(spans)} clips")
+        totals["sequences"] += 1
+        totals["cycles"] += len(spans)
+        print(f"  {subject_key}/{sequence_key}: {len(spans)} clips as cycles")
+    (out_root / "summary.json").write_text(json.dumps({"settings": settings.to_dict(), **totals}, indent=2), encoding="utf-8")
+    print(f"[cycles/sportspose] done: {totals}")
+    return 0
+
+
 # ----------------------------------------------------------------------------- index
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -437,6 +484,9 @@ form.
   frames, offset = `offset_side_to_face`). Re-export with `python -m cycle_alignment cycles index`.
 * `freeman/`, `unity/`: written directly by `python -m cycle_alignment cycles freeman|unity`;
   `frames` are the shared (synchronised) frame ids.
+* `sportspose/`: `python -m cycle_alignment cycles sportspose`; every clip (one trial of the
+  action) is one cycle on the concatenated per-subject/activity timeline, only the middle is
+  detected.
 
 ## Regeneration
 
@@ -444,6 +494,7 @@ form.
 python -m cycle_alignment cycles private   # adds mid to the 137 alignment records (~1 min/person)
 python -m cycle_alignment cycles freeman   # local/runs/cycle_records/freeman
 python -m cycle_alignment cycles unity     # local/runs/cycle_records/unity
+python -m cycle_alignment cycles sportspose  # local/runs/cycle_records/sportspose
 python -m cycle_alignment cycles index     # this tree + index.json + README.md
 ```
 
@@ -474,7 +525,7 @@ def run_index(args: argparse.Namespace) -> int:
             shutil.move(str(source), str(logs / name))
     # 3) stats + index
     datasets = {}
-    for name in ("gymnastics", "freeman", "unity"):
+    for name in ("gymnastics", "freeman", "unity", "sportspose"):
         root = records_root / name
         if root.is_dir():
             datasets[name] = _dataset_stats(root)
@@ -496,10 +547,16 @@ def run_index(args: argparse.Namespace) -> int:
             "keypoints_3d_sam3d": str(_resolve(args.unity_cache_root) / "{cam0,cam1}" / "<sample_id>.npz"),
             "keypoints_3d_reference": str(_resolve(args.unity_root) / "manifest.jsonl (keypoints_3d, world metres)"),
         },
+        "sportspose": {
+            "videos": str(SPORTSPOSE_ROOT / "videos" / "<day>" / "S<nn>" / "Video_<date>_<time>" / "CAM<k>.avi"),
+            "keypoints_3d_sam3d": str(_resolve(args.sportspose_cache_root) / "<day>" / "S<nn>" / "<activity>" / "<clip>" / "cam<k>.npz"),
+            "keypoints_3d_reference": str(SPORTSPOSE_ROOT / "data" / "<day>" / "S<nn>" / "<activity>" / "<clip>.npy (COCO17, metres)"),
+            "selected_views": str(_resolve(args.sportspose_views_path)),
+        },
     }
     index = {"generated": datetime.now().isoformat(timespec="seconds"), "datasets": datasets, "sources": sources}
     (records_root / "index.json").write_text(json.dumps(index, indent=2, ensure_ascii=False), encoding="utf-8")
-    truth = {"gymnastics": "`local/runs/split_cycle/.../alignment_record_<id>.json`", "freeman": "these files", "unity": "these files"}
+    truth = {"gymnastics": "`local/runs/split_cycle/.../alignment_record_<id>.json`", "freeman": "these files", "unity": "these files", "sportspose": "these files (one clip = one cycle)"}
     rows = "\n".join(f"| {name} | {d['sequences']} | {d['with_cycles']} | {d['cycles']} | {truth[name]} |" for name, d in datasets.items())
     source_lines = []
     for name, entries in sources.items():
@@ -545,6 +602,12 @@ def build_parser() -> argparse.ArgumentParser:
     unity.add_argument("--fps", type=float, default=60.0)
     common(unity, public=True)
 
+    sportspose = sub.add_parser("sportspose", help="trial-as-cycle records for the SportsPose benchmark cache")
+    sportspose.add_argument("--config", type=Path, default=Path("src/configs/benchmarks/sportspose.yaml"))
+    sportspose.add_argument("--subjects", nargs="*", default=None, help="S00 S01 ... (applies to every day)")
+    common(sportspose, public=False)
+    sportspose.add_argument("--out-root", type=Path, default=None, help="record root (default: local/runs/cycle_records/sportspose)")
+
     data_root = DATA_ROOT
     index = sub.add_parser("index", help="export private records, gather logs, write index.json and README.md")
     index.add_argument("--records-root", type=Path, default=Path("local/runs/cycle_records"))
@@ -554,15 +617,17 @@ def build_parser() -> argparse.ArgumentParser:
     index.add_argument("--triangulated-root", type=Path, default=data_root / "sam3d_triangulated")
     index.add_argument("--unity-root", type=Path, default=data_root / "unity_benchmark")
     index.add_argument("--unity-cache-root", type=Path, default=Path("local/runs/unity_benchmark/sam3d"))
-    index.add_argument("--freeman-root", type=Path, default=Path(os.environ.get("FREEMAN_ROOT", str(DATA_ROOT.parent / "public_datasets" / "multiview_human" / "FreeMan"))))
+    index.add_argument("--freeman-root", type=Path, default=Path(os.environ.get("FREEMAN_ROOT", str(FREEMAN_ROOT))))
     index.add_argument("--freeman-benchmark-root", type=Path, default=Path("local/runs/freeman_benchmark_cluster"))
+    index.add_argument("--sportspose-cache-root", type=Path, default=Path("local/runs/sportspose_benchmark/sam3d"))
+    index.add_argument("--sportspose-views-path", type=Path, default=Path("local/runs/sportspose_benchmark/selected_views.json"))
     return parser
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
-    if getattr(args, "out_root", None) is None and args.dataset in {"freeman", "unity"}:
+    if getattr(args, "out_root", None) is None and args.dataset in {"freeman", "unity", "sportspose"}:
         args.out_root = Path("local/runs/cycle_records") / args.dataset
     if args.dataset == "private":
         return run_private(args)
@@ -570,6 +635,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return run_freeman(args)
     if args.dataset == "unity":
         return run_unity(args)
+    if args.dataset == "sportspose":
+        return run_sportspose(args)
     return run_index(args)
 
 

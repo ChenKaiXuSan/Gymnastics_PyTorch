@@ -13,6 +13,7 @@ from cycle_alignment.cycles import CycleSpan, DetectionSettings
 from common.skeletons.mhr70 import MHR70_INDEX, mhr_names
 from fusion.data.freeman import FreeManDataModule, coco17_to_mhr70
 from fusion.data.gymnastics import GymnasticsDataModule, concatenate_cycles, reference_from_triangulation
+from fusion.data.sportspose import SportsPoseDataModule
 from fusion.data.unity import UnityDataModule, unity22_to_mhr70
 from fusion.keypoints.schema import PosePairTrial
 
@@ -291,3 +292,39 @@ def test_gymnastics_fold_json_restricts_persons(tmp_path: Path):
     datamodule.setup()
     assert sorted(loaded) == ["1", "2", "3", "4"]  # person 5 is not in the fold
     assert datamodule.split.train == ("1", "2") and datamodule.split.val == ("3",) and datamodule.split.test == ("4",)
+
+
+def test_sportspose_datamodule_with_injected_loader(tmp_path: Path):
+    """Trials of one action are cycles; S-ids split; the COCO17 reference is scattered into MHR70."""
+    coco = np.ones((60, 17, 3), dtype=np.float32)
+
+    def sequence_loader():
+        result = []
+        for subject in ("S00", "S01", "S02", "S03"):
+            for day in ("indoors", "outdoors") if subject == "S00" else ("indoors",):
+                trial = _trial(subject, 0, 0, 60, offset=0)
+                trial = PosePairTrial(**{**trial.__dict__, "trial_id": f"{day}_tennis", "source_metadata": {"dataset": "sportspose", "day": day, "activity": "tennis", "clips": ["tennis0021", "tennis0022", "tennis0023"], "offset_side_to_face": 0}})
+                result.append((trial, coco))
+        return result
+
+    records_root = tmp_path / "records"
+    settings = DetectionSettings(theta_ref=None, theta_ref_mode="trial_as_cycle")
+    spans = [CycleSpan(0, 8, 20), CycleSpan(20, 28, 40), CycleSpan(40, 48, 60)]
+    for subject in ("S00", "S01", "S02", "S03"):
+        for day in ("indoors", "outdoors"):
+            write_cycle_record(cycle_record_path(records_root, subject, f"{day}_tennis"), dataset="sportspose", subject_id=subject, sequence_id=f"{day}_tennis", fps=FPS, frames=60, spans=spans, detection=settings, views=("cam0", "cam2"), extra_metadata={"trial_as_cycle": True})
+    options = {"cycle_records_root": str(records_root)}
+    datamodule = SportsPoseDataModule({"name": "sportspose", "batch_size": 2, "window": {"num_cycles": 2, "samples_per_cycle": 8}, "options": options}, sequence_loader=sequence_loader)
+    datamodule.setup()
+    assert len(datamodule.samples) == 5
+    sample = datamodule.samples[0]
+    assert sample.dataset == "sportspose" and sample.subject_id == "S00" and sample.sequence_id == "indoors_tennis"
+    assert sample.cycle_bounds == ((0, 20), (20, 40), (40, 60)) and sample.cycle_mids == (8, 28, 48)
+    assert sample.metadata["action"] == "tennis" and sample.metadata["day"] == "indoors" and sample.metadata["cycle_detection"]["theta_ref_mode"] == "trial_as_cycle"
+    assert sample.reference is not None and sample.reference_valid.any() and np.allclose(sample.reference[sample.reference_valid], 1.0)
+    assert datamodule.split.train == ("S00", "S01") and datamodule.split.val == ("S02",) and datamodule.split.test == ("S03",)
+    batch = next(iter(datamodule.train_dataloader()))
+    assert batch["phase_valid"].any() and (batch["half_index"][batch["phase_valid"]] >= 0).all()
+    with pytest.raises(FileNotFoundError):
+        SportsPoseDataModule({"name": "sportspose", "options": {"cycle_records_root": str(tmp_path / "nowhere")}}, sequence_loader=sequence_loader).setup()
+

@@ -200,13 +200,13 @@ src/fusion/
 ├── velocity.py           physical velocity from timestamps
 ├── outputs.py            PoseFusionOutput dataclass
 ├── modules/              spatial / short / long transformers, motion fusion, FiLM,
-│                         cross-view attention, reliability, weighted fusion, residual
-├── model.py              CycleAwareFusionModel + CycleAwareModelConfig
-├── losses.py             recovery, periodicity, symmetry, residual objectives
+│                         cross-view attention, reliability, depth-aware fusion, residual
+├── model.py              CycleAwareFusionModel + CycleAwareModelConfig (ARCHITECTURE_VERSION)
+├── losses.py             recovery (v3), cross-cycle (v2), periodicity, symmetry, residual objectives
 ├── corruptions.py        joint/distal masks, noise, depth drift, frame dropouts
 ├── metrics.py            Procrustes / translation aligned MPJPE
 ├── data/                 base DataModule, windows, sample cache, and one adapter per
-│                         dataset (gymnastics, freeman, unity) plus synthetic
+│                         dataset (gymnastics, freeman, unity, sportspose) plus synthetic
 ├── lightning_module.py   training / validation / test / predict steps
 └── train.py              Hydra entry point (`python -m fusion train`)
 src/configs/fusion/      Hydra groups: model, data, loss, corruption, trainer, optimizer, experiment
@@ -227,6 +227,7 @@ structure.
 | `gymnastics` | rotation-aware person cache or SAM3D + split-cycle records | `alignment_record_<id>.json` (`python -m cycle_alignment align`, middles via `python -m cycle_alignment cycles private`) | triangulated pseudo-reference |
 | `freeman` | zero-shot benchmark SAM3D cache | `local/runs/cycle_records/freeman` (`python -m cycle_alignment cycles freeman`) | `keypoints3d_optim` (COCO17) |
 | `unity` | Unity manifest + SAM3D camera cache | `local/runs/cycle_records/unity` (`python -m cycle_alignment cycles unity`) | native 3D (Unity22) |
+| `sportspose` | SportsPose benchmark SAM3D cache (`python -m fusion benchmark-sportspose`) | `local/runs/cycle_records/sportspose` (`python -m cycle_alignment cycles sportspose`, one trial = one cycle) | markerless multi-view 3D (COCO17) |
 | `synthetic` | generated in memory | exact | generating motion |
 
 Cycle detection (cycle start = right-wrist azimuth crossing, middle =
@@ -238,6 +239,7 @@ training:
 python -m cycle_alignment cycles private      # adds "mid" to the 137 records
 python -m cycle_alignment cycles freeman      # local/runs/cycle_records/freeman
 python -m cycle_alignment cycles unity        # local/runs/cycle_records/unity
+python -m cycle_alignment cycles sportspose   # local/runs/cycle_records/sportspose
 python -m cycle_alignment cycles index        # unified tree + index.json + README.md
 ```
 
@@ -265,6 +267,12 @@ python -m fusion train data=freeman
 
 # Unity direction-transfer fold.
 python -m fusion train data=unity data.options.fold=right_to_left
+
+# SportsPose (prepare once: select-views + infer on the cluster, then the cycle records).
+python -m fusion benchmark-sportspose select-views
+bash pegasus/submit_sportspose_infer.sh
+python -m cycle_alignment cycles sportspose
+python -m fusion train data=sportspose data.fold_json=src/configs/fusion/folds/sportspose/fold_01.json
 ```
 
 Outputs (resolved config, CSV logs, checkpoints, `result.json`) are written

@@ -3,8 +3,14 @@
 Every NQSV job script of the repository lives here, named by the stage it
 serves: `fusion_*` / `submit_fusion_*` (stage 4, the proposed model),
 `archive_*` (the frozen rotation-aware paper model) and
-`benchmark_freeman_subject_qsub.sh` (SAM3D inference on FreeMan for the
-public benchmark).
+`benchmark_*` (SAM3D inference on the public benchmarks:
+`benchmark_freeman_subject_qsub.sh` per FreeMan subject,
+`benchmark_sportspose_infer_qsub.sh` + `submit_sportspose_infer.sh` for the
+two selected views of every SportsPose clip, ~4 subjects per job).
+
+`submit_fusion_5fold.sh` passes the checkout that holds it to the jobs
+(`REPO`), so a sweep can be pinned to a git worktree while the main tree
+keeps changing (symlink the worktree's `local/` to the main one).
 
 ## Fusion model (stage 4)
 

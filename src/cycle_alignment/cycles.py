@@ -96,7 +96,8 @@ class DetectionSettings:
         smooth_window: Moving-average window in frames (odd).
         theta_ref: Reference azimuth in radians used for the crossings
             (``None`` when unknown, e.g. middles added to legacy records).
-        theta_ref_mode: ``"auto_p10"``, ``"manual"`` or ``"legacy_align"``.
+        theta_ref_mode: ``"auto_p10"``, ``"manual"``, ``"legacy_align"`` or
+            ``"trial_as_cycle"`` (cycle boundaries given by the data, only middles detected).
         min_period_sec: Minimum spacing of consecutive cycle starts.
         max_period_sec: Maximum cycle duration (``None`` = unlimited).
         min_amplitude_rad: Minimum signal amplitude (``None`` = unlimited).

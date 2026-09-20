@@ -1,11 +1,12 @@
 """Dataset adapters and shared windowing for cycle-aware fusion.
 
-Three independent dataset entry points convert their raw material into the
+Four independent dataset entry points convert their raw material into the
 unified :class:`~fusion.sample.DualViewSample`:
 
     ``gymnastics``  private two-camera gymnastics recordings (cycles annotated)
     ``freeman``     public FreeMan release, two selected views per session
     ``unity``       synthetic Unity benchmark, two virtual cameras
+    ``sportspose``  public SportsPose release, trials of one action as cycles
 
 plus a ``synthetic`` DataModule that generates periodic motion for smoke
 tests and continuous integration.  Every DataModule derives from
@@ -55,7 +56,11 @@ def build_datamodule(config: Mapping[str, Any]) -> DualViewDataModule:
         from .unity import UnityDataModule
 
         return UnityDataModule(config)
-    raise ValueError(f"unknown dataset {name!r}; expected synthetic, gymnastics, freeman or unity")
+    if name == "sportspose":
+        from .sportspose import SportsPoseDataModule
+
+        return SportsPoseDataModule(config)
+    raise ValueError(f"unknown dataset {name!r}; expected synthetic, gymnastics, freeman, unity or sportspose")
 
 
 __all__ = [

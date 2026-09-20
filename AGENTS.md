@@ -64,7 +64,8 @@ python -m cycle_alignment align
 python -m cycle_alignment cycles private
 python -m cycle_alignment cycles freeman
 python -m cycle_alignment cycles unity
-python -m cycle_alignment cycles index      # local/runs/cycle_records/{gymnastics,freeman,unity} + index.json
+python -m cycle_alignment cycles sportspose   # after `python -m fusion benchmark-sportspose infer`
+python -m cycle_alignment cycles index      # local/runs/cycle_records/{gymnastics,freeman,unity,sportspose} + index.json
 
 # Triangulate SAM3D face/side 2D keypoints into pseudo-GT 3D joints.
 python -m pseudo_gt triangulate
@@ -98,7 +99,7 @@ configuration tree `configs/`:
 | ④ fusion network | `src/fusion/` | **The proposed model**: cycle-aware dual-view fusion (data modules, model, losses, Lightning training, Hydra configs in `src/configs/fusion`). See `docs/cycle_aware_fusion.md`. | `python -m fusion train` |
 | support | `src/fusion/keypoints/` | Shared 3D-keypoint representation used by ③, ④, the baselines and the benchmarks: `PosePairTrial`, `SkeletonSpec`, canonical body frame, trunk/quality features, person cache. No model code. | – |
 | support | `src/fusion/baselines/` | Deterministic comparison matrix and classical baselines every model is compared against. | `python -m fusion deterministic` |
-| support | `src/fusion/benchmarks/` | FreeMan and Unity public benchmarks (adapters, zero-shot and trained evaluation). | `python -m fusion benchmark-{freeman,freeman-train,unity}` |
+| support | `src/fusion/benchmarks/` | FreeMan, Unity and SportsPose public benchmarks (adapters, view selection, SAM3D caches, zero-shot and trained evaluation). | `python -m fusion benchmark-{freeman,freeman-train,unity,sportspose}` |
 | support | `src/fusion/analysis/` | Metrics, reports, cohort/repeated-cycle statistics, paper result tables. | `python -m fusion analyze`, `python -m fusion cohort-cycle` |
 | support | `src/common/` | Project paths, config helpers, MHR70 metadata, the shared CLI dispatcher. Library only, no entry point. | – |
 | config | `src/configs/` | `pose_estimation/`, `pseudo_gt/`, `fusion/` (Hydra tree of the model), `shared/` (MHR70 skeleton spec, fold files), `benchmarks/`, `analysis/`, `archive/` (old-model configs). | – |

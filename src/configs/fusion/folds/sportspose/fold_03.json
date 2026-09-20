@@ -1,0 +1,112 @@
+{
+  "name": "fold_03",
+  "dataset": "sportspose",
+  "protocol": "subject_disjoint",
+  "seed": 0,
+  "days_per_subject": {
+    "S00": [
+      "indoors",
+      "outdoors"
+    ],
+    "S01": [
+      "indoors"
+    ],
+    "S02": [
+      "indoors"
+    ],
+    "S03": [
+      "indoors"
+    ],
+    "S04": [
+      "indoors"
+    ],
+    "S05": [
+      "indoors"
+    ],
+    "S06": [
+      "indoors"
+    ],
+    "S07": [
+      "indoors"
+    ],
+    "S08": [
+      "indoors"
+    ],
+    "S09": [
+      "indoors"
+    ],
+    "S10": [
+      "indoors",
+      "outdoors"
+    ],
+    "S11": [
+      "indoors"
+    ],
+    "S12": [
+      "indoors"
+    ],
+    "S13": [
+      "indoors"
+    ],
+    "S14": [
+      "indoors"
+    ],
+    "S15": [
+      "indoors"
+    ],
+    "S16": [
+      "indoors"
+    ],
+    "S17": [
+      "indoors"
+    ],
+    "S18": [
+      "indoors"
+    ],
+    "S19": [
+      "indoors"
+    ],
+    "S20": [
+      "indoors"
+    ],
+    "S21": [
+      "indoors"
+    ],
+    "S22": [
+      "outdoors"
+    ],
+    "S23": [
+      "outdoors"
+    ]
+  },
+  "train": [
+    "S00",
+    "S01",
+    "S04",
+    "S05",
+    "S09",
+    "S10",
+    "S14",
+    "S15",
+    "S16",
+    "S17",
+    "S18",
+    "S19",
+    "S20",
+    "S21",
+    "S22",
+    "S23"
+  ],
+  "val": [
+    "S02",
+    "S03",
+    "S06",
+    "S12"
+  ],
+  "test": [
+    "S07",
+    "S08",
+    "S11",
+    "S13"
+  ]
+}
