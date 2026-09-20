@@ -2,18 +2,18 @@
 
 Usage (repository root):
 
-    conda run -n gymnastic python -m fusion.train data=synthetic
-    conda run -n gymnastic python -m fusion train data=gymnastics trainer.max_epochs=50
-    conda run -n gymnastic python -m fusion train data=freeman experiment=no_film
+    python -m fusion.train data=synthetic
+    python -m fusion train data=gymnastics trainer.max_epochs=50
+    python -m fusion train data=freeman experiment=no_film
 
 Cross-validation (one run per fold file, then a summary):
 
-    conda run -n gymnastic python -m fusion train data=gymnastics \
+    python -m fusion train data=gymnastics \
         folds_dir=src/configs/fusion/folds/gymnastics run_name=gym_v1_5fold
 
 Transfer / evaluation of an existing checkpoint (no training):
 
-    conda run -n gymnastic python -m fusion train data=gymnastics test_only=true \
+    python -m fusion train data=gymnastics test_only=true \
         checkpoint=local/runs/cycle_aware/freeman_all40_v1_reference_supervised_5fold_seed0/fold_01/checkpoints/last.ckpt
 
 ``checkpoint`` without ``test_only`` initialises the model from those weights

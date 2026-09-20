@@ -34,15 +34,15 @@ selection criterion.
 
 ## Commands
 
-All commands use the `gymnastic` environment. The default config is
+All commands run in the project environment (see the README). The default config is
 `src/configs/archive/rotation_aware.yaml`; pass `--config` to use a copied,
 machine-specific YAML.
 
 ```bash
-conda run -n gymnastic python -m fusion rotation-aware prepare --config src/configs/archive/rotation_aware.yaml
-conda run -n gymnastic python -m fusion rotation-aware train --config src/configs/archive/rotation_aware.yaml --run-id paper_a6 --ablation A6
-conda run -n gymnastic python -m fusion rotation-aware infer --config src/configs/archive/rotation_aware.yaml --run-id paper_a6
-conda run -n gymnastic python -m fusion rotation-aware evaluate --config src/configs/archive/rotation_aware.yaml --run-id paper_a6
+python -m fusion rotation-aware prepare --config src/configs/archive/rotation_aware.yaml
+python -m fusion rotation-aware train --config src/configs/archive/rotation_aware.yaml --run-id paper_a6 --ablation A6
+python -m fusion rotation-aware infer --config src/configs/archive/rotation_aware.yaml --run-id paper_a6
+python -m fusion rotation-aware evaluate --config src/configs/archive/rotation_aware.yaml --run-id paper_a6
 ```
 
 `prepare` may be scoped with `--person <id>`; it builds compact cache files
@@ -67,20 +67,20 @@ count. Use a fresh ID for every training attempt; the command rejects a
 non-empty batch-64 run directory rather than overwriting it.
 
 ```bash
-conda run -n gymnastic python -m fusion rotation-aware prepare --config src/configs/archive/rotation_aware_batch64.yaml
-conda run -n gymnastic python -m fusion rotation-aware train --config src/configs/archive/rotation_aware_batch64.yaml --run-id paper_a4_b64_e200 --ablation A4
-conda run -n gymnastic python -m fusion rotation-aware train --config src/configs/archive/rotation_aware_batch64.yaml --run-id paper_a5_b64_e200 --ablation A5
-conda run -n gymnastic python -m fusion rotation-aware train --config src/configs/archive/rotation_aware_batch64.yaml --run-id paper_a6_b64_e100 --ablation A6
-conda run -n gymnastic python -m fusion rotation-aware infer --config src/configs/archive/rotation_aware_batch64.yaml --run-id paper_a4_b64_e200
-conda run -n gymnastic python -m fusion rotation-aware infer --config src/configs/archive/rotation_aware_batch64.yaml --run-id paper_a5_b64_e200
-conda run -n gymnastic python -m fusion rotation-aware infer --config src/configs/archive/rotation_aware_batch64.yaml --run-id paper_a6_b64_e100
-conda run -n gymnastic python -m fusion rotation-aware evaluate --config src/configs/archive/rotation_aware_batch64.yaml --run-id paper_a4_b64_e200 --run-id paper_a5_b64_e200 --run-id paper_a6_b64_e100
+python -m fusion rotation-aware prepare --config src/configs/archive/rotation_aware_batch64.yaml
+python -m fusion rotation-aware train --config src/configs/archive/rotation_aware_batch64.yaml --run-id paper_a4_b64_e200 --ablation A4
+python -m fusion rotation-aware train --config src/configs/archive/rotation_aware_batch64.yaml --run-id paper_a5_b64_e200 --ablation A5
+python -m fusion rotation-aware train --config src/configs/archive/rotation_aware_batch64.yaml --run-id paper_a6_b64_e100 --ablation A6
+python -m fusion rotation-aware infer --config src/configs/archive/rotation_aware_batch64.yaml --run-id paper_a4_b64_e200
+python -m fusion rotation-aware infer --config src/configs/archive/rotation_aware_batch64.yaml --run-id paper_a5_b64_e200
+python -m fusion rotation-aware infer --config src/configs/archive/rotation_aware_batch64.yaml --run-id paper_a6_b64_e100
+python -m fusion rotation-aware evaluate --config src/configs/archive/rotation_aware_batch64.yaml --run-id paper_a4_b64_e200 --run-id paper_a5_b64_e200 --run-id paper_a6_b64_e100
 ```
 
 Benchmark an already prepared cache without writing a training run:
 
 ```bash
-conda run --no-capture-output -n gymnastic python analysis/benchmark_rotation_aware_training.py \
+python -m fusion.analysis.benchmark_rotation_aware_training \
   --config src/configs/archive/rotation_aware_batch64.yaml \
   --ablation A6 --device cuda:0 --warmup-epochs 1 --measured-epochs 3 \
   --output /tmp/rotation_aware_a6_batch64_benchmark.json
@@ -196,7 +196,7 @@ A0-A3 are emitted alongside every learned inference run. A4-A11 are separate
 trained runs, so evaluate them together by repeating `--run-id`:
 
 ```bash
-conda run -n gymnastic python -m fusion rotation-aware evaluate \
+python -m fusion rotation-aware evaluate \
   --config src/configs/archive/rotation_aware.yaml \
   --run-id paper_a4 --run-id paper_a5 --run-id paper_a6
 ```
@@ -226,23 +226,23 @@ All production rotation-aware configurations resolve the same tracked
 participants. This is the exact person partition used by the A6 mainline run.
 
 ```bash
-conda run -n gymnastic python -m fusion rotation-aware train \
+python -m fusion rotation-aware train \
   --config src/configs/archive/rotation_aware_cross_attention.yaml \
   --run-id paper137_a10_b64_e100_s0 --ablation A10
 
-conda run -n gymnastic python -m fusion rotation-aware train \
+python -m fusion rotation-aware train \
   --config src/configs/archive/rotation_aware_cross_attention.yaml \
   --run-id paper137_a11_b64_e100_s0 --ablation A11
 
-conda run -n gymnastic python -m fusion rotation-aware infer \
+python -m fusion rotation-aware infer \
   --config src/configs/archive/rotation_aware_cross_attention.yaml \
   --run-id paper137_a10_b64_e100_s0
 
-conda run -n gymnastic python -m fusion rotation-aware infer \
+python -m fusion rotation-aware infer \
   --config src/configs/archive/rotation_aware_cross_attention.yaml \
   --run-id paper137_a11_b64_e100_s0
 
-conda run -n gymnastic python -m fusion rotation-aware evaluate \
+python -m fusion rotation-aware evaluate \
   --config src/configs/archive/rotation_aware_cross_attention.yaml \
   --run-id paper137_a10_b64_e100_s0 --run-id paper137_a11_b64_e100_s0
 ```

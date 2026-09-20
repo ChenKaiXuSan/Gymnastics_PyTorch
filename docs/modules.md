@@ -25,15 +25,16 @@ The four pipeline stages are the top-level packages and the only entry points;
 - Fusion training cannot import triangulated pseudo-reference data. Only its
   evaluation layer may read that data.
 - Project-specific SAM3D adapters may import the pinned third-party checkout;
-  upstream source must not be copied into `src/gymnastics`.
+  upstream source must not be copied into `src/`.
 - Runtime files belong below `local/`, never inside an importable package.
 
 ## Supporting directories
 
 | Directory | Purpose |
 |---|---|
-| `configs/` | Domain-aligned YAML configuration. |
+| `src/configs/` | Configuration tree, one sub-directory per stage plus `shared/` (skeleton, folds) and `archive/`. |
 | `tests/` | Automated verification of active code. |
 | `pegasus/` | NQSV job scripts for the cluster, named by stage (`fusion_*`, `archive_*`, `benchmark_*`); see `pegasus/README.md`. |
-| `paper/image_and_vision_computing/` | Local manuscript sources and generated paper assets. |
+| `paper/` | Manuscript sources (`sports_engineering/` is current; `image_and_vision_computing/`, `scientific_reports/` earlier submissions) and their generation scripts. |
+| `docs/` | This documentation: `pipeline.md`, `cycle_aware_fusion.md`, `triangulation.md`, `results_summary.md`, dated `research/` reports, retired notes under `archive/`. |
 | `local/` | Ignored checkpoints, videos, runs, caches, and migration backups. |

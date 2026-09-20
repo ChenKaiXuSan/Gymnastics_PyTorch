@@ -17,7 +17,7 @@ that single assumed pose fits nobody well: held-out reprojection error runs abou
 Estimate the real per-person extrinsics from the SAM3D correspondences first:
 
 ```bash
-conda run -n gymnastic python -m pseudo_gt estimate-extrinsics
+python -m pseudo_gt estimate-extrinsics
 ```
 
 This writes `local/runs/analysis/extrinsics/estimated_extrinsics.json`, which
@@ -28,7 +28,7 @@ Compare the two sources on reprojection error, shape error against SAM3D's own
 monocular 3D, and bone-length stability:
 
 ```bash
-conda run -n gymnastic python -m fusion.analysis.reports.compare_extrinsics
+python -m fusion.analysis.reports.compare_extrinsics
 ```
 
 ## Metric Scale
@@ -51,7 +51,7 @@ Two ways to handle it without a calibration target:
 
 ```bash
 # Report errors as a fraction of each subject's own body size -- cancels s exactly.
-conda run -n gymnastic python analysis/normalize_by_body_scale.py
+python analysis/normalize_by_body_scale.py
 ```
 
 That tool also prints the recovered limb-chain lengths and the implied `s` for a
@@ -69,19 +69,19 @@ Triangulate SAM3D-Body 2D keypoints using cycle-level face/side alignment
 records from `split_cycle`:
 
 ```bash
-conda run -n gymnastic python -m pseudo_gt triangulate
+python -m pseudo_gt triangulate
 ```
 
 Quick smoke test on one person/cycle:
 
 ```bash
-conda run -n gymnastic python -m pseudo_gt triangulate --person 1 --max-cycles 1 --max-frames 2
+python -m pseudo_gt triangulate --person 1 --max-cycles 1 --max-frames 2
 ```
 
 The legacy/support triangulation entry point is:
 
 ```bash
-conda run -n gymnastic python -m pseudo_gt triangulate
+python -m pseudo_gt triangulate
 ```
 
 ## Inputs
@@ -133,7 +133,7 @@ $GYMNASTICS_DATA_ROOT/sam3d_triangulated/person/_camera
 Generate a consolidated quality report and CSV details:
 
 ```bash
-conda run -n gymnastic python -m fusion.analysis.reports.generate_results_report
+python -m fusion.analysis.reports.generate_results_report
 ```
 
 The report files are written to:
@@ -174,6 +174,6 @@ local/runs/analysis/triangulated_results/triangulated_person_summary.csv
 Focused tests:
 
 ```bash
-conda run -n gymnastic python -m pytest tests/pseudo_gt/test_triangulation.py \
+python -m pytest tests/pseudo_gt/test_triangulation.py \
     tests/pseudo_gt/test_estimate_extrinsics.py tests/fusion/analysis/test_compare_fused_triangulated.py
 ```

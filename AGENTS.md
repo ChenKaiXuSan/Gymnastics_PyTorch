@@ -1,6 +1,6 @@
 # Workspace Instructions
 
-- For commands that run project code, tests, scripts, or Python tooling in this workspace, use the `gymnastic` conda environment by default, for example `conda run -n gymnastic ...`.
+- Run project code, tests and scripts in the project conda environment: `gymnastic` on the lab workstation, `sam_3d_body` on Pegasus/HP260146 (`direction` also works for fusion training; there is no `gymnastic` env there). Commands in the docs are written as plain `python -m ...`; prefix them with `conda run -n <env>` or activate the env first, and set `PYTHONPATH=src` when the package is not pip-installed.
 - All code lives under `src/` with `PYTHONPATH=src`. There is no umbrella package: the four pipeline stages are the top-level packages and the only entry points (`python -m pose_estimation`, `python -m cycle_alignment`, `python -m pseudo_gt`, `python -m fusion`); `src/common/` is a shared library and `src/configs/` holds every configuration file, one sub-directory per stage.
 
 ## Repository Purpose
@@ -50,7 +50,7 @@ Important details:
 
 ## Key Entry Points
 
-Use `conda run -n gymnastic ...` for these commands.
+Use `...` for these commands.
 
 ```bash
 # Run SAM3D-Body on raw face/side videos.
@@ -228,17 +228,17 @@ fusion weights, checkpoint selection, or training losses.
 Reproduce the paper runs with:
 
 ```bash
-conda run -n gymnastic python -m fusion rotation-aware prepare --config src/configs/archive/rotation_aware.yaml
-conda run -n gymnastic python -m fusion rotation-aware train --config src/configs/archive/rotation_aware.yaml --run-id paper_a6 --ablation A6
-conda run -n gymnastic python -m fusion rotation-aware infer --config src/configs/archive/rotation_aware.yaml --run-id paper_a6
-conda run -n gymnastic python -m fusion rotation-aware evaluate --config src/configs/archive/rotation_aware.yaml --run-id paper_a6
+python -m fusion rotation-aware prepare --config src/configs/archive/rotation_aware.yaml
+python -m fusion rotation-aware train --config src/configs/archive/rotation_aware.yaml --run-id paper_a6 --ablation A6
+python -m fusion rotation-aware infer --config src/configs/archive/rotation_aware.yaml --run-id paper_a6
+python -m fusion rotation-aware evaluate --config src/configs/archive/rotation_aware.yaml --run-id paper_a6
 ```
 
 Train A4, A5, and A6 under separate run IDs, then combine them with repeated
 `--run-id` options:
 
 ```bash
-conda run -n gymnastic python -m fusion rotation-aware evaluate --config src/configs/archive/rotation_aware.yaml --run-id paper_a4 --run-id paper_a5 --run-id paper_a6
+python -m fusion rotation-aware evaluate --config src/configs/archive/rotation_aware.yaml --run-id paper_a4 --run-id paper_a5 --run-id paper_a6
 ```
 
 New artifacts are isolated under `local/runs/fuse_rotation_aware/{cache,runs,inference,evaluation}`.

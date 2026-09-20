@@ -7,7 +7,7 @@ Utility scripts for inspecting and reporting triangulated SAM3D outputs.
 Generate the consolidated Markdown report plus CSV details:
 
 ```bash
-conda run -n gymnastic python -m fusion.analysis.reports.generate_results_report
+python -m fusion.analysis.reports.generate_results_report
 ```
 
 Default source:
@@ -34,7 +34,7 @@ frame counts, missing pairs, and reprojection error statistics per person.
 Validate the triangulated tree against every split-cycle record:
 
 ```bash
-conda run -n gymnastic python -m fusion.analysis.reports.validate_sam3d_triangulated \
+python -m fusion.analysis.reports.validate_sam3d_triangulated \
   --exclude-person 119
 ```
 

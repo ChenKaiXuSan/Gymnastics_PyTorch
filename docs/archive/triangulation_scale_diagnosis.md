@@ -83,7 +83,7 @@ side（yaw −90°）被假定为**恰好相隔 90°**，基线 `3.5 * sqrt(2) �
 ## 复现
 
 ```bash
-conda run -n gymnastic python - <<'PY'
+python - <<'PY'
 import json, numpy as np
 from pathlib import Path
 s = json.load(open('$GYMNASTICS_DATA_ROOT/sam3d_triangulated/person/summary.json'))

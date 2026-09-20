@@ -205,30 +205,30 @@ whole sequence as context (one padded window per sequence; preset
 
 ```bash
 # Print the composed configuration.
-conda run -n gymnastic python -m fusion train print_config=true data=gymnastics
+python -m fusion train print_config=true data=gymnastics
 
 # Smoke run (synthetic, CPU, seconds).
-conda run -n gymnastic python -m fusion train experiment=smoke
+python -m fusion train experiment=smoke
 
 # Private data.
-conda run -n gymnastic python -m fusion train data=gymnastics trainer.max_epochs=50
+python -m fusion train data=gymnastics trainer.max_epochs=50
 
 # Precompute cycles + middles (once per dataset), then build the unified tree
 # local/runs/cycle_records/{gymnastics,freeman,unity} + index.json + README.md.
-conda run -n gymnastic python -m cycle_alignment cycles private
-conda run -n gymnastic python -m cycle_alignment cycles freeman
-conda run -n gymnastic python -m cycle_alignment cycles unity
-conda run -n gymnastic python -m cycle_alignment cycles index
+python -m cycle_alignment cycles private
+python -m cycle_alignment cycles freeman
+python -m cycle_alignment cycles unity
+python -m cycle_alignment cycles index
 
 # FreeMan (subject-disjoint) on a subject subset.
-conda run -n gymnastic python -m fusion train data=freeman 'data.options.subjects=[1,2,3,4,5,6]'
+python -m fusion train data=freeman 'data.options.subjects=[1,2,3,4,5,6]'
 
 # Unity direction transfer.
-conda run -n gymnastic python -m fusion train data=unity data.options.fold=left_to_right
+python -m fusion train data=unity data.options.fold=left_to_right
 
 # Ablations.
-conda run -n gymnastic python -m fusion train data=gymnastics experiment=no_film
-conda run -n gymnastic python -m fusion train data=gymnastics model.reliability.enabled=false
+python -m fusion train data=gymnastics experiment=no_film
+python -m fusion train data=gymnastics model.reliability.enabled=false
 ```
 
 Every run writes `config.yaml`, `logs/` (CSV), `checkpoints/` and
@@ -266,7 +266,7 @@ The fixed protocol is **5-fold subject-disjoint cross-validation, single seed
 ## 5. Tests
 
 ```bash
-conda run -n gymnastic python -m pytest tests/fusion -q
+python -m pytest tests/fusion -q
 ```
 
 Coverage: skeleton variants, sample contract, velocity, phase utilities,

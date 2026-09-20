@@ -1,10 +1,18 @@
 # Results Summary
 
-This page is the tracked entry point for the project's current results. The
-numeric tables are regenerated from local per-person and per-fold artefacts:
+This page is the tracked entry point for the project's results. The learned
+rows below (A0--A9) belong to the **archived rotation-aware model**
+(`src/fusion/archive/rotation_aware`, frozen 2026-09-19); they are kept because
+the Sports Engineering manuscript reports them. Results for the active
+cycle-aware model and the external-baseline main matrix are in the dated
+reports under [research/](research/), in particular
+[cycle_aware_architecture_ablation_2026-09-20.md](research/cycle_aware_architecture_ablation_2026-09-20.md)
+and [main_matrix_external_baselines_2026-09-19.md](research/main_matrix_external_baselines_2026-09-19.md).
+
+The numeric tables are regenerated from local per-person and per-fold artefacts:
 
 ```bash
-conda run -n gymnastic python -m fusion.analysis.project_results
+python -m fusion.analysis.project_results
 ```
 
 The detailed generated report is

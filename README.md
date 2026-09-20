@@ -36,12 +36,25 @@ src/
 
 ## Installation
 
-The project uses the `gymnastic` Conda environment for research commands.
-
 ```bash
 git submodule update --init --recursive
-conda run -n gymnastic python -m pip install -e ".[analysis,training,test]"
+python -m pip install -e ".[analysis,training,test]"
 ```
+
+### Environment
+
+Every command in this repository is written as a plain `python -m ...` call and
+assumes the project conda environment is active (or is run through
+`conda run -n <env> ...`). Which environment that is depends on the machine:
+
+| Machine | Environment | Notes |
+|---|---|---|
+| Lab workstation | `gymnastic` | Full stack, installed with `pip install -e .`. |
+| Pegasus / HP260146 | `sam_3d_body` | Used by every `pegasus/*.sh` job script; `direction` also works for fusion training. |
+
+Neither cluster environment has the package installed, so set
+`PYTHONPATH=src` there (the job scripts do this). The data root is resolved by
+`src/common/paths.py` (see [Data and local assets](#data-and-local-assets)).
 
 SAM-3D-Body is pinned as a submodule below `src/pose_estimation/third_party/`.
 Project code imports it through the adapter in `pose_estimation`; upstream
@@ -53,31 +66,31 @@ Run commands from the repository root:
 
 ```bash
 # Extract SAM3D-Body keypoints.
-conda run -n gymnastic python -m pose_estimation run
+python -m pose_estimation run
 
 # Align face/side timelines and segment cycles.
-conda run -n gymnastic python -m cycle_alignment align
+python -m cycle_alignment align
 
 # Estimate per-person camera extrinsics.
-conda run -n gymnastic python -m pseudo_gt estimate-extrinsics
+python -m pseudo_gt estimate-extrinsics
 
 # Build the triangulated pseudo-reference.
-conda run -n gymnastic python -m pseudo_gt triangulate
+python -m pseudo_gt triangulate
 
 # Run the deterministic fusion matrix.
-conda run -n gymnastic python -m fusion deterministic --methods avg_body_current
+python -m fusion deterministic --methods avg_body_current
 
 # Train the cycle-aware dual-view fusion model (the active model; Hydra overrides).
-conda run -n gymnastic python -m fusion train experiment=smoke
+python -m fusion train experiment=smoke
 
 # Archived paper model (reproduction only; see src/fusion/archive/README.md).
-conda run -n gymnastic python -m fusion rotation-aware --help
+python -m fusion rotation-aware --help
 
 # Analyze saved sequences.
-conda run -n gymnastic python -m fusion analyze
+python -m fusion analyze
 
 # Calibrate cameras.
-conda run -n gymnastic python -m pseudo_gt calibrate
+python -m pseudo_gt calibrate
 ```
 
 Configuration is grouped by domain under `configs/`.
@@ -91,7 +104,7 @@ results, failure coverage, and unfinished experiments, is in
 Regenerate the detailed local tables from the saved per-person/fold artefacts:
 
 ```bash
-conda run -n gymnastic python -m fusion.analysis.project_results
+python -m fusion.analysis.project_results
 ```
 
 ## Data and local assets
@@ -121,9 +134,9 @@ FreeMan's markerless multi-view 3D reference. That reference is not independent
 marker-based motion capture.
 
 ```bash
-conda run -n gymnastic python -m fusion benchmark-freeman inspect
-conda run -n gymnastic python -m fusion benchmark-freeman download
-conda run -n gymnastic python -m fusion benchmark-freeman run
+python -m fusion benchmark-freeman inspect
+python -m fusion benchmark-freeman download
+python -m fusion benchmark-freeman run
 ```
 
 Downloaded archives, extracted subject workspaces, predictions, and reports all
@@ -222,10 +235,10 @@ package only reads the record files, so run the `align cycles` step before
 training:
 
 ```bash
-conda run -n gymnastic python -m cycle_alignment cycles private      # adds "mid" to the 137 records
-conda run -n gymnastic python -m cycle_alignment cycles freeman      # local/runs/cycle_records/freeman
-conda run -n gymnastic python -m cycle_alignment cycles unity        # local/runs/cycle_records/unity
-conda run -n gymnastic python -m cycle_alignment cycles index        # unified tree + index.json + README.md
+python -m cycle_alignment cycles private      # adds "mid" to the 137 records
+python -m cycle_alignment cycles freeman      # local/runs/cycle_records/freeman
+python -m cycle_alignment cycles unity        # local/runs/cycle_records/unity
+python -m cycle_alignment cycles index        # unified tree + index.json + README.md
 ```
 
 ### Configuration
@@ -235,23 +248,23 @@ Hydra composes `src/configs/fusion/config.yaml` with the groups `model`,
 `experiment` presets. Every command-line argument is an override:
 
 ```bash
-conda run -n gymnastic python -m fusion train print_config=true data=freeman
+python -m fusion train print_config=true data=freeman
 ```
 
 ### Training
 
 ```bash
 # Smoke run on synthetic data (CPU, seconds).
-conda run -n gymnastic python -m fusion train experiment=smoke
+python -m fusion train experiment=smoke
 
 # Private data, fixed 96/27/14 split, 50 epochs.
-conda run -n gymnastic python -m fusion train data=gymnastics trainer.max_epochs=50
+python -m fusion train data=gymnastics trainer.max_epochs=50
 
 # FreeMan, subject-disjoint split (cycle records from `python -m cycle_alignment cycles freeman`).
-conda run -n gymnastic python -m fusion train data=freeman
+python -m fusion train data=freeman
 
 # Unity direction-transfer fold.
-conda run -n gymnastic python -m fusion train data=unity data.options.fold=right_to_left
+python -m fusion train data=unity data.options.fold=right_to_left
 ```
 
 Outputs (resolved config, CSV logs, checkpoints, `result.json`) are written
@@ -271,7 +284,7 @@ on the cluster use the job scripts in `pegasus/` (one gpu job per fold) and
 ### Testing
 
 ```bash
-conda run -n gymnastic python -m pytest tests/fusion -q
+python -m pytest tests/fusion -q
 ```
 
 ### Ablation studies
@@ -280,8 +293,8 @@ Each module has a Hydra switch under `model.*` and a ready-made preset under
 `src/configs/fusion/experiment/`:
 
 ```bash
-conda run -n gymnastic python -m fusion train data=gymnastics experiment=no_film
-conda run -n gymnastic python -m fusion train data=gymnastics model.cross_view.enabled=false
+python -m fusion train data=gymnastics experiment=no_film
+python -m fusion train data=gymnastics model.cross_view.enabled=false
 ```
 
 Presets: `no_film`, `no_cross_view`, `no_short_motion`, `no_long_motion`,
@@ -302,19 +315,18 @@ Presets: `no_film`, `no_cross_view`, `no_short_motion`, `no_long_motion`,
 ## Verification
 
 ```bash
-conda run -n gymnastic python -m pytest -q
-conda run -n gymnastic python -m compileall -q src/gymnastics
+python -m pytest -q
+python -m compileall -q src
 ```
 
 Additional workflow documentation:
 
-- [Current pipeline](docs/current_pipeline.md)
-- [Results summary](docs/results_summary.md)
-- [Runbook](docs/runbook.md)
+- [Pipeline and runbook](docs/pipeline.md) (Chinese)
 - [Module map](docs/modules.md)
-- [Rotation-aware fusion (archived paper model)](docs/rotation_aware_fusion.md)
-- [Cycle-aware fusion](docs/cycle_aware_fusion.md)
+- [Cycle-aware fusion](docs/cycle_aware_fusion.md) (the active model)
 - [Triangulation](docs/triangulation.md)
+- [Results summary](docs/results_summary.md)
+- [docs/research/](docs/research/) dated experiment reports; [docs/archive/](docs/archive/) retired-model notes
 
 ## License
 

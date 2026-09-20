@@ -383,9 +383,9 @@ def _markdown(
         "## Reproduction",
         "",
         "```bash",
-        "conda run -n gymnastic python -m fusion benchmark-freeman inspect",
-        "conda run -n gymnastic python -m fusion benchmark-freeman run",
-        "conda run -n gymnastic python -m fusion benchmark-freeman report",
+        "python -m fusion benchmark-freeman inspect",
+        "python -m fusion benchmark-freeman run",
+        "python -m fusion benchmark-freeman report",
         "```",
         "",
         "Machine-readable artifacts are under `evaluation/`; the selected camera "
