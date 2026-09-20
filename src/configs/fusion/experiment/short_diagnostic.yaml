@@ -1,0 +1,12 @@
+# @package _global_
+# Short diagnostic training (~1000 optimisation steps) with every diagnostic
+# group on, including per-module gradient norms every 50 steps.
+run_name: ${data.name}_${model.name}_shortdiag_seed${seed}
+trainer:
+  max_steps: 1000
+  max_epochs: 1000
+  log_every_n_steps: 10
+diagnostics:
+  gradient_norm:
+    enabled: true
+    interval: 50

@@ -1,25 +1,39 @@
 # Version-1 objectives (recovery of the clean two-view target), kept for
-# reproducing the v1 runs. See gymnastics/fusion/cycle_aware/losses.py.
-recovery_weight: 1.0
-# "smooth_l1", "l1" or "l2".
-recovery_kind: smooth_l1
-# "pseudo": clean two-view target (label-free, default).
-# "reference": attached reference pose where available (needs
-# data.train_with_reference=true; not allowed for the private data).
-recovery_target: pseudo
-# Huber transition point in canonical units.
-recovery_beta: 0.05
-# Maximum clean-view disagreement (canonical units) for an averaged target.
-consensus_distance: 0.15
-periodicity_weight: 0.1
-symmetry_weight: 0.1
-# Half-cycle (turn-around) time-reversal symmetry; 0 = off.
-half_symmetry_weight: 0.0
-residual_weight: 0.01
-# Squared residual penalty (v1).
-residual_norm: l2
-# Version-2 terms disabled.
-cycle_weight: 0.0
-reliability_weight: 0.0
-feature_periodicity_weight: 0.0
-feature_symmetry_weight: 0.0
+# reproducing the v1 runs. See src/fusion/losses.py.
+recovery:
+  weight: 1.0
+  kind: smooth_l1
+  # pseudo: clean two-view target (label-free); reference: attached reference
+  # pose where available (needs data.train_with_reference=true).
+  target: pseudo
+  beta: 0.05
+  consensus_distance: 0.15
+position_priors:
+  periodicity_weight: 0.1
+  bone_symmetry_weight: 0.1
+  half_symmetry_weight: 0.0
+residual:
+  weight: 0.01
+  norm: l2
+
+# Version-2 terms, off.
+cycle:
+  weight: 0.0
+  kind: smooth_l1
+  beta: 0.05
+  external_reference: false
+  dead_zone:
+    enabled: false
+    method: mad
+    scale: 1.0
+    minimum: 0.0
+    maximum: null
+reliability:
+  weight: 0.0
+periodicity:
+  weight: 0.0
+  type: cosine
+  temperature: 0.1
+  negative_phase_margin: 0.25
+symmetry:
+  weight: 0.0

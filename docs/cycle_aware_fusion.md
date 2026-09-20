@@ -92,62 +92,66 @@ Properties enforced by tests (`tests/fusion`):
 ### 1.4 Objectives (version 2, default `loss=v2`)
 
 No target is built from the current window's own two views.  Five terms
-(`losses.py`):
+(`losses.py`), every coefficient a Hydra value (`src/configs/fusion/loss/v2.yaml`):
 
 ```
-L = 1.0 · L_cycle + 0.05 · L_rel + 0.1 · L_period + 0.1 · L_sym + 0.01 · L_res
+L = 1.0 · L_cycle + 0.02 · L_rel + 0.1 · L_period + 0.1 · L_sym + 0.01 · L_res
 ```
 
-* **`L_cycle` (main pose supervision)**: leave-one-cycle-out cross-cycle
-  target (`cycle_target.py`, computed by the DataModule and shipped as
-  `cycle_target` / `cycle_confidence`).  For cycle *i* the candidates are the
-  canonical poses of *both* views at the same normalised phase in the other
-  cycles (±`neighbors`, default 2); the target is their per-joint median and
-  the confidence `C = 1 / (1 + (MAD/τ)²)` (τ = 0.05 torso lengths, zero
-  below `min_candidates`).  Confidence-weighted Huber distance.  On the
-  private data the same phase of the neighbouring cycle is 3× closer than the
-  other view of the same frame (0.048 vs 0.144 torso lengths).
+* **`L_cycle` (main pose supervision)**: confidence-gated, leave-one-cycle-out,
+  hierarchical cross-cycle target (`cycle_target.py`, computed by the
+  DataModule, shipped as `cycle_target` / `cycle_confidence` /
+  `cycle_dispersion`).
+  *Stage 1, within-cycle view consensus*: per other cycle the two views are
+  fused (agree within `disagreement_threshold` → mean; one valid → that view;
+  disagree → no consensus).  *Stage 2, cross-cycle consensus*: robust median
+  of the stage-1 poses of the other cycles (±`neighbors`, default 2), never
+  including the current cycle, plus their MAD.
+  Confidence `C = C_repeatability · C_compatibility · C_validity` with
+  `C_repeatability = 1 / (1 + (MAD/τ)²)`, `C_validity = [count ≥ min_candidates]`
+  and a compatibility hook (ones in this round).
+  *Natural-variation dead zone*: `δ = clip(scale · MAD, minimum, maximum)`,
+  `d_eff = max(0, |P̂ − P_ref| − δ)`, so only deviations beyond the other
+  cycles' own variation are penalised (Huber on `d_eff`).
+  *Supervision priority*: an attached external reference (FreeMan / Unity
+  with `data.train_with_reference`) overrides the cross-cycle target where
+  valid (confidence 1, no dead zone) → reliable cross-cycle target → no
+  pose-level supervision.
 * **`L_rel`**: cross-entropy on the reliability logits where synthetic
-  corruption damaged exactly one view (label = the undamaged view); the
-  only term that trains `w_A / w_B` directly.
-* **`L_period`**: `1 − cos(F_M(φ, i), F_M(φ, i+1))` on the motion feature of
-  adjacent cycles.
+  corruption damaged exactly one view (label = the undamaged view); weight
+  0.02 (CE ≈ 0.69 at start versus `L_cycle` ≈ 0.02, so 0.05 made the
+  auxiliary term dominate).
+* **`L_period`** on `F_motion` of adjacent cycles: `type: cosine`
+  (`1 − cos(F(φ, i), F(φ, i+1))`, default) or `type: contrastive` (InfoNCE:
+  positive = same phase of the next cycle, negatives = next-cycle phases
+  farther than `negative_phase_margin`, temperature `τ`; a constant feature
+  scores `log(1 + |negatives|)` so the trivial solution is not optimal).
 * **`L_sym`**: `1 − cos(F_M(φ, j), F_M(φ + 0.5, mirror(j)))` within a cycle,
-  mirror = left/right joint swap.  The two halves of a trunk-rotation cycle
-  are mirror states (twist +0.36 / −0.05 / −0.38 / +0.10 rad at phases
-  0 / 0.25 / 0.5 / 0.75 on the private data), but only approximately, hence
-  the small weight.
-* **`L_res`**: L1 norm of `ΔP`; with the recovery target gone this is what
-  anchors the refinement to the measurements.
+  mirror = left/right joint swap (the two halves of a trunk-rotation cycle
+  are mirror states: twist +0.36 / −0.05 / −0.38 / +0.10 rad at phases
+  0 / 0.25 / 0.5 / 0.75 on the private data).
+* **`L_res`**: L1 norm of `ΔP`; the only anchor to the measurements.
 
-Synthetic corruption (`corruptions.py`: joint masks, distal-joint blocks,
-Gaussian jitter, depth drift, temporal and contiguous frame dropout) is still
-applied to the training inputs: it provides the labels of `L_rel`, and the
-cross-cycle target is taken from the clean inputs of the *other* cycles, so
-it is unaffected.
+Synthetic corruption (`corruptions.py`) is still applied to the training
+inputs: it provides the labels of `L_rel`; the cross-cycle target comes from
+the clean inputs of the *other* cycles.  Every term is logged raw and
+weighted (`<split>/<term>_raw`, `<split>/<term>_weighted`, `total`).
 
-**Version 1 (`loss=v1_recovery`, preset `experiment=v1`)** is the earlier
-recovery objective and stays available for reproduction:
+**Diagnostics** (`diagnostics.py`, group `configs/fusion/diagnostics`, logged
+as `<split>/diag/*`): motion-feature variance decomposition (total / time /
+joint / batch / channel), same-phase vs different-phase vs random-joint
+cosine similarity of `F_motion` (`collapse_gap = same − diff`; all ≈ 1 with
+`var_time → 0` is a representation collapse), FiLM `γ` / `β` statistics,
+residual magnitude and saturation (`|ΔP| ≥ 0.95 · max_delta`), reliability
+entropy / means / hard-selection fractions, and optional per-module gradient
+norms (`diagnostics.gradient_norm.enabled`, every `interval` steps).
 
-```
-L = w_rec · L_recovery + w_per · L_periodicity + w_sym · L_symmetry + w_half · L_half_symmetry + w_res · L_residual
-```
-
-`L_recovery` reproduces the clean two-view target under corruption (average
-where the views agree within `consensus_distance`, the single valid view
-otherwise).  On clean inputs that target *is* the average, so a v1 model
-equals the reliability-weighted average on clean data (5-fold private
-result: 27.5 mm for both) and only differs under corruption (−44 % on
-corrupted joints).  `recovery_target=reference` with
-`data.train_with_reference=true` (preset `experiment=reference_supervised`,
-v1 family) replaces the target by the attached reference pose, brought into
-the frame of the detached weighted base by a per-frame similarity transform,
-on datasets whose reference is independent of the inputs (FreeMan, Unity);
-the private adapter refuses it.  A checkpoint trained that way is applied to
-the private data with `checkpoint=<path> test_only=true` (zero-shot) or
-fine-tuned label-free with `checkpoint=<path>`.  Position-level periodicity /
-half-cycle symmetry (`experiment=measurement`) hurt every metric on the
-private data.
+**Version 1 (`loss=v1_recovery`, preset `experiment=v1`)** keeps the earlier
+recovery objective (`recovery.weight = 1`, position-level priors) for
+reproduction; `recovery.target = reference` (preset
+`experiment=reference_supervised`) is the reference-supervised variant.
+Position-level periodicity / half-cycle symmetry (`experiment=measurement`)
+hurt every metric on the private data.
 
 ### 1.5 Evaluation
 

@@ -1,0 +1,6 @@
+# @package _global_
+# Contrastive (InfoNCE) periodicity instead of the cosine version.
+run_name: ${data.name}_${model.name}_period_contrastive_seed${seed}
+loss:
+  periodicity:
+    type: contrastive

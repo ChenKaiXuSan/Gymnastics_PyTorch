@@ -15,7 +15,9 @@ Steps:
     predict_step     returns the fused pose and reliability weights
 
 Logged quantities (prefix ``train/``, ``val/``, ``test/``):
-    total, recovery, periodicity, symmetry, half_symmetry, residual   loss terms
+    <term>_raw, <term>_weighted, total                     every loss term raw and weighted
+    diag/motion_var_*, diag/motion_sim_*, diag/film_*,      representation diagnostics
+    diag/residual_*, diag/reliability_*, diag/grad_norm/*   (see fusion.diagnostics)
     weight_a_mean, weight_entropy                          reliability statistics
     corrupted_error(_base)                                 |P_hat - P*| on corrupted joints
     pa_mpjpe(_base|_face|_side)                            Procrustes-aligned error versus the
@@ -49,6 +51,15 @@ from typing import Any, Mapping
 import pytorch_lightning as pl
 import torch
 
+from .diagnostics import (
+    DiagnosticsConfig,
+    feature_variance,
+    film_statistics,
+    gradient_norms,
+    phase_similarity,
+    reliability_statistics,
+    residual_statistics,
+)
 from .losses import LossBreakdown, LossConfig, compute_losses, masked_mean, pseudo_target
 from .measurement import retention_ratios
 from .metrics import per_joint_error
@@ -146,6 +157,7 @@ class CycleAwareFusionModule(pl.LightningModule):
         loss_config: LossConfig | Mapping[str, Any] | None = None,
         optimizer_config: OptimizerConfig | Mapping[str, Any] | None = None,
         evaluation_config: EvaluationConfig | Mapping[str, Any] | None = None,
+        diagnostics_config: DiagnosticsConfig | Mapping[str, Any] | None = None,
         *,
         skeleton: CommonSkeleton | None = None,
     ) -> None:
@@ -155,6 +167,7 @@ class CycleAwareFusionModule(pl.LightningModule):
         self.loss_config = LossConfig.from_mapping(loss_config)
         self.optimizer_config = OptimizerConfig.from_mapping(optimizer_config)
         self.evaluation_config = EvaluationConfig.from_mapping(evaluation_config)
+        self.diagnostics_config = DiagnosticsConfig.from_mapping(diagnostics_config)
         # Saved under the constructor argument names so that
         # ``load_from_checkpoint`` can rebuild the exact same architecture.
         self.save_hyperparameters(
@@ -163,6 +176,7 @@ class CycleAwareFusionModule(pl.LightningModule):
                 "loss_config": self.loss_config.to_dict(),
                 "optimizer_config": asdict(self.optimizer_config),
                 "evaluation_config": asdict(self.evaluation_config),
+                "diagnostics_config": self.diagnostics_config.to_dict(),
             }
         )
 
@@ -200,7 +214,7 @@ class CycleAwareFusionModule(pl.LightningModule):
             metrics["cycle_target_error_base"] = masked_mean(torch.linalg.vector_norm(output.base_pose - batch["cycle_target"], dim=-1), confident)
             metrics["cycle_confidence_mean"] = masked_mean(cycle_confidence, valid)
         if "clean_a" in batch:
-            target, target_valid = pseudo_target(batch["clean_a"], batch["clean_b"], batch["clean_valid_a"], batch["clean_valid_b"], consensus_distance=self.loss_config.consensus_distance)
+            target, target_valid = pseudo_target(batch["clean_a"], batch["clean_b"], batch["clean_valid_a"], batch["clean_valid_b"], consensus_distance=self.loss_config.recovery.consensus_distance)
             corrupted = (batch["corruption_mask_a"] | batch["corruption_mask_b"]) & target_valid & valid
             error = torch.linalg.vector_norm(output.pose - target, dim=-1)
             metrics["corrupted_error"] = masked_mean(error, corrupted)
@@ -276,12 +290,70 @@ class CycleAwareFusionModule(pl.LightningModule):
                         metrics[f"{name}{prefix}"] = value
         return metrics
 
+    def _representation_diagnostics(self, output: PoseFusionOutput, batch: Mapping[str, Any]) -> dict[str, torch.Tensor]:
+        """Collapse / modulation / saturation diagnostics (``diag/*``), see :mod:`fusion.diagnostics`."""
+        cfg = self.diagnostics_config
+        frame_mask = batch["frame_mask"][..., None]
+        valid_a, valid_b = batch["valid_a"] & frame_mask, batch["valid_b"] & frame_mask
+        fused_valid = output.valid & frame_mask
+        out: dict[str, torch.Tensor] = {}
+        with torch.no_grad():
+            if cfg.motion_feature:
+                for view, feature, valid in (("a", output.motion_feature_a, valid_a), ("b", output.motion_feature_b, valid_b)):
+                    for name, value in feature_variance(feature.detach(), valid).items():
+                        out[f"motion_{name}_{view}"] = value
+                pooled = feature_variance(torch.cat((output.motion_feature_a, output.motion_feature_b), dim=0).detach(), torch.cat((valid_a, valid_b), dim=0))
+                for name, value in pooled.items():
+                    out[f"motion_{name}"] = value
+            if cfg.phase_similarity and "cycle_index" in batch:
+                sims = [phase_similarity(f.detach(), v, batch["phase"], batch["phase_valid"], batch["cycle_index"], negative_phase_margin=cfg.phase_negative_margin) for f, v in ((output.motion_feature_a, valid_a), (output.motion_feature_b, valid_b))]
+                for name in sims[0]:
+                    values = torch.stack([s[name] for s in sims])
+                    out[f"motion_{name}"] = values[torch.isfinite(values)].mean() if bool(torch.isfinite(values).any()) else values[0]
+            if cfg.film and self.model.film is not None:
+                for view, feature, valid in (("a", output.motion_feature_a, valid_a), ("b", output.motion_feature_b, valid_b)):
+                    for name, value in film_statistics(self.model.film, feature.detach(), valid).items():
+                        out[f"film_{name}_{view}"] = value
+            if cfg.residual:
+                for name, value in residual_statistics(output.delta_pose.detach(), fused_valid, self.model.residual.max_delta, saturation_ratio=cfg.residual_saturation_ratio).items():
+                    out[f"residual_{name}"] = value
+            if cfg.reliability:
+                for name, value in reliability_statistics(output.weight_a.detach(), output.weight_b.detach(), fused_valid, threshold=cfg.reliability_threshold).items():
+                    out[f"reliability_{name}"] = value
+        return {k: v for k, v in out.items() if torch.isfinite(v)}
+
     def _log_all(self, prefix: str, losses: LossBreakdown | None, metrics: Mapping[str, torch.Tensor], batch_size: int) -> None:
         if losses is not None:
             for name, value in losses.as_dict().items():
                 self.log(f"{prefix}/{name}", value, on_step=prefix == "train", on_epoch=True, prog_bar=name == "total", batch_size=batch_size)
         for name, value in metrics.items():
             self.log(f"{prefix}/{name}", value, on_step=False, on_epoch=True, batch_size=batch_size)
+
+    def _log_diagnostics(self, prefix: str, diagnostics: Mapping[str, torch.Tensor], batch_size: int) -> None:
+        for name, value in diagnostics.items():
+            self.log(f"{prefix}/diag/{name}", value, on_step=prefix == "train", on_epoch=True, batch_size=batch_size)
+
+    def gradient_module_map(self) -> dict[str, torch.nn.Module]:
+        """Named sub-modules whose gradient norms are reported."""
+        modules: dict[str, torch.nn.Module] = {"pose_encoder": self.model.spatial}
+        if self.model.short_motion is not None:
+            modules["short_motion"] = self.model.short_motion
+        if self.model.long_motion is not None:
+            modules["long_motion"] = self.model.long_motion
+        modules["motion_fusion"] = self.model.motion_fusion
+        if self.model.film is not None:
+            modules["film"] = self.model.film
+        if self.model.cross_view is not None:
+            modules["cross_view"] = self.model.cross_view
+        modules["reliability_head"] = self.model.reliability
+        modules["residual_head"] = self.model.residual
+        return modules
+
+    def on_before_optimizer_step(self, optimizer) -> None:  # type: ignore[override]
+        cfg = self.diagnostics_config.gradient_norm
+        if cfg.enabled and self.global_step % cfg.interval == 0:
+            for name, value in gradient_norms(self.gradient_module_map()).items():
+                self.log(f"train/diag/{name}", value, on_step=True, on_epoch=False)
 
     # ----- Lightning hooks ----------------------------------------------------
     def on_train_epoch_start(self) -> None:
@@ -292,18 +364,24 @@ class CycleAwareFusionModule(pl.LightningModule):
     def training_step(self, batch: Mapping[str, Any], batch_idx: int) -> torch.Tensor:  # type: ignore[override]
         output = self(batch)
         losses = self._losses(output, batch)
-        self._log_all("train", losses, self._diagnostics(output, batch), batch["pose_a"].shape[0])
+        size = batch["pose_a"].shape[0]
+        self._log_all("train", losses, self._diagnostics(output, batch), size)
+        self._log_diagnostics("train", self._representation_diagnostics(output, batch), size)
         return losses.total
 
     def validation_step(self, batch: Mapping[str, Any], batch_idx: int) -> None:  # type: ignore[override]
         output = self(batch)
         losses = self._losses(output, batch)
-        self._log_all("val", losses, self._diagnostics(output, batch), batch["pose_a"].shape[0])
+        size = batch["pose_a"].shape[0]
+        self._log_all("val", losses, self._diagnostics(output, batch), size)
+        self._log_diagnostics("val", self._representation_diagnostics(output, batch), size)
 
     def test_step(self, batch: Mapping[str, Any], batch_idx: int) -> None:  # type: ignore[override]
         output = self(batch)
         losses = self._losses(output, batch)
-        self._log_all("test", losses, self._diagnostics(output, batch), batch["pose_a"].shape[0])
+        size = batch["pose_a"].shape[0]
+        self._log_all("test", losses, self._diagnostics(output, batch), size)
+        self._log_diagnostics("test", self._representation_diagnostics(output, batch), size)
 
     def predict_step(self, batch: Mapping[str, Any], batch_idx: int) -> dict[str, Any]:  # type: ignore[override]
         output = self(batch)

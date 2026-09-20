@@ -80,15 +80,16 @@ def build_module(cfg: DictConfig) -> CycleAwareFusionModule:
     loss = OmegaConf.to_container(cfg.loss, resolve=True)
     optimizer = OmegaConf.to_container(cfg.optimizer, resolve=True)
     evaluation = OmegaConf.to_container(cfg.get("evaluation") or {}, resolve=True)
+    diagnostics = OmegaConf.to_container(cfg.get("diagnostics") or {}, resolve=True)
     checkpoint = cfg.get("checkpoint")
     if checkpoint:
         path = Path(str(checkpoint))
         path = path if path.is_absolute() else PROJECT_ROOT / path
-        return CycleAwareFusionModule.load_from_checkpoint(str(path), map_location="cpu", loss_config=loss, optimizer_config=optimizer, evaluation_config=evaluation)
+        return CycleAwareFusionModule.load_from_checkpoint(str(path), map_location="cpu", loss_config=loss, optimizer_config=optimizer, evaluation_config=evaluation, diagnostics_config=diagnostics)
     model = OmegaConf.to_container(cfg.model, resolve=True)
     assert isinstance(model, dict)
     model.pop("name", None)
-    return CycleAwareFusionModule(CycleAwareModelConfig.from_mapping(model), loss, optimizer, evaluation)
+    return CycleAwareFusionModule(CycleAwareModelConfig.from_mapping(model), loss, optimizer, evaluation, diagnostics)
 
 
 def build_trainer(cfg: DictConfig, run_dir: Path) -> pl.Trainer:
@@ -105,6 +106,7 @@ def build_trainer(cfg: DictConfig, run_dir: Path) -> pl.Trainer:
     return pl.Trainer(
         default_root_dir=str(run_dir),
         max_epochs=int(trainer_cfg.get("max_epochs", 1)),
+        max_steps=int(trainer_cfg.get("max_steps", -1) or -1),
         accelerator=str(trainer_cfg.get("accelerator", "auto")),
         devices=trainer_cfg.get("devices", 1),
         precision=trainer_cfg.get("precision", 32),

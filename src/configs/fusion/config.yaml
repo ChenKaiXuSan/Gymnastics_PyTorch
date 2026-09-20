@@ -12,6 +12,7 @@ defaults:
   - trainer: default
   - optimizer: default
   - evaluation: default
+  - diagnostics: default
   # Optional ablation / experiment preset (src/configs/fusion/experiment/*.yaml);
   # it is composed last so its @package _global_ values win.
   - experiment: null

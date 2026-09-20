@@ -64,14 +64,18 @@ def test_compute_losses_end_to_end(tiny_config, tiny_batch, skeleton):
     batch["clean_valid_b"] = batch["valid_b"].clone()
     batch["cycle_index"] = torch.arange(16)[None].repeat(2, 1) // 8
     output = model(**tiny_batch)
-    losses = compute_losses(output, batch, skeleton=skeleton, config=LossConfig(), samples_per_cycle=8)
+    losses = compute_losses(output, batch, skeleton=skeleton, config=LossConfig.from_mapping({"recovery": {"weight": 1.0}, "position_priors": {"periodicity_weight": 0.1, "bone_symmetry_weight": 0.1}}), samples_per_cycle=8)
     for name, value in losses.as_dict().items():
         assert value.ndim == 0 and torch.isfinite(value), name
     assert losses.residual.item() == 0.0  # zero-initialised residual
+    assert losses.as_dict()["recovery_weighted"].item() == pytest.approx(losses.raw["recovery"].item())
     losses.total.backward()
     with pytest.raises(ValueError):
-        LossConfig(recovery_kind="huber")
-    assert LossConfig.from_mapping({"symmetry_weight": 0.5}).symmetry_weight == 0.5
+        LossConfig.from_mapping({"recovery": {"kind": "huber"}})
+    legacy = LossConfig.from_mapping({"symmetry_weight": 0.5, "feature_symmetry_weight": 0.3})
+    assert legacy.position_priors.bone_symmetry_weight == 0.5 and legacy.symmetry.weight == 0.3
+    with pytest.raises(ValueError):
+        LossConfig.from_mapping({"nope": 1})
 
 
 def test_procrustes_alignment_recovers_similarity_transform():

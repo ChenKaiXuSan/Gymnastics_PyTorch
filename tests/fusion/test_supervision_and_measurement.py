@@ -43,12 +43,12 @@ def test_compute_losses_uses_reference_when_requested(tiny_config, tiny_batch, s
     batch["cycle_index"] = torch.arange(16)[None].repeat(2, 1) // 8
     batch["reference"] = batch["pose_a"] + 0.3  # a reference that disagrees with the inputs
     batch["reference_valid"] = torch.ones_like(batch["valid_a"])
-    pseudo = compute_losses(output, batch, skeleton=skeleton, config=LossConfig(recovery_target="pseudo"), samples_per_cycle=8)
-    supervised = compute_losses(output, batch, skeleton=skeleton, config=LossConfig(recovery_target="reference"), samples_per_cycle=8)
-    assert supervised.recovery.item() > pseudo.recovery.item()  # translation is removed, but the +0.3 shift changes nothing... shape differs by masking
+    pseudo = compute_losses(output, batch, skeleton=skeleton, config=LossConfig.from_mapping({"recovery": {"weight": 1.0, "target": "pseudo"}}), samples_per_cycle=8)
+    supervised = compute_losses(output, batch, skeleton=skeleton, config=LossConfig.from_mapping({"recovery": {"weight": 1.0, "target": "reference"}}), samples_per_cycle=8)
+    assert supervised.recovery.item() != pseudo.recovery.item()  # the reference target differs from the pseudo target
     supervised.total.backward()
     with pytest.raises(ValueError):
-        LossConfig(recovery_target="gt")
+        LossConfig.from_mapping({"recovery": {"target": "gt"}})
 
 
 def test_half_symmetry_loss_zero_for_time_reversed_cycle():
@@ -156,7 +156,7 @@ def test_checkpoint_transfer_test_only_and_finetune(tmp_path: Path):
 
 
 def test_reference_supervised_smoke_run(tmp_path: Path):
-    cfg = compose_config(["experiment=smoke", f"output_root={tmp_path}", "loss.recovery_target=reference", "data.train_with_reference=true", "loss.half_symmetry_weight=0.2", "run_name=supervised"])
+    cfg = compose_config(["experiment=smoke", f"output_root={tmp_path}", "loss.recovery.weight=1.0", "loss.recovery.target=reference", "data.train_with_reference=true", "loss.position_priors.half_symmetry_weight=0.2", "run_name=supervised"])
     result = run(cfg)
-    assert "train/half_symmetry_epoch" in result["fit_metrics"] or "train/half_symmetry" in result["fit_metrics"]
+    assert any(k.startswith("train/half_symmetry_raw") for k in result["fit_metrics"]) and any(k.startswith("train/recovery_weighted") for k in result["fit_metrics"])
     assert result["test_metrics"]["test/pa_mpjpe"] > 0

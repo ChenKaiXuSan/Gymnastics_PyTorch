@@ -27,7 +27,8 @@ Output dictionary (``T = length``, ``J`` joints):
     frame_mask [T]                delta_t [T]           timestamps [T]
     phase [T]  phase_valid [T]    cycle_index [T]   half_index [T]
     reference [T, J, 3]           reference_valid [T, J]   (zeros/false if absent)
-    cycle_target [T, J, 3]        cycle_confidence [T, J]  (leave-one-cycle-out target, see cycle_target.py)
+    cycle_target [T, J, 3]        cycle_confidence [T, J]  cycle_dispersion [T, J]
+                                  (leave-one-cycle-out target and its statistics, see cycle_target.py)
     clean_a, clean_b, clean_valid_a, clean_valid_b, corruption_mask_a/b (if corrupted)
     window_start (scalar)  dataset, subject_id, sequence_id, window_id (str)
 """
@@ -42,7 +43,7 @@ import torch
 from torch.utils.data import Dataset
 
 from ..corruptions import CorruptionConfig, corrupt_window, stable_seed
-from ..cycle_target import CycleTargetConfig, cross_cycle_target
+from ..cycle_target import CrossCycleTarget, CycleTargetConfig, cross_cycle_target
 from ..phase import normalize_sample_to_phase, phase_from_cycle_bounds
 from ..sample import DualViewSample
 from ..skeleton import CommonSkeleton
@@ -114,6 +115,7 @@ class _Window:
     half_index: np.ndarray
     cycle_target: np.ndarray
     cycle_confidence: np.ndarray
+    cycle_dispersion: np.ndarray
 
 
 class CycleWindowDataset(Dataset[dict[str, Any]]):
@@ -158,12 +160,11 @@ class CycleWindowDataset(Dataset[dict[str, Any]]):
         for prepared in self.samples:
             phase, phase_valid, cycle_index, half_index = phase_from_cycle_bounds(prepared.num_frames, prepared.cycle_bounds, prepared.cycle_mids)
             if self.cycle_target.enabled and phase_normalize and len(prepared.cycle_bounds) >= 2:
-                target, confidence = cross_cycle_target(prepared.view_a, prepared.view_b, prepared.valid_a, prepared.valid_b, prepared.cycle_bounds, samples_per_cycle=window.samples_per_cycle, config=self.cycle_target)
+                reference = cross_cycle_target(prepared.view_a, prepared.view_b, prepared.valid_a, prepared.valid_b, prepared.cycle_bounds, samples_per_cycle=window.samples_per_cycle, config=self.cycle_target)
             else:
-                target = np.zeros_like(prepared.view_a)
-                confidence = np.zeros(prepared.valid_a.shape, dtype=np.float32)
+                reference = CrossCycleTarget.empty(prepared.num_frames, prepared.num_joints)
             for start in window_starts(prepared.num_frames, self.length, stride):
-                self._windows.append(_Window(prepared, start, phase, phase_valid, cycle_index, half_index, target, confidence))
+                self._windows.append(_Window(prepared, start, phase, phase_valid, cycle_index, half_index, reference.target, reference.confidence, reference.dispersion))
 
     def set_epoch(self, epoch: int) -> None:
         """Change the corruption seed for a new training epoch."""
@@ -231,6 +232,8 @@ class CycleWindowDataset(Dataset[dict[str, Any]]):
             "reference_canonical": torch.tensor(bool(sample.reference_canonical)),
             "cycle_target": pad_points(descriptor.cycle_target),
             "cycle_confidence": torch.from_numpy(np.pad(descriptor.cycle_confidence[start:stop], ((0, length - available), (0, 0))).astype(np.float32)),
+            # Dispersion is padded with inf (undefined) so the dead zone never activates on padding.
+            "cycle_dispersion": torch.from_numpy(np.pad(descriptor.cycle_dispersion[start:stop], ((0, length - available), (0, 0)), constant_values=np.inf).astype(np.float32)),
             "window_start": torch.tensor(start, dtype=torch.int64),
             "dataset": sample.dataset,
             "subject_id": sample.subject_id,

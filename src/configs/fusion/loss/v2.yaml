@@ -1,31 +1,57 @@
-# Version-2 objectives (see gymnastics/fusion/cycle_aware/losses.py):
-#   L = cycle_weight * L_cycle + reliability_weight * L_rel
-#       + feature_periodicity_weight * L_period + feature_symmetry_weight * L_sym
-#       + residual_weight * L_res
+# Version-2 objectives (src/fusion/losses.py):
+#   L = cycle.weight * L_cycle + reliability.weight * L_rel
+#       + periodicity.weight * L_period + symmetry.weight * L_sym + residual.weight * L_res
 # No target is built from the current window's own two views.
 
-# Cross-cycle pose supervision (leave-one-cycle-out target from data.cycle_target).
-cycle_weight: 1.0
-cycle_kind: smooth_l1
-# Huber transition point in canonical units (torso lengths).
-cycle_beta: 0.05
-# Reliability cross-entropy on joints where exactly one view was corrupted.
-# CE starts near ln 2 = 0.69 while L_cycle is ~0.01; keep this small.
-reliability_weight: 0.05
-# Feature-level periodicity (F_M at phase phi, cycles i and i+1): 1 - cos.
-feature_periodicity_weight: 0.1
-# Feature-level half-cycle mirror symmetry (phi vs phi + 0.5, L/R swapped): 1 - cos.
-feature_symmetry_weight: 0.1
-# L1 residual regulariser; the only anchor to the measurements now.
-residual_weight: 0.01
-residual_norm: l1
+cycle:
+  weight: 1.0
+  # Penalty on the deviation beyond the dead zone: smooth_l1 | l1 | l2.
+  kind: smooth_l1
+  # Huber transition point (canonical units, torso lengths).
+  beta: 0.05
+  # An attached external reference (FreeMan / Unity with data.train_with_reference)
+  # overrides the cross-cycle target where valid (confidence 1, no dead zone).
+  external_reference: true
+  # Natural-variation dead zone: delta = clip(scale * MAD_other_cycles, minimum, maximum);
+  # only |P_hat - P_ref| beyond delta is penalised.
+  dead_zone:
+    enabled: true
+    method: mad
+    scale: 1.0
+    minimum: 0.0
+    maximum: null
+
+reliability:
+  # CE on joints where exactly one view was corrupted. CE starts near ln 2 = 0.69
+  # while L_cycle is ~0.02, so this must stay well below cycle.weight.
+  weight: 0.02
+
+periodicity:
+  weight: 0.1
+  # cosine: 1 - cos(F(phi, i), F(phi, i+1));
+  # contrastive: InfoNCE with the same phase of the next cycle as positive and
+  # phases farther than negative_phase_margin as negatives.
+  type: cosine
+  temperature: 0.1
+  # Circular phase distance (in cycles, 0..0.5) beyond which a sample counts as a negative.
+  negative_phase_margin: 0.25
+
+symmetry:
+  # Feature-level half-cycle mirror term (phi vs phi + 0.5, L/R joints swapped).
+  weight: 0.1
+
+residual:
+  weight: 0.01
+  norm: l1
 
 # Version-1 terms, off.
-recovery_weight: 0.0
-recovery_kind: smooth_l1
-recovery_target: pseudo
-recovery_beta: 0.05
-consensus_distance: 0.15
-periodicity_weight: 0.0
-symmetry_weight: 0.0
-half_symmetry_weight: 0.0
+recovery:
+  weight: 0.0
+  kind: smooth_l1
+  target: pseudo
+  beta: 0.05
+  consensus_distance: 0.15
+position_priors:
+  periodicity_weight: 0.0
+  bone_symmetry_weight: 0.0
+  half_symmetry_weight: 0.0

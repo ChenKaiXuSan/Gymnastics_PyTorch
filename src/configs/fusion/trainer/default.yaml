@@ -1,3 +1,5 @@
+# Stop after this many optimisation steps (-1 = use max_epochs only).
+max_steps: -1
 max_epochs: 50
 accelerator: auto
 devices: 1

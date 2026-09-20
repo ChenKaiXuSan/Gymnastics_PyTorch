@@ -1,0 +1,19 @@
+# Representation diagnostics logged under <split>/diag/* (src/fusion/diagnostics.py).
+# Motion-feature variance decomposition (total / time / joint / batch / channel).
+motion_feature: true
+# Same-phase vs different-phase vs random-joint cosine similarity of F_motion.
+phase_similarity: true
+# Circular phase distance (cycles) that counts as "different phase".
+phase_negative_margin: 0.25
+# FiLM gamma / beta statistics.
+film: true
+# Residual magnitude and saturation (|Delta_P| >= ratio * max_delta).
+residual: true
+residual_saturation_ratio: 0.95
+# Reliability entropy and hard-selection fractions (w > threshold).
+reliability: true
+reliability_threshold: 0.9
+# Per-module gradient norms every `interval` optimisation steps (off by default).
+gradient_norm:
+  enabled: false
+  interval: 100

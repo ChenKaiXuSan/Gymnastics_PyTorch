@@ -1,4 +1,6 @@
 # Two tiny epochs on CPU for smoke tests.
+# Stop after this many optimisation steps (-1 = use max_epochs only).
+max_steps: -1
 max_epochs: 2
 accelerator: cpu
 devices: 1

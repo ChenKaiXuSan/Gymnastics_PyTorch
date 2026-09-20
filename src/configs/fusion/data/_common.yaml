@@ -27,12 +27,21 @@ cycle_target:
   enabled: true
   # Cycles on each side used as candidates (null = every other cycle).
   neighbors: 2
-  # Dispersion scale of the confidence C = 1 / (1 + (MAD / tau)^2), canonical units.
-  tau: 0.05
-  # Fewer valid candidates than this -> no target (C = 0).
-  min_candidates: 4
-  # "median" or "trimmed_mean".
+  # Stage-2 aggregation over the other cycles: "median" or "trimmed_mean".
   aggregation: median
+  # Stage 1: within-cycle view consensus (both views agree -> mean; one valid ->
+  # that view; disagreement above the threshold -> no consensus).
+  consensus:
+    disagreement_threshold: 0.15
+    method: mean
+  # C = C_repeatability * C_compatibility * C_validity
+  confidence:
+    # C_repeatability = 1 / (1 + (MAD / tau)^2), canonical units.
+    tau: 0.05
+    # C_validity: at least this many other-cycle candidates.
+    min_candidates: 2
+    # Compatibility gate (not implemented in this round; must stay false).
+    compatibility: false
 # Explicit subject split: if any list is non-empty the whole split is used as
 # given (empty lists stay empty); all empty = adapter default.
 split:
