@@ -14,7 +14,7 @@ from fusion.benchmarks.unity.cli import (
     main as unity_main,
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _run(*arguments: str) -> subprocess.CompletedProcess[str]:

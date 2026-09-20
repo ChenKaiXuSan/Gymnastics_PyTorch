@@ -80,8 +80,8 @@ python -m fusion cohort-cycle
 Focused verification commands:
 
 ```bash
-python -m pytest tests/test_fuse_experiment_matrix.py -q
-python -m pytest tests/test_sam3d_triangulation.py tests/test_compare_fused_triangulated.py -q
+python -m pytest tests/fusion/baselines/test_experiment_matrix.py -q
+python -m pytest tests/pseudo_gt/test_triangulation.py tests/fusion/analysis/test_compare_fused_triangulated.py -q
 ```
 
 ## Module Responsibilities

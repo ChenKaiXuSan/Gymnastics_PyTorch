@@ -21,7 +21,7 @@ from .test_report import _write_finalized_inputs
 from .test_statistics import _write_synthetic_feature_artifacts
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
 
 
 def test_cohort_cycle_help_lists_pipeline_stages():

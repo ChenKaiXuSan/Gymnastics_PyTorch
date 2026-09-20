@@ -61,7 +61,7 @@ Evaluation and paired comparison: `local/runs/freeman_trained_fusion/`.
 ## Status
 
 - 2026-09-18: code, configs, folds and caches in place; unit tests in
-  `tests/freeman_benchmark/test_training.py` (19 passed). A one-epoch CPU
+  `tests/fusion/benchmarks_freeman/test_training.py` (19 passed). A one-epoch CPU
   smoke run (batch 2, subjects 05/06/15) completed and its checkpoint was
   pushed through the out-of-fold evaluator on two subject-15 sessions, giving
   values in the same range as the zero-shot rows. Five fold jobs submitted to

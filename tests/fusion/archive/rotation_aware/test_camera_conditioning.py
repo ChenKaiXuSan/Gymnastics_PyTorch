@@ -8,7 +8,7 @@ from fusion.archive.rotation_aware.camera import (
     CameraFeatureBundle,
 )
 from fusion.archive.rotation_aware.model import RotationAwareFusionModel
-from tests.archive.rotation_aware.test_model import SPEC, _inputs
+from tests.fusion.archive.rotation_aware.test_model import SPEC, _inputs
 
 
 def _camera_bundle(

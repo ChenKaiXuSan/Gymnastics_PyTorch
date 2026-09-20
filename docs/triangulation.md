@@ -36,7 +36,7 @@ conda run -n gymnastic python -m fusion.analysis.reports.compare_extrinsics
 Two-view geometry is scale-free, so reprojection error cannot detect a wrong
 baseline length: scaling the baseline scales the whole reconstruction and leaves
 every projection untouched (locked in by
-`tests/test_estimate_extrinsics.py::test_reprojection_error_is_blind_to_baseline_scale`).
+`tests/pseudo_gt/test_estimate_extrinsics.py::test_reprojection_error_is_blind_to_baseline_scale`).
 Metric scale therefore rests entirely on SAM3D's monocular 3D, which this module
 rescales from SAM3D's assumed focal length to the calibrated one.
 
@@ -174,6 +174,6 @@ local/runs/analysis/triangulated_results/triangulated_person_summary.csv
 Focused tests:
 
 ```bash
-conda run -n gymnastic python -m pytest tests/test_sam3d_triangulation.py \
-    tests/test_estimate_extrinsics.py tests/test_compare_fused_triangulated.py
+conda run -n gymnastic python -m pytest tests/pseudo_gt/test_triangulation.py \
+    tests/pseudo_gt/test_estimate_extrinsics.py tests/fusion/analysis/test_compare_fused_triangulated.py
 ```

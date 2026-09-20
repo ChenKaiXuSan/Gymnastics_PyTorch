@@ -18,4 +18,4 @@ python -m fusion benchmark-freeman-train ...        # FreeMan subject-disjoint f
 Its dataset-independent pieces (trial schema, skeleton spec, canonical body
 frame, trunk / quality features, quality-weighted base fusion, person cache)
 were extracted to `fusion.keypoints`, which is what every other package
-imports. Tests live under `tests/archive/rotation_aware/`.
+imports. Tests live under `tests/fusion/archive/rotation_aware/`.

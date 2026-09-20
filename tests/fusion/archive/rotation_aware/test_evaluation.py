@@ -16,7 +16,7 @@ from fusion.archive.rotation_aware.evaluation import (
     external_metrics_from_reference,
     load_triangulated_references,
 )
-from tests.archive.rotation_aware.test_geometry import synthetic_mhr70_pose
+from tests.fusion.archive.rotation_aware.test_geometry import synthetic_mhr70_pose
 
 
 SPEC = load_skeleton_spec(Path("src/configs/shared/skeleton_mhr70.yaml"))

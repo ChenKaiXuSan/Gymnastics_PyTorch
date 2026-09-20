@@ -130,7 +130,7 @@ SAM3D 内部假定焦距带来的深度偏差）。实现：`triangulation/estim
 ### 仍然成立的限制
 
 - **绝对尺度仍未经器械标定。** 两视角几何是无尺度的，重投影误差对基线长度完全免疫
-  （已固化为 `tests/test_estimate_extrinsics.py::test_reprojection_error_is_blind_to_baseline_scale`）。
+  （已固化为 `tests/pseudo_gt/test_estimate_extrinsics.py::test_reprojection_error_is_blind_to_baseline_scale`）。
   当前尺度来自 SAM3D 单目 3D，只经过人体测量核验，未经独立标定。
 - 因此「方法排名不受影响」这一条依然成立（Sim3 对齐吸收整体缩放），
   而任何绝对毫米结论都与尺度误差成正比。报告绝对精度时应同时给出

@@ -10,7 +10,7 @@ from fusion.keypoints.features import (
     extract_pose_features,
 )
 from fusion.keypoints.trunk import extract_trunk_features
-from tests.archive.rotation_aware.test_geometry import synthetic_mhr70_pose
+from tests.fusion.archive.rotation_aware.test_geometry import synthetic_mhr70_pose
 
 
 SPEC = load_skeleton_spec(Path("src/configs/shared/skeleton_mhr70.yaml"))

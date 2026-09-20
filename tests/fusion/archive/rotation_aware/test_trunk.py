@@ -6,7 +6,7 @@ from fusion.keypoints.trunk import (
     extract_trunk_features,
     relative_rotation,
 )
-from tests.archive.rotation_aware.test_geometry import SPEC, synthetic_mhr70_pose
+from tests.fusion.archive.rotation_aware.test_geometry import SPEC, synthetic_mhr70_pose
 
 
 def test_known_thorax_rotation_is_thirty_degrees():
