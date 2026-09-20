@@ -89,42 +89,65 @@ Properties enforced by tests (`tests/cycle_aware`):
 * Swapping the views swaps the outputs (symmetry).
 * Every parameter receives a gradient in a full forward/backward pass.
 
-### 1.4 Self-supervised objectives
+### 1.4 Objectives (version 2, default `loss=v2`)
 
-No 3D labels are used. Training corrupts a copy of the inputs
-(`corruptions.py`: joint masks, distal-joint blocks, Gaussian jitter, depth
-drift, temporal and contiguous frame dropout) and minimises
+No target is built from the current window's own two views.  Five terms
+(`losses.py`):
 
 ```
-L = w_rec · L_recovery + w_per · L_periodicity + w_sym · L_symmetry + w_res · L_residual
+L = 1.0 · L_cycle + 0.05 · L_rel + 0.1 · L_period + 0.1 · L_sym + 0.01 · L_res
 ```
 
-* `L_recovery`: Huber distance between `P_hat` and a pseudo-target built from
-  the *clean* views (average where the views agree within
-  `consensus_distance`, the single valid view otherwise).
-* `L_periodicity`: squared distance between samples one cycle apart in
-  consecutive cycles (active only where phase is valid).
-* `L_symmetry`: absolute difference of mirrored bone lengths.
-* `L_half_symmetry` (off by default, preset `experiment=measurement`):
-  time-reversal symmetry about the recorded cycle middle, sample `k` versus
-  sample `S − k` of the same cycle; a cycle-shape prior for measurement
-  quality.
-* `L_residual`: mean squared `ΔP`.
+* **`L_cycle` (main pose supervision)**: leave-one-cycle-out cross-cycle
+  target (`cycle_target.py`, computed by the DataModule and shipped as
+  `cycle_target` / `cycle_confidence`).  For cycle *i* the candidates are the
+  canonical poses of *both* views at the same normalised phase in the other
+  cycles (±`neighbors`, default 2); the target is their per-joint median and
+  the confidence `C = 1 / (1 + (MAD/τ)²)` (τ = 0.05 torso lengths, zero
+  below `min_candidates`).  Confidence-weighted Huber distance.  On the
+  private data the same phase of the neighbouring cycle is 3× closer than the
+  other view of the same frame (0.048 vs 0.144 torso lengths).
+* **`L_rel`**: cross-entropy on the reliability logits where synthetic
+  corruption damaged exactly one view (label = the undamaged view); the
+  only term that trains `w_A / w_B` directly.
+* **`L_period`**: `1 − cos(F_M(φ, i), F_M(φ, i+1))` on the motion feature of
+  adjacent cycles.
+* **`L_sym`**: `1 − cos(F_M(φ, j), F_M(φ + 0.5, mirror(j)))` within a cycle,
+  mirror = left/right joint swap.  The two halves of a trunk-rotation cycle
+  are mirror states (twist +0.36 / −0.05 / −0.38 / +0.10 rad at phases
+  0 / 0.25 / 0.5 / 0.75 on the private data), but only approximately, hence
+  the small weight.
+* **`L_res`**: L1 norm of `ΔP`; with the recovery target gone this is what
+  anchors the refinement to the measurements.
 
-**Why the label-free model equals the average on clean inputs.** With the
-pseudo-target, clean consensus frames have the two-view average as their
-optimum, so the reliability head stays at 0.5 / 0.5 and the residual at
-zero; the 5-fold private result (PA-MPJPE 27.5 mm for both) confirms it.
-The model only differs from the average when an input is corrupted (−44 %
-error on corrupted joints).  `loss.recovery_target=reference` with
-`data.train_with_reference=true` (preset `experiment=reference_supervised`)
-replaces the target by the attached reference pose, brought into the frame
-of the detached weighted base by a per-frame similarity transform, on
-datasets whose reference is independent of the inputs (FreeMan, Unity); the
-private adapter refuses it because its triangulated pseudo-reference is
-derived from the same two views.  A checkpoint trained that way is applied
-to the private data with `checkpoint=<path> test_only=true` (zero-shot) or
-fine-tuned label-free with `checkpoint=<path>`.
+Synthetic corruption (`corruptions.py`: joint masks, distal-joint blocks,
+Gaussian jitter, depth drift, temporal and contiguous frame dropout) is still
+applied to the training inputs: it provides the labels of `L_rel`, and the
+cross-cycle target is taken from the clean inputs of the *other* cycles, so
+it is unaffected.
+
+**Version 1 (`loss=v1_recovery`, preset `experiment=v1`)** is the earlier
+recovery objective and stays available for reproduction:
+
+```
+L = w_rec · L_recovery + w_per · L_periodicity + w_sym · L_symmetry + w_half · L_half_symmetry + w_res · L_residual
+```
+
+`L_recovery` reproduces the clean two-view target under corruption (average
+where the views agree within `consensus_distance`, the single valid view
+otherwise).  On clean inputs that target *is* the average, so a v1 model
+equals the reliability-weighted average on clean data (5-fold private
+result: 27.5 mm for both) and only differs under corruption (−44 % on
+corrupted joints).  `recovery_target=reference` with
+`data.train_with_reference=true` (preset `experiment=reference_supervised`,
+v1 family) replaces the target by the attached reference pose, brought into
+the frame of the detached weighted base by a per-frame similarity transform,
+on datasets whose reference is independent of the inputs (FreeMan, Unity);
+the private adapter refuses it.  A checkpoint trained that way is applied to
+the private data with `checkpoint=<path> test_only=true` (zero-shot) or
+fine-tuned label-free with `checkpoint=<path>`.  Position-level periodicity /
+half-cycle symmetry (`experiment=measurement`) hurt every metric on the
+private data.
 
 ### 1.5 Evaluation
 

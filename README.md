@@ -256,6 +256,12 @@ conda run -n gymnastic gymnastics fuse cycle-aware data=unity data.options.fold=
 Outputs (resolved config, CSV logs, checkpoints, `result.json`) are written
 below `local/runs/cycle_aware/<run_name>`.
 
+Objectives (v2, default): leave-one-cycle-out cross-cycle pose target as the
+main supervision, corruption-labelled reliability, feature-level periodicity
+and half-cycle mirror symmetry, L1 residual regulariser; no target is built
+from the current window's own two views (`loss=v1_recovery` keeps the earlier
+recovery objective). See [docs/cycle_aware_fusion.md](docs/cycle_aware_fusion.md).
+
 Cross-validation (5 folds, single seed, 50 epochs is the fixed protocol):
 `folds_dir=configs/cycle_aware/folds/gymnastics` runs the folds sequentially;
 on the cluster use the job scripts in `pegasus/` (one gpu job per fold) and
