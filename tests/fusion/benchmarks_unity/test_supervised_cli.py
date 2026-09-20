@@ -6,6 +6,7 @@ import subprocess
 import sys
 
 from fusion.benchmarks.unity import cli as unity_cli
+from fusion.benchmarks.unity import stages_supervised as unity_supervised
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -141,7 +142,7 @@ def test_camera_feature_stage_arguments_parse() -> None:
 def test_matrix_dispatch_skips_two_completed_cells(
     monkeypatch,
 ) -> None:
-    cells = unity_cli._supervised_matrix_cells()
+    cells = unity_supervised._supervised_matrix_cells()
     expected = {
         (ablation, fold, seed)
         for ablation in ("A4", "A5", "A6", "A7", "A8", "A9")
@@ -154,17 +155,17 @@ def test_matrix_dispatch_skips_two_completed_cells(
     }
     invoked = []
     monkeypatch.setattr(
-        unity_cli,
+        unity_supervised,
         "_supervised_cell_is_complete",
         lambda cell: cell in complete,
     )
     monkeypatch.setattr(
-        unity_cli,
+        unity_supervised,
         "_run_supervised_cell",
         lambda cell: invoked.append(cell),
     )
 
-    counts = unity_cli._dispatch_supervised_matrix(cells)
+    counts = unity_supervised._dispatch_supervised_matrix(cells)
 
     assert set(cells) == expected
     assert set(invoked) == expected - complete

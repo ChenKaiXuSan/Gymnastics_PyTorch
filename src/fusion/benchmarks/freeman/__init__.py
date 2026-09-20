@@ -1,4 +1,10 @@
-"""FreeMan zero-shot external benchmark."""
+"""FreeMan public external benchmark (zero-shot and subject-disjoint training).
+
+``cli`` is the ``python -m fusion benchmark-freeman`` entry point with the
+production ``DefaultStageOperations``; ``runner`` holds the stage protocol, run
+state and multi-GPU orchestration; ``stages`` the per-subject building blocks;
+``training_cli`` the subject-disjoint training command.
+"""
 
 from .download import (
     download_release,

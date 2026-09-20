@@ -7,12 +7,15 @@ from types import SimpleNamespace
 import pytest
 
 import fusion.benchmarks.freeman.cli as freeman_cli
+import fusion.benchmarks.freeman.runner as freeman_runner
 from fusion.benchmarks.freeman.cli import (
     DefaultStageOperations,
-    StageOperations,
     main,
-    partition_subjects,
     reset_forced_stage,
+)
+from fusion.benchmarks.freeman.runner import (
+    StageOperations,
+    partition_subjects,
     run_subjects,
 )
 
@@ -157,16 +160,16 @@ def test_worker_uses_private_state_and_logical_device_zero(
         observed["subjects"] = tuple(subjects)
         observed["state_path"] = state_path
         observed["keep_workspace"] = keep_workspace
-        observed["cuda_visible_devices"] = freeman_cli.os.environ[
+        observed["cuda_visible_devices"] = freeman_runner.os.environ[
             "CUDA_VISIBLE_DEVICES"
         ]
         process(subjects[0])
 
     monkeypatch.setattr(DefaultStageOperations, "_process_subject", process)
-    monkeypatch.setattr(freeman_cli, "run_subjects", capture_run)
+    monkeypatch.setattr(freeman_runner, "run_subjects", capture_run)
     state_path = tmp_path / "worker.json"
 
-    freeman_cli._run_device_worker(
+    freeman_runner._run_device_worker(
         config,
         1,
         [2, 4],
@@ -220,7 +223,7 @@ def test_merge_preserves_worker_terminal_states_and_canonical_completions(
         encoding="utf-8",
     )
 
-    merged = freeman_cli._merge_worker_states(
+    merged = freeman_runner._merge_worker_states(
         canonical,
         [worker0, worker1],
     )
@@ -279,7 +282,7 @@ def test_parallel_coordinator_skips_complete_and_merges_disjoint_assignments(
         Process = FakeProcess
 
     monkeypatch.setattr(
-        freeman_cli.multiprocessing,
+        freeman_runner.multiprocessing,
         "get_context",
         lambda method: FakeContext(),
     )
@@ -292,7 +295,7 @@ def test_parallel_coordinator_skips_complete_and_merges_disjoint_assignments(
         "sam3d": {"device": 0},
     }
 
-    freeman_cli._run_parallel_subjects(
+    freeman_runner._run_parallel_subjects(
         config,
         canonical,
         (0, 1),
@@ -349,7 +352,7 @@ def test_parallel_coordinator_waits_for_peer_and_records_crashed_worker(
         Process = FakeProcess
 
     monkeypatch.setattr(
-        freeman_cli.multiprocessing,
+        freeman_runner.multiprocessing,
         "get_context",
         lambda method: FakeContext(),
     )
@@ -363,7 +366,7 @@ def test_parallel_coordinator_waits_for_peer_and_records_crashed_worker(
     }
 
     with pytest.raises(RuntimeError, match="device 0"):
-        freeman_cli._run_parallel_subjects(
+        freeman_runner._run_parallel_subjects(
             config,
             canonical,
             (0, 1),

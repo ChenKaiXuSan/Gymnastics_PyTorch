@@ -1,26 +1,32 @@
-"""Staged CLI and resumable one-subject-at-a-time FreeMan orchestration."""
+"""Staged command-line interface for the FreeMan public benchmark.
+
+``DefaultStageOperations`` is the production implementation of every stage;
+the orchestration lives in :mod:`.runner` and the per-subject helpers in
+:mod:`.stages`.
+"""
 
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable, Mapping, Sequence
-from copy import deepcopy
-from dataclasses import asdict
-from datetime import datetime, timezone
-import hashlib
 import json
-import multiprocessing
-import os
-from pathlib import Path
 import shutil
 import subprocess
-import tempfile
+from collections.abc import (
+    Callable,
+    Mapping,
+    Sequence,
+)
+from copy import deepcopy
+from dataclasses import asdict
+from datetime import (
+    datetime,
+    timezone,
+)
+from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
-from .dataset import load_session_reference, load_subject_sessions
 from .download import (
     _shared_tree_valid,
     cleanup_subject_workspace,
@@ -31,321 +37,47 @@ from .download import (
     run_preflight,
     validate_downloads,
 )
-from .evaluation import (
-    EvaluationTables,
-    SessionMetrics,
-    aggregate_metrics,
-    evaluate_session,
+from .evaluation import EvaluationTables
+from .report import (
+    ReportContext,
+    write_report,
 )
-from .fusion import (
-    fuse_deterministic,
-    fuse_rotation_aware,
-    load_method_prediction,
-    save_method_prediction,
+from .schema import PreflightReport
+from fusion.benchmarks.freeman.runner import (
+    StageOperations,
+    _run_parallel_subjects,
+    run_subjects,
 )
-from .pairing import select_camera_pair
-from .report import ReportContext, write_report
-from .sam3d import infer_subject_sessions, load_inference
-from .schema import (
-    FreeManSession,
-    MethodPrediction,
-    PosePairInput,
-    PreflightReport,
-    SelectedPair,
-    ViewPrediction,
+from fusion.benchmarks.freeman.stages import (
+    _atomic_json,
+    _cached_metrics,
+    _evaluate_subject,
+    _existing_inference_artifacts,
+    _file_sha256,
+    _fuse_pairs,
+    _inference_artifacts,
+    _load_fused_subject,
+    _load_state,
+    _metric_path,
+    _pair_path,
+    _pose_pairs,
+    _rotation_checkpoint,
+    _select_pairs,
+    _sha256_json,
+    _subject_sessions,
+    _tables_with_failures,
+    _write_session_manifest,
+    _write_subject_metrics,
 )
 
 
 DEFAULT_CONFIG = Path("src/configs/benchmarks/freeman.yaml")
+
+
 _STAGES = ("inspect", "download", "infer", "fuse", "evaluate", "report", "run")
+
+
 _FORCE_STAGES = ("inspect", "infer", "fuse", "evaluate", "report")
-
-
-def partition_subjects(
-    subjects: Sequence[int],
-    worker_count: int,
-) -> tuple[tuple[int, ...], ...]:
-    """Partition unique sorted subjects round-robin across workers."""
-    if worker_count < 1:
-        raise ValueError("worker_count must be positive")
-    partitions: list[list[int]] = [[] for _ in range(worker_count)]
-    for index, subject in enumerate(sorted({int(value) for value in subjects})):
-        if subject < 1 or subject > 40:
-            raise ValueError("FreeMan subjects must be within 1..40")
-        partitions[index % worker_count].append(subject)
-    return tuple(tuple(values) for values in partitions)
-
-
-class StageOperations:
-    """Replaceable stage boundary used by the CLI and its tests."""
-
-    def inspect(self, config: Mapping[str, Any], *, dry_run: bool = False) -> Any:
-        raise NotImplementedError
-
-    def download(self, config: Mapping[str, Any]) -> Any:
-        raise NotImplementedError
-
-    def infer(self, config: Mapping[str, Any]) -> Any:
-        raise NotImplementedError
-
-    def fuse(self, config: Mapping[str, Any]) -> Any:
-        raise NotImplementedError
-
-    def evaluate(self, config: Mapping[str, Any]) -> Any:
-        raise NotImplementedError
-
-    def report(self, config: Mapping[str, Any]) -> Any:
-        raise NotImplementedError
-
-    def run(
-        self,
-        config: Mapping[str, Any],
-        *,
-        force_stage: str | None = None,
-        keep_workspace: bool = False,
-        dry_run: bool = False,
-        devices: Sequence[int] | None = None,
-    ) -> Any:
-        raise NotImplementedError
-
-
-def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        dir=path.parent,
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-        delete=False,
-    ) as handle:
-        json.dump(payload, handle, indent=2, sort_keys=True)
-        handle.write("\n")
-        temporary = Path(handle.name)
-    temporary.replace(path)
-
-
-def _load_state(path: Path) -> dict[str, Any]:
-    if not path.is_file():
-        return {"stages": {}, "subjects": {}}
-    value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict):
-        raise ValueError("FreeMan run state must be a mapping")
-    value.setdefault("stages", {})
-    value.setdefault("subjects", {})
-    return value
-
-
-def run_subjects(
-    subjects: Sequence[int],
-    *,
-    state_path: Path,
-    process: Callable[[int], Any],
-    cleanup: Callable[[int], Any],
-    keep_workspace: bool,
-) -> None:
-    """Run subjects in numeric order, publishing state after every transition.
-
-    Every write re-loads the state file and merges only this subject's entry,
-    so concurrent per-subject jobs (one qsub request per subject) cannot
-    resurrect stale sibling statuses from a snapshot held across hours.
-    """
-    state_file = Path(state_path)
-
-    def publish(key: str, value: Mapping[str, Any]) -> None:
-        state = _load_state(state_file)
-        state["subjects"][key] = dict(value)
-        _atomic_json(state_file, state)
-
-    for subject in sorted({int(value) for value in subjects}):
-        if subject < 1 or subject > 40:
-            raise ValueError("FreeMan subjects must be within 1..40")
-        key = str(subject)
-        current = _load_state(state_file)["subjects"].get(key, {})
-        if current.get("status") == "complete":
-            continue
-        publish(key, {"status": "running"})
-        try:
-            artifacts = process(subject)
-            if not keep_workspace:
-                cleanup(subject)
-        except Exception as error:
-            publish(
-                key,
-                {
-                    "status": "failed",
-                    "error_type": type(error).__name__,
-                    "error_message": str(error),
-                },
-            )
-            raise
-        completed: dict[str, Any] = {"status": "complete"}
-        if isinstance(artifacts, Mapping):
-            completed["artifacts"] = dict(artifacts)
-        publish(key, completed)
-
-
-def _worker_state_path(output_root: Path, device: int) -> Path:
-    return (
-        Path(output_root)
-        / "workers"
-        / f"device_{int(device)}"
-        / "run_state.json"
-    )
-
-
-def _run_device_worker(
-    config: Mapping[str, Any],
-    device: int,
-    subjects: Sequence[int],
-    state_path: Path,
-    keep_workspace: bool,
-) -> None:
-    """Run one disjoint subject shard with one visible physical GPU."""
-    worker_config = deepcopy(dict(config))
-    worker_config["sam3d"]["device"] = 0
-    previous_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(int(device))
-    operations = DefaultStageOperations()
-    work_root = Path(worker_config["paths"]["work_root"])
-    try:
-        run_subjects(
-            subjects,
-            state_path=Path(state_path),
-            process=lambda subject: operations._process_subject(
-                worker_config,
-                subject,
-            ),
-            cleanup=lambda subject: cleanup_subject_workspace(
-                subject,
-                work_root / f"subject_{subject:02d}",
-                work_root,
-            ),
-            keep_workspace=keep_workspace,
-        )
-    finally:
-        if previous_visible_devices is None:
-            os.environ.pop("CUDA_VISIBLE_DEVICES", None)
-        else:
-            os.environ["CUDA_VISIBLE_DEVICES"] = previous_visible_devices
-
-
-def _merge_worker_states(
-    canonical_path: Path,
-    worker_paths: Sequence[Path],
-) -> dict[str, Any]:
-    """Atomically merge worker terminal states without downgrading completion."""
-    canonical = _load_state(Path(canonical_path))
-    canonical_subjects = canonical["subjects"]
-    for worker_path in worker_paths:
-        worker = _load_state(Path(worker_path))
-        for subject, details in worker["subjects"].items():
-            if canonical_subjects.get(subject, {}).get("status") == "complete":
-                continue
-            if (
-                isinstance(details, Mapping)
-                and details.get("status") in {"complete", "failed"}
-            ):
-                canonical_subjects[str(subject)] = dict(details)
-    _atomic_json(Path(canonical_path), canonical)
-    return canonical
-
-
-def _run_parallel_subjects(
-    config: Mapping[str, Any],
-    canonical_state_path: Path,
-    devices: Sequence[int],
-    keep_workspace: bool,
-) -> None:
-    """Run outstanding subjects in isolated spawned GPU workers."""
-    device_ids = tuple(int(value) for value in devices)
-    if (
-        not device_ids
-        or len(set(device_ids)) != len(device_ids)
-        or any(value < 0 for value in device_ids)
-    ):
-        raise ValueError("devices must contain unique non-negative integers")
-    canonical = _load_state(Path(canonical_state_path))
-    outstanding = [
-        int(subject)
-        for subject in config["dataset"]["subjects"]
-        if canonical["subjects"].get(str(int(subject)), {}).get("status")
-        != "complete"
-    ]
-    assignments = partition_subjects(outstanding, len(device_ids))
-    context = multiprocessing.get_context("spawn")
-    workers: list[tuple[int, tuple[int, ...], Path, Any]] = []
-    output_root = Path(config["paths"]["output_root"])
-    for device, subjects in zip(device_ids, assignments):
-        if not subjects:
-            continue
-        state_path = _worker_state_path(output_root, device)
-        seed = {
-            "stages": {},
-            "subjects": {
-                str(subject): dict(canonical["subjects"][str(subject)])
-                for subject in subjects
-                if str(subject) in canonical["subjects"]
-                and canonical["subjects"][str(subject)].get("status")
-                != "complete"
-            },
-        }
-        _atomic_json(state_path, seed)
-        process = context.Process(
-            target=_run_device_worker,
-            args=(
-                config,
-                device,
-                subjects,
-                state_path,
-                keep_workspace,
-            ),
-        )
-        workers.append((device, subjects, state_path, process))
-        previous_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(device)
-        try:
-            process.start()
-        finally:
-            if previous_visible_devices is None:
-                os.environ.pop("CUDA_VISIBLE_DEVICES", None)
-            else:
-                os.environ["CUDA_VISIBLE_DEVICES"] = previous_visible_devices
-
-    for _, _, _, process in workers:
-        process.join()
-
-    failures: list[tuple[int, int]] = []
-    for device, subjects, state_path, process in workers:
-        exitcode = int(process.exitcode or 0)
-        if exitcode == 0:
-            continue
-        failures.append((device, exitcode))
-        worker_state = _load_state(state_path)
-        for subject in subjects:
-            key = str(subject)
-            status = worker_state["subjects"].get(key, {}).get("status")
-            if status in {"complete", "failed"}:
-                continue
-            worker_state["subjects"][key] = {
-                "status": "failed",
-                "error_type": "WorkerProcessError",
-                "error_message": (
-                    f"device {device} worker exited with code {exitcode}"
-                ),
-            }
-        _atomic_json(state_path, worker_state)
-
-    _merge_worker_states(
-        Path(canonical_state_path),
-        [state_path for _, _, state_path, _ in workers],
-    )
-    if failures:
-        details = ", ".join(
-            f"device {device} (exit code {exitcode})"
-            for device, exitcode in failures
-        )
-        raise RuntimeError(f"FreeMan GPU workers failed: {details}")
 
 
 def _remove_scoped_tree(root: Path, target: Path) -> None:
@@ -400,380 +132,6 @@ def reset_forced_stage(
         for subject in subjects:
             _metric_path(config, subject).unlink(missing_ok=True)
     _remove_aggregate_outputs(output)
-
-
-def _pair_path(config: Mapping[str, Any], subject: int) -> Path:
-    return (
-        Path(config["paths"]["output_root"])
-        / "manifests"
-        / f"subject_{subject:02d}_sessions.json"
-    )
-
-
-def _metric_path(config: Mapping[str, Any], subject: int) -> Path:
-    return (
-        Path(config["paths"]["output_root"])
-        / "evaluation"
-        / "session_metrics"
-        / f"subject_{subject:02d}.json"
-    )
-
-
-def _select_pairs(
-    sessions: Sequence[FreeManSession],
-    config: Mapping[str, Any],
-) -> dict[str, SelectedPair]:
-    pairing = config["pairing"]
-    return {
-        session.session_id: select_camera_pair(
-            session,
-            target_angle_deg=float(pairing["target_angle_deg"]),
-            world_up=np.asarray(pairing["world_up_axis"], dtype=np.float64),
-            minimum_axis_norm=float(pairing.get("minimum_axis_norm", 1e-8)),
-        )
-        for session in sessions
-    }
-
-
-def _write_session_manifest(
-    config: Mapping[str, Any],
-    subject: int,
-    sessions: Sequence[FreeManSession],
-    pairs: Mapping[str, SelectedPair],
-) -> None:
-    payload = {
-        "subject_id": subject,
-        "reference_scale_to_m": float(
-            config["dataset"]["reference_scale_to_m"]
-        ),
-        "sessions": [
-            {
-                "session_id": session.session_id,
-                "fps": session.fps,
-                "split": session.split,
-                "scenario": session.scenario,
-                "action": session.action,
-                "frames": len(session.frame_ids),
-                "excluded_trailing_frames": dict(
-                    session.excluded_trailing_frames
-                ),
-                "keypoints3d_path": str(session.keypoints3d_path),
-                "pair": asdict(pairs[session.session_id]),
-            }
-            for session in sessions
-        ],
-    }
-    _atomic_json(_pair_path(config, subject), payload)
-
-
-def _subject_sessions(
-    config: Mapping[str, Any],
-    subject: int,
-) -> tuple[FreeManSession, ...]:
-    work_root = Path(config["paths"]["work_root"])
-    subject_root = work_root / f"subject_{subject:02d}"
-    shared_root = work_root / "shared"
-    return load_subject_sessions(
-        subject_root,
-        shared_root,
-        fps_values=config["dataset"]["fps_subsets"],
-    )
-
-
-def _pose_pairs(
-    sessions: Sequence[FreeManSession],
-    pairs: Mapping[str, SelectedPair],
-    artifacts_by_identity: Mapping[tuple[str, str], Path],
-) -> dict[str, PosePairInput]:
-    result: dict[str, PosePairInput] = {}
-    for session in sessions:
-        pair = pairs[session.session_id]
-        view_a = load_inference(
-            artifacts_by_identity[(session.session_id, pair.view_a)]
-        )
-        view_b = load_inference(
-            artifacts_by_identity[(session.session_id, pair.view_b)]
-        )
-        result[session.session_id] = PosePairInput(
-            session_id=session.session_id,
-            subject_id=session.subject_id,
-            fps=float(session.fps),
-            view_a=view_a,
-            view_b=view_b,
-        )
-    return result
-
-
-def _inference_artifacts(
-    sessions: Sequence[FreeManSession],
-    pairs: Mapping[str, SelectedPair],
-    config: Mapping[str, Any],
-) -> dict[tuple[str, str], Path]:
-    artifacts = infer_subject_sessions(sessions, pairs, config)
-    return {
-        (artifact.session_id, artifact.view_id): artifact.path
-        for artifact in artifacts
-    }
-
-
-def _existing_inference_artifacts(
-    sessions: Sequence[FreeManSession],
-    pairs: Mapping[str, SelectedPair],
-    config: Mapping[str, Any],
-) -> dict[tuple[str, str], Path]:
-    root = Path(config["paths"]["output_root"]) / "sam3d"
-    artifacts: dict[tuple[str, str], Path] = {}
-    for session in sessions:
-        pair = pairs[session.session_id]
-        for view in (pair.view_a, pair.view_b):
-            path = (
-                root
-                / f"subject_{session.subject_id:02d}"
-                / session.session_id
-                / view
-                / "prediction.npz"
-            )
-            try:
-                prediction = load_inference(path)
-            except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
-                raise RuntimeError(
-                    f"fuse stage requires a valid SAM3D cache: {path}"
-                ) from error
-            if (
-                prediction.session_id != session.session_id
-                or prediction.subject_id != session.subject_id
-                or prediction.view_id != view
-            ):
-                raise RuntimeError(f"SAM3D cache identity mismatch: {path}")
-            artifacts[(session.session_id, view)] = path
-    return artifacts
-
-
-def _view_baseline(view: ViewPrediction, method: str) -> MethodPrediction:
-    return MethodPrediction(
-        method=method,
-        session_id=view.session_id,
-        subject_id=view.subject_id,
-        fps=view.fps,
-        points=view.points3d,
-        valid=view.valid3d,
-        frame_ids=view.frame_ids,
-        metadata={
-            "dataset": "FreeMan",
-            "method": method,
-            "classification": "VALID",
-            "reference_3d_consumed": False,
-            "source_view": view.view_id,
-        },
-    )
-
-
-def _rotation_checkpoint(config: Mapping[str, Any], run_id: str) -> Path:
-    rotation_config_path = Path(config["rotation_aware"]["config"])
-    if not rotation_config_path.is_absolute():
-        from common.paths import PROJECT_ROOT
-
-        rotation_config_path = PROJECT_ROOT / rotation_config_path
-    import yaml
-
-    raw = yaml.safe_load(rotation_config_path.read_text(encoding="utf-8"))
-    output = Path(raw["paths"]["output_root"])
-    if not output.is_absolute():
-        from common.paths import PROJECT_ROOT
-
-        output = PROJECT_ROOT / output
-    checkpoint = output / "runs" / run_id / "checkpoints" / "best.pt"
-    if not checkpoint.is_file():
-        raise FileNotFoundError(
-            f"required zero-shot rotation-aware checkpoint is missing: {checkpoint}"
-        )
-    return checkpoint.resolve()
-
-
-def _apply_protocol_classification(
-    prediction: MethodPrediction,
-    config: Mapping[str, Any],
-) -> MethodPrediction:
-    if int(config["dataset"]["frame_stride"]) == 1:
-        return prediction
-    metadata = {
-        **dict(prediction.metadata),
-        "classification": "DIAGNOSTIC_FRAME_STRIDE",
-        "excluded_from_ranking": True,
-        "diagnostic_reason": "frame_stride_not_one",
-    }
-    return MethodPrediction(
-        method=prediction.method,
-        session_id=prediction.session_id,
-        subject_id=prediction.subject_id,
-        fps=prediction.fps,
-        points=prediction.points,
-        valid=prediction.valid,
-        frame_ids=prediction.frame_ids,
-        metadata=metadata,
-    )
-
-
-def _fuse_pairs(
-    pose_pairs: Mapping[str, PosePairInput],
-    config: Mapping[str, Any],
-) -> dict[str, tuple[MethodPrediction, ...]]:
-    output = Path(config["paths"]["output_root"]) / "fusion" / "methods"
-    checkpoints = {
-        str(run_id): _rotation_checkpoint(config, str(run_id))
-        for run_id in config["rotation_aware"].get("run_ids", ())
-    }
-    all_predictions: dict[str, tuple[MethodPrediction, ...]] = {}
-    for session_id in sorted(pose_pairs):
-        pair = pose_pairs[session_id]
-        predictions: list[MethodPrediction] = [
-            _view_baseline(pair.view_a, "view_a"),
-            _view_baseline(pair.view_b, "view_b"),
-            *fuse_deterministic(pair),
-        ]
-        for run_id, checkpoint in checkpoints.items():
-            predictions.append(
-                fuse_rotation_aware(
-                    pair,
-                    checkpoint,
-                    run_id,
-                    config,
-                )
-            )
-        predictions = [
-            _apply_protocol_classification(prediction, config)
-            for prediction in predictions
-        ]
-        for prediction in predictions:
-            save_method_prediction(prediction, output)
-        all_predictions[session_id] = tuple(predictions)
-    return all_predictions
-
-
-def _load_fused_subject(
-    config: Mapping[str, Any],
-    subject: int,
-) -> dict[str, tuple[MethodPrediction, ...]]:
-    root = Path(config["paths"]["output_root"]) / "fusion" / "methods"
-    predictions: dict[str, list[MethodPrediction]] = {}
-    for path in sorted(root.glob(f"*/subject_{subject:02d}/*/fused_sequence.npz")):
-        loaded = load_method_prediction(path)
-        predictions.setdefault(loaded.session_id, []).append(loaded)
-    return {
-        session: tuple(sorted(items, key=lambda item: item.method))
-        for session, items in predictions.items()
-    }
-
-
-def _evaluate_subject(
-    sessions: Sequence[FreeManSession],
-    predictions: Mapping[str, Sequence[MethodPrediction]],
-    config: Mapping[str, Any],
-) -> tuple[SessionMetrics, ...]:
-    thresholds = tuple(
-        float(value) for value in config["evaluation"]["pck_thresholds_mm"]
-    )
-    scale = float(config["dataset"]["reference_scale_to_m"])
-    rows: list[SessionMetrics] = []
-    for session in sessions:
-        reference = load_session_reference(
-            session,
-            reference_scale_to_m=scale,
-        )
-        session_predictions = predictions.get(session.session_id)
-        if not session_predictions:
-            raise RuntimeError(
-                f"no fused predictions available for {session.session_id}"
-            )
-        rows.extend(
-            evaluate_session(prediction, reference, thresholds)
-            for prediction in session_predictions
-        )
-    return tuple(rows)
-
-
-def _write_subject_metrics(
-    config: Mapping[str, Any],
-    subject: int,
-    rows: Sequence[SessionMetrics],
-) -> None:
-    _atomic_json(
-        _metric_path(config, subject),
-        {
-            "subject_id": subject,
-            "rows": [asdict(row) for row in rows],
-        },
-    )
-
-
-def _metric_from_json(value: Mapping[str, Any]) -> SessionMetrics:
-    return SessionMetrics(
-        **{
-            **dict(value),
-            "pck": {
-                int(float(key)): float(item)
-                for key, item in value["pck"].items()
-            },
-            "per_joint_mpjpe_mm": tuple(value["per_joint_mpjpe_mm"]),
-        }
-    )
-
-
-def _cached_metrics(config: Mapping[str, Any]) -> tuple[SessionMetrics, ...]:
-    root = Path(config["paths"]["output_root"]) / "evaluation" / "session_metrics"
-    rows: list[SessionMetrics] = []
-    for path in sorted(root.glob("subject_*.json")):
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        rows.extend(_metric_from_json(item) for item in payload["rows"])
-    if not rows:
-        raise RuntimeError("no cached FreeMan session metrics are available")
-    return tuple(rows)
-
-
-def _tables_with_failures(
-    rows: Sequence[SessionMetrics],
-    state_path: Path,
-) -> EvaluationTables:
-    tables = aggregate_metrics(rows)
-    if not state_path.is_file():
-        return tables
-    state = _load_state(state_path)
-    failures = [
-        {
-            "subject_id": int(subject),
-            "session_id": None,
-            "stage": "subject",
-            "reason": details.get("error_message"),
-        }
-        for subject, details in state["subjects"].items()
-        if details.get("status") == "failed"
-    ]
-    return EvaluationTables(
-        by_session=tables.by_session,
-        by_subject=tables.by_subject,
-        by_method=tables.by_method,
-        by_joint=tables.by_joint,
-        by_split=tables.by_split,
-        by_scenario=tables.by_scenario,
-        paired_statistics=tables.paired_statistics,
-        failures=pd.DataFrame(
-            failures,
-            columns=["subject_id", "session_id", "stage", "reason"],
-        ),
-    )
-
-
-def _sha256_json(value: Any) -> str:
-    encoded = json.dumps(value, sort_keys=True, default=str).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
-        for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 class DefaultStageOperations(StageOperations):
@@ -1143,3 +501,4 @@ def main(
     else:
         getattr(stages, args.stage)(config)
     return 0
+
