@@ -2,7 +2,7 @@
 
 ``python -m fusion train folds_dir=...`` runs folds sequentially and
 writes the summary itself.  On the cluster each fold is a separate job
-(``pegasus/cycle_aware_fold_qsub.sh``), so the per-fold ``result.json`` files
+(``pegasus/fusion_fold_qsub.sh``), so the per-fold ``result.json`` files
 land under ``<sweep_dir>/fold_NN/`` independently; this module collects them::
 
     python -m fusion.summarize local/runs/cycle_aware/gym_v1_5fold

@@ -1,7 +1,7 @@
 import pytest
 from types import SimpleNamespace
 
-from scripts import monitor_sam3d_inference as monitor
+from pose_estimation import monitor_inference as monitor
 
 
 def _write_completed_person(result_root, log_root, person_id):
@@ -92,7 +92,7 @@ def test_scan_resets_offset_when_log_is_truncated(tmp_path):
 def test_process_is_active_requires_main_and_run_match():
     commands = [
         "python -m pose_estimation run infer.workers_per_gpu=2",
-        "python scripts/monitor_sam3d_inference.py",
+        "python -m pose_estimation.monitor_inference",
     ]
 
     assert monitor.process_is_active(commands, "infer.workers_per_gpu=2")

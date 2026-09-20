@@ -257,8 +257,8 @@ The fixed protocol is **5-fold subject-disjoint cross-validation, single seed
 * `data.fold_json=<file>` selects one fold (it also restricts which subjects
   are loaded); `folds_dir=<dir>` runs every fold sequentially in one process
   and writes `summary.{json,csv}`.
-* Cluster: `bash pegasus/submit_cycle_aware_5fold.sh gymnastics [experiment]`
-  submits one gpu job per fold (`pegasus/cycle_aware_fold_qsub.sh`); collect
+* Cluster: `bash pegasus/submit_fusion_5fold.sh gymnastics [experiment]`
+  submits one gpu job per fold (`pegasus/fusion_fold_qsub.sh`); collect
   with `PYTHONPATH=src python -m fusion.summarize
   local/runs/cycle_aware/<sweep>`.
 * Unity is evaluation-only (two short single-sweep sequences, no cycles).

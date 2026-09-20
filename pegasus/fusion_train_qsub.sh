@@ -3,7 +3,7 @@
 # (private data: the fixed 96/27/14 paper split) on the gpu queue.
 #
 #   qsub -o local/runs/cycle_aware/joblogs/gym_v1_seed0.log \
-#        -v DATA=gymnastics,RUN_NAME=gym_v1_seed0 pegasus/cycle_aware_train_qsub.sh
+#        -v DATA=gymnastics,RUN_NAME=gym_v1_seed0 pegasus/fusion_train_qsub.sh
 #
 # Variables (qsub -v):
 #   DATA       gymnastics | freeman | synthetic  (required)

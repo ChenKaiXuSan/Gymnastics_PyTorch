@@ -47,7 +47,7 @@ $PY -m fusion benchmark-freeman-train prepare-cache   # CPU, ~1 min
 $PY -m fusion benchmark-freeman-train write-folds
 $PY -m fusion benchmark-freeman-train plan --seed 0   # prints the five train commands
 for f in fold_01 fold_02 fold_03 fold_04 fold_05; do
-  qsub -v FOLD=$f,SEED=0 scripts/freeman_train_qsub_fold.sh
+  qsub -v FOLD=$f,SEED=0 pegasus/archive_freeman_fold_qsub.sh
 done
 $PY -m fusion benchmark-freeman-train evaluate --seed 0
 $PY -m fusion benchmark-freeman-train compare  --seed 0

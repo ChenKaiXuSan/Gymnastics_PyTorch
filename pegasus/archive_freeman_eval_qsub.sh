@@ -3,7 +3,7 @@
 # compute node (the login node's 16 GB user quota is too small for the
 # session-level inference of 552 sessions).
 #
-#   qsub -o local/runs/freeman_trained_fusion/joblogs/evaluate_s0.log -v SEED=0 scripts/freeman_train_eval_qsub.sh
+#   qsub -o local/runs/freeman_trained_fusion/joblogs/evaluate_s0.log -v SEED=0 pegasus/archive_freeman_eval_qsub.sh
 #
 #PBS -A SKIING
 #PBS -q gpu

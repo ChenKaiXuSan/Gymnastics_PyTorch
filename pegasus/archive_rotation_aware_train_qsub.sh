@@ -3,7 +3,7 @@
 #
 #   qsub -o local/runs/fuse_rotation_aware/joblogs/<run_id>.log \
 #        -v CONFIG=src/configs/archive/rotation_aware_plain_tcn.yaml,RUN_ID=all137_b1_e100_seed0,ABLATION=B1 \
-#        scripts/rotation_aware_train_qsub.sh
+#        pegasus/archive_rotation_aware_train_qsub.sh
 #
 # CONFIG, RUN_ID, ABLATION (required); FOLD (optional, passed to --fold);
 # SEED (optional, overrides training.seed through a resolved config copy).

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Subject-disjoint FreeMan training: train one fold on the cluster gpu queue.
 #
-#   qsub -v FOLD=fold_01,SEED=0 scripts/freeman_train_qsub_fold.sh
+#   qsub -v FOLD=fold_01,SEED=0 pegasus/archive_freeman_fold_qsub.sh
 #
 # FOLD (required): fold name under src/configs/shared/folds/freeman (fold_01..fold_05).
 # SEED (optional): training seed (default 0); becomes part of the run id.

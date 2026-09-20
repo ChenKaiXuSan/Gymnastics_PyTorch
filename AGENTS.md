@@ -103,7 +103,7 @@ configuration tree `configs/`:
 | support | `src/common/` | Project paths, config helpers, MHR70 metadata, the shared CLI dispatcher. Library only, no entry point. | – |
 | config | `src/configs/` | `pose_estimation/`, `pseudo_gt/`, `fusion/` (Hydra tree of the model), `shared/` (MHR70 skeleton spec, fold files), `benchmarks/`, `analysis/`, `archive/` (old-model configs). | – |
 | archive | `src/fusion/archive/rotation_aware/` | Frozen paper model (2026-09-19); kept only to regenerate published tables. See `archive/README.md`. | `python -m fusion rotation-aware` |
-| – | `pegasus/` | NQSV job scripts for the fusion model (5-fold, single seed, 50 epochs); see `pegasus/README.md`. | – |
+| – | `pegasus/` | All NQSV job scripts, named by stage: `fusion_*` / `submit_fusion_*` (the model, 5-fold), `archive_*` (old model), `benchmark_freeman_subject_qsub.sh` (SAM3D on FreeMan); see `pegasus/README.md`. | – |
 | – | `third_party/` | Pinned upstream SAM3 and SAM-3D-Body repositories. | – |
 | – | `local/` | Ignored checkpoints, videos, run outputs, and caches. | – |
 

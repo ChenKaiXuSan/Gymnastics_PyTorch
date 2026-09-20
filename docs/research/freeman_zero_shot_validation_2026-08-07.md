@@ -115,7 +115,7 @@ temporal alignment, or any hyperparameter.
   (protocol §FreeMan, results RQ5, `tables/freeman_zero_shot.tex`)
 - Configs: `src/configs/benchmarks/freeman_cluster.yaml`,
   `src/configs/pose_estimation/sam3d_body_freeman_batched.yaml`
-- Job script: `scripts/freeman_qsub_subject.sh`
+- Job script: `pegasus/benchmark_freeman_subject_qsub.sh`
 
 ## Remaining work
 

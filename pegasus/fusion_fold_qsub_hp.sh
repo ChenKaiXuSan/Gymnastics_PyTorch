@@ -2,7 +2,7 @@
 # Cycle-aware fusion: train + evaluate ONE cross-validation fold on the gpu queue.
 #
 #   qsub -o local/runs/cycle_aware/joblogs/gym_v1_5fold_fold_01.log \
-#        -v DATA=gymnastics,FOLD=fold_01,SWEEP=gym_v1_5fold pegasus/cycle_aware_fold_qsub.sh
+#        -v DATA=gymnastics,FOLD=fold_01,SWEEP=gym_v1_5fold pegasus/fusion_fold_qsub.sh
 #
 # Variables (qsub -v):
 #   DATA       gymnastics | freeman            (required)
@@ -14,11 +14,9 @@
 #   EXPERIMENT optional Hydra experiment preset (no_film, no_cross_view, ...)
 #   SEED       seed (default 0)
 #   EPOCHS     epochs (default 50)
-#   OVERRIDES  extra Hydra overrides separated by "::" (qsub -v values cannot
-#              contain spaces or shell characters), e.g.
-#              "test_only=true::checkpoint=path/last.ckpt"
+#   OVERRIDES  extra Hydra overrides, space separated
 #
-# Usually submitted for all folds at once by pegasus/submit_cycle_aware_5fold.sh.
+# Usually submitted for all folds at once by pegasus/submit_fusion_5fold.sh.
 #
 #PBS -A HP260146
 #PBS -q gen_S
@@ -62,11 +60,8 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || ec
 ARGS=("data=$DATA" "data.fold_json=$FOLD_JSON" "run_name=$SWEEP/$FOLD" "seed=$SEED"
       "trainer.max_epochs=$EPOCHS" "trainer.enable_progress_bar=false" "data.num_workers=${NUM_WORKERS:-0}")
 [ -n "$EXPERIMENT" ] && ARGS+=("experiment=$EXPERIMENT")
-if [ -n "$OVERRIDES" ]; then
-  # "::"-separated list -> one argument per override (spaces are also accepted).
-  IFS=' ' read -r -a EXTRA_ARGS <<<"${OVERRIDES//::/ }"
-  ARGS+=("${EXTRA_ARGS[@]}")
-fi
+# shellcheck disable=SC2206
+[ -n "$OVERRIDES" ] && ARGS+=($OVERRIDES)
 
 "$PYBIN" -u -m fusion train "${ARGS[@]}"
 status=$?

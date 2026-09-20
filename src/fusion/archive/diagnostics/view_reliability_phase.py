@@ -10,15 +10,14 @@ from __future__ import annotations
 
 import csv
 import json
-import sys
+
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-REPO = Path("/work/1/HP260146/chenkaixu/Gymnastics_PyTorch")
-sys.path.insert(0, str(REPO / "src"))
-from common.skeletons.mhr70 import MHR70_INDEX  # noqa: E402
+from common.paths import PROJECT_ROOT as REPO
+from common.skeletons.mhr70 import MHR70_INDEX
 
 COCO17 = (
     "nose", "left-eye", "right-eye", "left-ear", "right-ear",

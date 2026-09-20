@@ -1,7 +1,7 @@
 #!/bin/bash
 # FreeMan benchmark: process one subject on the cluster gpu queue.
 #
-#   qsub -v SUBJECT=1,FRAME_STRIDE=25 scripts/freeman_qsub_subject.sh
+#   qsub -v SUBJECT=1,FRAME_STRIDE=25 pegasus/benchmark_freeman_subject_qsub.sh
 #
 # SUBJECT (required): FreeMan subject ID 1..40.
 # FRAME_STRIDE (optional): overrides the config stride (default: config value).

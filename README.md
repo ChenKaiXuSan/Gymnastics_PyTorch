@@ -295,7 +295,7 @@ Presets: `no_film`, `no_cross_view`, `no_short_motion`, `no_long_motion`,
 - `configs/`: runtime configuration grouped by domain.
 - `docs/`: current workflow, module, and runbook documentation.
 - `notebooks/`: exploratory analysis separated from importable code.
-- `scripts/`: operational scripts only.
+- `pegasus/`: NQSV job scripts for the cluster (one per stage family); see `pegasus/README.md`.
 - `third_party/`: pinned upstream repositories.
 - `paper/image_and_vision_computing/`: local manuscript workspace; generated builds are not
   part of the Python package.

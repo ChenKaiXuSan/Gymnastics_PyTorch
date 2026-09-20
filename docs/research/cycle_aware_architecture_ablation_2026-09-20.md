@@ -85,9 +85,9 @@ about 0.1 are noise; the paired sign counts are the more useful column.
 ## Reproduction
 
 ```bash
-bash pegasus/submit_cycle_aware_5fold.sh gymnastics                    # baseline
+bash pegasus/submit_fusion_5fold.sh gymnastics                    # baseline
 for e in no_short_motion no_long_motion no_phase no_film no_cross_view equal_reliability no_residual pose_only; do
-  bash pegasus/submit_cycle_aware_5fold.sh gymnastics $e               # or ACCOUNT=HP260146 for the gen_S queue
+  bash pegasus/submit_fusion_5fold.sh gymnastics $e               # or ACCOUNT=HP260146 for the gen_S queue
 done
 PYTHONPATH=src python -m fusion.ablation_table \
   --baseline local/runs/cycle_aware/gymnastics_v1_5fold_seed0 \

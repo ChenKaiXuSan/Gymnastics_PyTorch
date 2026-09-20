@@ -20,8 +20,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO / "src"))
+from common.paths import PROJECT_ROOT as REPO  # noqa: E402
+
 os.environ.setdefault("GYMNASTICS_DATA_ROOT", "/work/1/HP260146/chenkaixu/gymnastics")
 
 from fusion.keypoints.config import load_skeleton_spec

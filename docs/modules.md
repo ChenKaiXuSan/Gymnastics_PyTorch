@@ -35,7 +35,7 @@ The four pipeline stages are the top-level packages and the only entry points;
 | `configs/` | Domain-aligned YAML configuration. |
 | `tests/` | Automated verification of active code. |
 | `notebooks/` | Exploratory work that is not imported by production code. |
-| `scripts/` | Monitoring, bootstrap, and other operational commands. |
+| `pegasus/` | NQSV job scripts for the cluster, named by stage (`fusion_*`, `archive_*`, `benchmark_*`); see `pegasus/README.md`. |
 | `third_party/` | Pinned upstream Git submodules. |
 | `paper/image_and_vision_computing/` | Local manuscript sources and generated paper assets. |
 | `local/` | Ignored checkpoints, videos, runs, caches, and migration backups. |

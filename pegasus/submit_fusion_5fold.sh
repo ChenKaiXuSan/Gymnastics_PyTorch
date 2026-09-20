@@ -1,18 +1,18 @@
 #!/bin/bash
 # Submit the 5 cross-validation folds of one dataset as 5 gpu jobs.
 #
-#   bash pegasus/submit_cycle_aware_5fold.sh gymnastics                 # sweep gymnastics_v1_5fold
-#   bash pegasus/submit_cycle_aware_5fold.sh freeman                    # sweep freeman_v1_5fold (17-subject protocol)
-#   bash pegasus/submit_cycle_aware_5fold.sh freeman_all40              # all 40 subjects, session-balanced folds
-#   bash pegasus/submit_cycle_aware_5fold.sh gymnastics no_film         # ablation preset -> gymnastics_v1_no_film_5fold
-#   SEED=1 bash pegasus/submit_cycle_aware_5fold.sh gymnastics          # other seed
-#   OVERRIDES="model.hidden_dim=256::loss.periodicity_weight=0" bash pegasus/submit_cycle_aware_5fold.sh gymnastics
-#   ACCOUNT=HP260146 bash pegasus/submit_cycle_aware_5fold.sh gymnastics no_film   # HP260146 project, gen_S queue
+#   bash pegasus/submit_fusion_5fold.sh gymnastics                 # sweep gymnastics_v1_5fold
+#   bash pegasus/submit_fusion_5fold.sh freeman                    # sweep freeman_v1_5fold (17-subject protocol)
+#   bash pegasus/submit_fusion_5fold.sh freeman_all40              # all 40 subjects, session-balanced folds
+#   bash pegasus/submit_fusion_5fold.sh gymnastics no_film         # ablation preset -> gymnastics_v1_no_film_5fold
+#   SEED=1 bash pegasus/submit_fusion_5fold.sh gymnastics          # other seed
+#   OVERRIDES="model.hidden_dim=256::loss.periodicity_weight=0" bash pegasus/submit_fusion_5fold.sh gymnastics
+#   ACCOUNT=HP260146 bash pegasus/submit_fusion_5fold.sh gymnastics no_film   # HP260146 project, gen_S queue
 #
 # After the jobs finish, summarise with
 #   PYTHONPATH=src python -m fusion.summarize local/runs/cycle_aware/<sweep>
 set -eu
-DATA="${1:?usage: submit_cycle_aware_5fold.sh <gymnastics|freeman|freeman_all40> [experiment]}"
+DATA="${1:?usage: submit_fusion_5fold.sh <gymnastics|freeman|freeman_all40> [experiment]}"
 EXPERIMENT="${2:-}"
 SEED="${SEED:-0}"
 EPOCHS="${EPOCHS:-50}"
@@ -27,8 +27,8 @@ esac
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 # ACCOUNT=SKIING (default) -> gpu queue; ACCOUNT=HP260146 -> gen_S queue (each account has its own request cap).
-JOB_SCRIPT=pegasus/cycle_aware_fold_qsub.sh
-[ "${ACCOUNT:-SKIING}" = "HP260146" ] && JOB_SCRIPT=pegasus/cycle_aware_fold_qsub_hp.sh
+JOB_SCRIPT=pegasus/fusion_fold_qsub.sh
+[ "${ACCOUNT:-SKIING}" = "HP260146" ] && JOB_SCRIPT=pegasus/fusion_fold_qsub_hp.sh
 mkdir -p local/runs/cycle_aware/joblogs
 for fold_file in "$FOLDS_DIR"/fold_*.json; do
   FOLD="$(basename "$fold_file" .json)"
