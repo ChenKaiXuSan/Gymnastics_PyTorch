@@ -50,7 +50,7 @@ Important details:
 
 ## Key Entry Points
 
-Use `...` for these commands.
+Run these from the repository root with `PYTHONPATH=src` in the project environment (see the first bullet above).
 
 ```bash
 # Run SAM3D-Body on raw face/side videos.
