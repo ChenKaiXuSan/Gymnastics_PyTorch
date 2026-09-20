@@ -92,7 +92,7 @@ configuration tree `configs/`:
 
 | Stage | Package | Role | Command |
 |---|---|---|---|
-| ① pose estimation | `src/pose_estimation/` | SAM3D-Body inference on the raw face/side videos; per-view 3D + 2D MHR70 keypoints. | `python -m pose_estimation run` |
+| ① pose estimation | `src/pose_estimation/` | SAM3D-Body inference on the raw face/side videos; per-view 3D + 2D MHR70 keypoints. The pinned upstream SAM-3D-Body checkout is the submodule `pose_estimation/third_party/sam-3d-body`. | `python -m pose_estimation run` |
 | ② cycle alignment | `src/cycle_alignment/` | Side-to-face offset, cycle segmentation with turn-around middles (`cycles.py`, `cycle_records.py`, `annotate_cycles.py`), split-cycle records. | `python -m cycle_alignment align`, `python -m cycle_alignment cycles ...` |
 | ③ pseudo ground truth | `src/pseudo_gt/` | Chessboard intrinsics (`calibration.py`), per-person extrinsics (`estimate_extrinsics.py`), triangulation of SAM3D 2D keypoints into the evaluation reference (`sam3d_from_split_cycle.py`). Evaluation-only; training never imports it. | `python -m pseudo_gt calibrate`, `python -m pseudo_gt triangulate` |
 | ④ fusion network | `src/fusion/` | **The proposed model**: cycle-aware dual-view fusion (data modules, model, losses, Lightning training, Hydra configs in `src/configs/fusion`). See `docs/cycle_aware_fusion.md`. | `python -m fusion train` |
@@ -104,7 +104,6 @@ configuration tree `configs/`:
 | config | `src/configs/` | `pose_estimation/`, `pseudo_gt/`, `fusion/` (Hydra tree of the model), `shared/` (MHR70 skeleton spec, fold files), `benchmarks/`, `analysis/`, `archive/` (old-model configs). | – |
 | archive | `src/fusion/archive/rotation_aware/` | Frozen paper model (2026-09-19); kept only to regenerate published tables. See `archive/README.md`. | `python -m fusion rotation-aware` |
 | – | `pegasus/` | All NQSV job scripts, named by stage: `fusion_*` / `submit_fusion_*` (the model, 5-fold), `archive_*` (old model), `benchmark_freeman_subject_qsub.sh` (SAM3D on FreeMan); see `pegasus/README.md`. | – |
-| – | `third_party/` | Pinned upstream SAM3 and SAM-3D-Body repositories. | – |
 | – | `local/` | Ignored checkpoints, videos, run outputs, and caches. | – |
 
 ## Current Fuse Direction

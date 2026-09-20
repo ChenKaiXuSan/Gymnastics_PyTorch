@@ -43,9 +43,9 @@ git submodule update --init --recursive
 conda run -n gymnastic python -m pip install -e ".[analysis,training,test]"
 ```
 
-SAM3 and SAM-3D-Body are pinned below `third_party/`. Project code imports them
-through the adapter in `pose_estimation`; upstream source is not duplicated in
-the installed package.
+SAM-3D-Body is pinned as a submodule below `src/pose_estimation/third_party/`.
+Project code imports it through the adapter in `pose_estimation`; upstream
+source is not duplicated in the installed package.
 
 ## Commands
 
@@ -295,7 +295,6 @@ Presets: `no_film`, `no_cross_view`, `no_short_motion`, `no_long_motion`,
 - `configs/`: runtime configuration grouped by domain.
 - `docs/`: current workflow, module, and runbook documentation.
 - `pegasus/`: NQSV job scripts for the cluster (one per stage family); see `pegasus/README.md`.
-- `third_party/`: pinned upstream repositories.
 - `paper/image_and_vision_computing/`: local manuscript workspace; generated builds are not
   part of the Python package.
 

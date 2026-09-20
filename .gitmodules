@@ -1,3 +1,3 @@
 [submodule "third_party/sam-3d-body"]
-	path = third_party/sam-3d-body
+	path = src/pose_estimation/third_party/sam-3d-body
 	url = https://github.com/facebookresearch/sam-3d-body.git

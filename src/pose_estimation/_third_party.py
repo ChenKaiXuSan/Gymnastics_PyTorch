@@ -1,14 +1,22 @@
-"""Load the pinned SAM-3D-Body checkout without vendoring it into our package."""
+"""Load the pinned SAM-3D-Body checkout without vendoring it into our package.
+
+The upstream repository is a git submodule at
+``src/pose_estimation/third_party/sam-3d-body``; it is the only external
+source tree the project imports, and only this stage imports it.
+"""
 
 from pathlib import Path
 import sys
 
+THIRD_PARTY_ROOT = Path(__file__).resolve().parent / "third_party"
+
 
 def ensure_sam3d_body_importable() -> Path:
     repository_root = Path(__file__).resolve().parents[2]
-    candidates = [repository_root / "third_party" / "sam-3d-body"]
+    candidates = [THIRD_PARTY_ROOT / "sam-3d-body"]
     git_entry = repository_root / ".git"
     if git_entry.is_file():
+        # Linked worktree: the submodule checkout lives next to the main worktree.
         line = git_entry.read_text(encoding="utf-8").strip()
         if line.startswith("gitdir:"):
             worktree_git_dir = Path(line.split(":", 1)[1].strip()).resolve()
@@ -19,7 +27,7 @@ def ensure_sam3d_body_importable() -> Path:
                     / common_file.read_text(encoding="utf-8").strip()
                 ).resolve()
                 candidates.append(
-                    common_git_dir.parent / "third_party" / "sam-3d-body"
+                    common_git_dir.parent / "src" / "pose_estimation" / "third_party" / "sam-3d-body"
                 )
     checkout = next(
         (
