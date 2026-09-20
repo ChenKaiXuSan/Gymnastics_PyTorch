@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from common.paths import UNITY_BENCHMARK_ROOT
 from pathlib import Path
 
 import numpy as np
@@ -12,7 +13,7 @@ from fusion.benchmarks.unity.sam3d import (
 )
 
 
-UNITY_ROOT = Path("/home/data/xchen/gymnastics/unity_benchmark")
+UNITY_ROOT = UNITY_BENCHMARK_ROOT
 CONFIG = Path("src/configs/pose_estimation/sam3d_body.yaml")
 
 

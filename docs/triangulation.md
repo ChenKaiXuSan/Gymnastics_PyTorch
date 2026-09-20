@@ -89,8 +89,8 @@ conda run -n gymnastic python -m pseudo_gt triangulate
 The SAM3D split-cycle triangulation path uses:
 
 ```text
-/home/data/xchen/gymnastics/sam3d_body_results/person/<id>/face/*.npz
-/home/data/xchen/gymnastics/sam3d_body_results/person/<id>/side/*.npz
+$GYMNASTICS_DATA_ROOT/sam3d_body_results/person/<id>/face/*.npz
+$GYMNASTICS_DATA_ROOT/sam3d_body_results/person/<id>/side/*.npz
 local/runs/split_cycle/person_<id>/alignment_record_<id>.json
 src/configs/pseudo_gt/sam3d_triangulation.yaml
 ```
@@ -102,7 +102,7 @@ The older support entry point uses `src/configs/pseudo_gt/legacy.yaml`.
 The generated triangulated dataset is written outside the repo:
 
 ```text
-/home/data/xchen/gymnastics/sam3d_triangulated/person
+$GYMNASTICS_DATA_ROOT/sam3d_triangulated/person
 ```
 
 Each processed cycle is stored as:
@@ -125,7 +125,7 @@ frame_records.npy
 Camera pose visualizations are stored under:
 
 ```text
-/home/data/xchen/gymnastics/sam3d_triangulated/person/_camera
+$GYMNASTICS_DATA_ROOT/sam3d_triangulated/person/_camera
 ```
 
 ## Result Reports

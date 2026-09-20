@@ -61,6 +61,7 @@ from fusion.keypoints.schema import PosePairTrial
 from ..sample import DualViewSample, sample_from_pose_pair_trial
 from .base import DualViewDataModule, SplitSpec
 from .cycle_records import public_cycles_for_sequence
+from common.paths import UNITY_BENCHMARK_ROOT
 
 SequenceLoader = Callable[[], Sequence[tuple[PosePairTrial, np.ndarray | None, np.ndarray | None]]]
 """Returns ``(trial, gt_world_m [T, 22, 3], gt_available [T, 22])`` per sequence."""
@@ -104,7 +105,7 @@ class UnityDataModule(DualViewDataModule):
 
     def _default_sequence_loader(self) -> SequenceLoader:
         options = dict(self.config.options)
-        benchmark_root = _resolve(options.get("benchmark_root", "/home/data/xchen/gymnastics/unity_benchmark"))
+        benchmark_root = _resolve(options.get("benchmark_root", UNITY_BENCHMARK_ROOT))
         cache_root = _resolve(options.get("sam3d_cache_root", "local/runs/unity_benchmark/sam3d"))
         fps = float(options.get("fps", 60.0))
         wanted = options.get("sequences")

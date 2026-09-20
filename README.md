@@ -96,8 +96,9 @@ conda run -n gymnastic python -m fusion.analysis.project_results
 
 ## Data and local assets
 
-The external dataset defaults to `/home/data/xchen/gymnastics` and can be
-overridden with `GYMNASTICS_DATA_ROOT`.
+The external dataset root is resolved once in `src/common/paths.py`: set
+`GYMNASTICS_DATA_ROOT` to override it, otherwise the first known machine root
+that exists is used. Configs interpolate it with `${oc.env:GYMNASTICS_DATA_ROOT}`.
 
 Large or generated local material is kept under the ignored `local/` root:
 

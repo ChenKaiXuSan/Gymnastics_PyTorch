@@ -1,5 +1,5 @@
 paths:
-  sam3d_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}/sam3d_body_results
+  sam3d_root: ${oc.env:GYMNASTICS_DATA_ROOT}/sam3d_body_results
   split_cycle_root: local/runs/split_cycle
   output_root: local/runs/fuse_rotation_aware
   skeleton: src/configs/shared/skeleton_mhr70.yaml
@@ -7,7 +7,7 @@ paths:
   fold_root: src/configs/shared/folds
   default_fold: paper_137_a6_split.json
   old_fuse_root: local/runs/fuse_experiments
-  triangulated_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}/sam3d_triangulated/person
+  triangulated_root: ${oc.env:GYMNASTICS_DATA_ROOT}/sam3d_triangulated/person
 data:
   fps: 60.0
   cache_dir: ${paths.output_root}/cache

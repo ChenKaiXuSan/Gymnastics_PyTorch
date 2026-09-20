@@ -17,7 +17,7 @@ camera_K:
 
 paths:
   log_path: local/runs/triangulated/${now:%Y-%m-%d}/${now:%H-%M-%S}
-  data_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}
+  data_root: ${oc.env:GYMNASTICS_DATA_ROOT}
   input_path: ${paths.data_root}/pt/suwabe
 
 camera_position:

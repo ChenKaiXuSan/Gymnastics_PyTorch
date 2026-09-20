@@ -86,7 +86,7 @@ side（yaw −90°）被假定为**恰好相隔 90°**，基线 `3.5 * sqrt(2) �
 conda run -n gymnastic python - <<'PY'
 import json, numpy as np
 from pathlib import Path
-s = json.load(open('/home/data/xchen/gymnastics/sam3d_triangulated/person/summary.json'))
+s = json.load(open('$GYMNASTICS_DATA_ROOT/sam3d_triangulated/person/summary.json'))
 err = [c['face_reprojection_error_mean_px']
        for p in s['persons'] for c in p.get('cycles', [])
        if c.get('face_reprojection_error_mean_px') is not None]

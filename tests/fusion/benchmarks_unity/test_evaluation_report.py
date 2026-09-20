@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from common.paths import UNITY_BENCHMARK_ROOT
 from pathlib import Path
 
 import numpy as np
@@ -131,7 +132,7 @@ def test_evaluation_reports_millimetres_and_report_separates_diagnostics(
 
 def test_converts_mhr70_candidate_and_builds_matching_reference() -> None:
     benchmark = load_unity_benchmark(
-        "/home/data/xchen/gymnastics/unity_benchmark"
+        str(UNITY_BENCHMARK_ROOT)
     )
     frames = benchmark.frames[:5]
     mhr = np.ones((5, 70, 3), dtype=np.float32)

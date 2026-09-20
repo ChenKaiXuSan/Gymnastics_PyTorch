@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from common.paths import UNITY_BENCHMARK_ROOT
 from dataclasses import replace
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from fusion.benchmarks.unity.supervised_data import (
 )
 
 
-UNITY_ROOT = Path("/home/data/xchen/gymnastics/unity_benchmark")
+UNITY_ROOT = UNITY_BENCHMARK_ROOT
 SAM3D_ROOT = Path("local/runs/unity_benchmark/sam3d")
 SKELETON = Path("src/configs/shared/skeleton_mhr70.yaml")
 

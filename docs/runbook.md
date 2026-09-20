@@ -13,7 +13,7 @@ conda run -n gymnastic ...
 默认数据根目录是：
 
 ```text
-/home/data/xchen/gymnastics
+$GYMNASTICS_DATA_ROOT
 ```
 
 `GYMNASTICS_DATA_ROOT` 会被 SAM3D-Body 和三角化的 Hydra 配置读取。`split_cycle` 和 `fuse` 使用独立的命令行路径参数；使用自定义数据根目录时，还需要显式传入它们的输入路径。具体示例见[自定义数据根目录](#自定义数据根目录)。
@@ -27,14 +27,14 @@ conda run -n gymnastic ...
 完整流程需要同一人的两个视频：
 
 ```text
-/home/data/xchen/gymnastics/raw/person/46/ID46_face.MOV
-/home/data/xchen/gymnastics/raw/person/46/ID46_side.MOV
+$GYMNASTICS_DATA_ROOT/raw/person/46/ID46_face.MOV
+$GYMNASTICS_DATA_ROOT/raw/person/46/ID46_side.MOV
 ```
 
 检查文件：
 
 ```bash
-ls /home/data/xchen/gymnastics/raw/person/46/ID46_face.MOV /home/data/xchen/gymnastics/raw/person/46/ID46_side.MOV
+ls $GYMNASTICS_DATA_ROOT/raw/person/46/ID46_face.MOV $GYMNASTICS_DATA_ROOT/raw/person/46/ID46_side.MOV
 ```
 
 两个文件都应存在。当前 `python -m pose_estimation run` 会检查 `face` 和 `side` 是否齐全，缺少任一视角时会跳过该人物。
@@ -52,8 +52,8 @@ conda run -n gymnastic python -m pose_estimation run infer.person_list=[46] infe
 主要输出：
 
 ```text
-/home/data/xchen/gymnastics/sam3d_body_results/person/46/face/*_sam3d_body.npz
-/home/data/xchen/gymnastics/sam3d_body_results/person/46/side/*_sam3d_body.npz
+$GYMNASTICS_DATA_ROOT/sam3d_body_results/person/46/face/*_sam3d_body.npz
+$GYMNASTICS_DATA_ROOT/sam3d_body_results/person/46/side/*_sam3d_body.npz
 local/runs/sam3d/46/face/visualization/
 local/runs/sam3d/46/side/visualization/
 local/runs/sam3d/person_logs/46.log
@@ -62,8 +62,8 @@ local/runs/sam3d/person_logs/46.log
 分别统计两个视角的逐帧结果：
 
 ```bash
-find /home/data/xchen/gymnastics/sam3d_body_results/person/46/face -type f -name '*_sam3d_body.npz' | wc -l
-find /home/data/xchen/gymnastics/sam3d_body_results/person/46/side -type f -name '*_sam3d_body.npz' | wc -l
+find $GYMNASTICS_DATA_ROOT/sam3d_body_results/person/46/face -type f -name '*_sam3d_body.npz' | wc -l
+find $GYMNASTICS_DATA_ROOT/sam3d_body_results/person/46/side -type f -name '*_sam3d_body.npz' | wc -l
 ```
 
 两个计数都应大于 `0`。计数差异较大时，应先查看人物日志以及两个原始视频的帧数。
@@ -132,18 +132,18 @@ conda run -n gymnastic python -m pseudo_gt triangulate --person 46
 主要输出：
 
 ```text
-/home/data/xchen/gymnastics/sam3d_triangulated/person/person_46/summary.json
-/home/data/xchen/gymnastics/sam3d_triangulated/person/person_46/cycle_000/summary.json
-/home/data/xchen/gymnastics/sam3d_triangulated/person/person_46/cycle_000/joints_3d/*.json
-/home/data/xchen/gymnastics/sam3d_triangulated/person/person_46/cycle_000/joints_3d_sequence.npz
-/home/data/xchen/gymnastics/sam3d_triangulated/person/person_46/cycle_000/visualization/*.png
-/home/data/xchen/gymnastics/sam3d_triangulated/person/person_46/cycle_000/cycle_000_3d.mp4
+$GYMNASTICS_DATA_ROOT/sam3d_triangulated/person/person_46/summary.json
+$GYMNASTICS_DATA_ROOT/sam3d_triangulated/person/person_46/cycle_000/summary.json
+$GYMNASTICS_DATA_ROOT/sam3d_triangulated/person/person_46/cycle_000/joints_3d/*.json
+$GYMNASTICS_DATA_ROOT/sam3d_triangulated/person/person_46/cycle_000/joints_3d_sequence.npz
+$GYMNASTICS_DATA_ROOT/sam3d_triangulated/person/person_46/cycle_000/visualization/*.png
+$GYMNASTICS_DATA_ROOT/sam3d_triangulated/person/person_46/cycle_000/cycle_000_3d.mp4
 ```
 
 查看人物摘要：
 
 ```bash
-sed -n '1,220p' /home/data/xchen/gymnastics/sam3d_triangulated/person/person_46/summary.json
+sed -n '1,220p' $GYMNASTICS_DATA_ROOT/sam3d_triangulated/person/person_46/summary.json
 ```
 
 每个周期应重点检查：

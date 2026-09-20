@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from common.paths import UNITY_BENCHMARK_ROOT
 import numpy as np
 import pytest
 
@@ -82,7 +83,7 @@ def _write_camera_cache(root, camera_id: str, sample_ids: list[int], points) -> 
 
 def test_runs_deterministic_adapter_and_saves_sequence(tmp_path) -> None:
     full = load_unity_benchmark(
-        "/home/data/xchen/gymnastics/unity_benchmark"
+        str(UNITY_BENCHMARK_ROOT)
     )
     benchmark = UnityBenchmark(
         full.root, full.joint_names, full.cameras, full.frames[:5]
@@ -150,7 +151,7 @@ def test_loads_existing_rotation_checkpoint_metadata() -> None:
 
 def test_runs_existing_rotation_checkpoint_zero_shot(tmp_path) -> None:
     full = load_unity_benchmark(
-        "/home/data/xchen/gymnastics/unity_benchmark"
+        str(UNITY_BENCHMARK_ROOT)
     )
     benchmark = UnityBenchmark(
         full.root, full.joint_names, full.cameras, full.frames[:5]

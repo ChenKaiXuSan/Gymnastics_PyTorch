@@ -5,7 +5,7 @@ name: unity
 # Converted samples are cached here after the first run.
 cache_dir: local/runs/cycle_aware/sample_cache
 options:
-  benchmark_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}/unity_benchmark
+  benchmark_root: ${oc.env:GYMNASTICS_DATA_ROOT}/unity_benchmark
   sam3d_cache_root: local/runs/unity_benchmark/sam3d
   fps: 60.0
   # Strict direction-transfer fold: "left_to_right" or "right_to_left".

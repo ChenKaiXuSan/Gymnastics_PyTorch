@@ -27,12 +27,12 @@ two-view gymnastics videos
 The current active pipeline is:
 
 ```text
-/home/data/xchen/gymnastics/raw/person
+$GYMNASTICS_DATA_ROOT/raw/person
   -> python -m pose_estimation run
-  -> /home/data/xchen/gymnastics/sam3d_body_results/person
+  -> $GYMNASTICS_DATA_ROOT/sam3d_body_results/person
   -> python -m cycle_alignment align
   -> python -m pseudo_gt triangulate
-  -> /home/data/xchen/gymnastics/sam3d_triangulated/person
+  -> $GYMNASTICS_DATA_ROOT/sam3d_triangulated/person
   -> python -m fusion deterministic
   -> python -m fusion analyze / python -m fusion cohort-cycle / python -m fusion benchmark-*
 ```
@@ -116,7 +116,7 @@ avg_body_current
 
 Current fuse behavior:
 
-- Discover persons from `/home/data/xchen/gymnastics/sam3d_body_results/person`.
+- Discover persons from `$GYMNASTICS_DATA_ROOT/sam3d_body_results/person`.
 - Require split-cycle alignment records from `local/runs/split_cycle/person_<id>/alignment_record_<id>.json`.
 - Use `offset_side_to_face` from split-cycle; do not fall back to a newly
   estimated keypoint-DTW offset.
@@ -125,24 +125,28 @@ Current fuse behavior:
 - Average face and aligned-side 3D keypoints.
 - Smooth the fused 3D keypoints over time.
 - Save compact outputs under `local/runs/fuse_experiments/<method>/person_<id>/fused_sequence.npz`.
-- Evaluate against `/home/data/xchen/gymnastics/sam3d_triangulated/person`.
+- Evaluate against `$GYMNASTICS_DATA_ROOT/sam3d_triangulated/person`.
 
 ## Gymnastics Dataset Inventory
 
-The active gymnastics dataset root is:
-
-```text
-/home/data/xchen/gymnastics
-```
+The private dataset root is defined once, in `src/common/paths.py`
+(`DATA_ROOT`). It is taken from the `GYMNASTICS_DATA_ROOT` environment
+variable when set; otherwise the first existing known machine root is used
+(`/work/1/HP260146/chenkaixu/gymnastics` on HP260146, `/home/data/xchen/gymnastics`
+on the lab workstation). Importing `common.paths` exports the resolved value back
+into the environment, so every `src/configs/**/*.yaml` can interpolate it with
+`${oc.env:GYMNASTICS_DATA_ROOT}`. Paths below are written relative to that root
+as `$GYMNASTICS_DATA_ROOT`; never hard-code a machine root outside
+`common/paths.py` (`tests/structure/test_data_entry_config.py` enforces this).
 
 ### Main Pipeline Data
 
 | Type | Path | Coverage | Notes |
 |---|---|---:|---|
-| Raw two-view videos | `/home/data/xchen/gymnastics/raw/person` | 137 persons | Each person has `IDxx_face.MOV` and `IDxx_side.MOV`. |
-| SAM3D-Body results | `/home/data/xchen/gymnastics/sam3d_body_results/person` | 137 persons | Each person has complete `face/*.npz` and `side/*.npz` SAM3D outputs. |
+| Raw two-view videos | `$GYMNASTICS_DATA_ROOT/raw/person` | 137 persons | Each person has `IDxx_face.MOV` and `IDxx_side.MOV`. |
+| SAM3D-Body results | `$GYMNASTICS_DATA_ROOT/sam3d_body_results/person` | 137 persons | Each person has complete `face/*.npz` and `side/*.npz` SAM3D outputs. |
 | Split-cycle alignment | `local/runs/split_cycle` | 137 persons | Active alignment records used by fuse and triangulation. |
-| Triangulated pseudo-GT | `/home/data/xchen/gymnastics/sam3d_triangulated/person` | 137 persons | Evaluation reference for fuse; currently 928 cycle sequences. |
+| Triangulated pseudo-GT | `$GYMNASTICS_DATA_ROOT/sam3d_triangulated/person` | 137 persons | Evaluation reference for fuse; currently 928 cycle sequences. |
 | Fuse experiments | `local/runs/fuse_experiments` | 137 persons x 9 methods | Contains compact fused 3D keypoints and metrics; `metrics_by_person.csv` has no NaN. |
 | Rotation-aware runs | `local/runs/fuse_rotation_aware` | 137 persons, 928 cycles | A4/A5/A6 checkpoints, inference, and A0-A6 evaluation. |
 
@@ -195,8 +199,8 @@ biased and it is not a valid recommendation.
 
 | Path | Approx. Size | Notes |
 |---|---:|---|
-| `/home/data/xchen/gymnastics/run_data` | 323G | Older run directory with previous SAM3D/Mediapipe-style outputs. |
-| `/home/data/xchen/gymnastics/bak` | 140G | Backup data/results; flagged for deletion. |
+| `$GYMNASTICS_DATA_ROOT/run_data` | 323G | Older run directory with previous SAM3D/Mediapipe-style outputs. |
+| `$GYMNASTICS_DATA_ROOT/bak` | 140G | Backup data/results; flagged for deletion. |
 | `local/archive/classification_removed_2026-09-19/` | 33G | Archived outputs of the removed motion-classification task (`train/`, `total_5_class/`); see its README. Nothing in the pipeline reads them. |
 | `local/runs/calibration_vis` | 977M | Camera calibration parameters and visualizations. |
 

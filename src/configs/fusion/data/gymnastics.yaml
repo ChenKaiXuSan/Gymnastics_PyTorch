@@ -8,10 +8,10 @@ options:
   # "cache": rotation-aware person cache; "raw": SAM3D root + split-cycle records.
   source: cache
   cache_root: local/runs/fuse_rotation_aware/cache
-  sam3d_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}/sam3d_body_results
+  sam3d_root: ${oc.env:GYMNASTICS_DATA_ROOT}/sam3d_body_results
   split_cycle_root: local/runs/split_cycle
   # Triangulated pseudo-reference (evaluation only).
-  triangulated_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}/sam3d_triangulated/person
+  triangulated_root: ${oc.env:GYMNASTICS_DATA_ROOT}/sam3d_triangulated/person
   # Fixed paper protocol: 96 / 27 / 14 people.
   fold_json: src/configs/shared/folds/paper_137_a6_split.json
   # Optional explicit person list (null = every person in the fold file).

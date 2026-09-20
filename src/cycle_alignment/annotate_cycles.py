@@ -65,7 +65,7 @@ from cycle_alignment.cycles import (
     detect_cycles,
     hand_theta_unwrapped,
 )
-from common.paths import PROJECT_ROOT
+from common.paths import DATA_ROOT, PROJECT_ROOT
 
 
 def _resolve(path: str | Path) -> Path:
@@ -529,7 +529,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     private = sub.add_parser("private", help="add middles to the private alignment records")
     private.add_argument("--log-root", type=Path, default=Path("local/runs/split_cycle"))
-    private.add_argument("--kpt-root", type=Path, default=Path(os.environ.get("GYMNASTICS_DATA_ROOT", "/home/data/xchen/gymnastics")) / "sam3d_body_results")
+    private.add_argument("--kpt-root", type=Path, default=DATA_ROOT / "sam3d_body_results")
     private.add_argument("--person", nargs="*", default=None)
     private.add_argument("--threads", type=int, default=8)
     common(private, public=False)
@@ -540,12 +540,12 @@ def build_parser() -> argparse.ArgumentParser:
     common(freeman, public=True)
 
     unity = sub.add_parser("unity", help="detect cycles on the Unity benchmark sequences")
-    unity.add_argument("--benchmark-root", type=Path, default=Path(os.environ.get("GYMNASTICS_DATA_ROOT", "/home/data/xchen/gymnastics")) / "unity_benchmark")
+    unity.add_argument("--benchmark-root", type=Path, default=DATA_ROOT / "unity_benchmark")
     unity.add_argument("--sam3d-cache-root", type=Path, default=Path("local/runs/unity_benchmark/sam3d"))
     unity.add_argument("--fps", type=float, default=60.0)
     common(unity, public=True)
 
-    data_root = Path(os.environ.get("GYMNASTICS_DATA_ROOT", "/home/data/xchen/gymnastics"))
+    data_root = DATA_ROOT
     index = sub.add_parser("index", help="export private records, gather logs, write index.json and README.md")
     index.add_argument("--records-root", type=Path, default=Path("local/runs/cycle_records"))
     index.add_argument("--log-root", type=Path, default=Path("local/runs/split_cycle"))
@@ -554,7 +554,7 @@ def build_parser() -> argparse.ArgumentParser:
     index.add_argument("--triangulated-root", type=Path, default=data_root / "sam3d_triangulated")
     index.add_argument("--unity-root", type=Path, default=data_root / "unity_benchmark")
     index.add_argument("--unity-cache-root", type=Path, default=Path("local/runs/unity_benchmark/sam3d"))
-    index.add_argument("--freeman-root", type=Path, default=Path(os.environ.get("FREEMAN_ROOT", "/home/data/xchen/public_datasets/multiview_human/FreeMan")))
+    index.add_argument("--freeman-root", type=Path, default=Path(os.environ.get("FREEMAN_ROOT", str(DATA_ROOT.parent / "public_datasets" / "multiview_human" / "FreeMan"))))
     index.add_argument("--freeman-benchmark-root", type=Path, default=Path("local/runs/freeman_benchmark_cluster"))
     return parser
 

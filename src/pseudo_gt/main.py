@@ -34,7 +34,7 @@ import hydra
 
 
 from pseudo_gt.camera_position_mapping import prepare_camera_position
-from pseudo_gt.load import load_keypoints_from_npz, load_kpt_and_bbox_from_d2_pt
+from pseudo_gt.load import load_kpt_and_bbox_from_d2_pt
 from pseudo_gt.visualization.frame_visualization import draw_and_save_keypoints_from_frame
 from pseudo_gt.visualization.pose_visualization import draw_camera, visualize_3d_joints
 from pseudo_gt.visualization.merge_video import merge_frames_to_video
@@ -121,8 +121,6 @@ def process_one_video(
     output_path.mkdir(parents=True, exist_ok=True)
 
     # FIXME: 因为npz的2-4结果有问题，所以暂时不使用
-    # first_kpts, first_vframes = load_keypoints_from_npz(npz_path=first_path)
-    # second_kpts, second_vframes = load_keypoints_from_npz(npz_path=second_path)
 
     first_kpts, first_kpts_score, _, _, first_vframes = load_kpt_and_bbox_from_d2_pt(
         file_path=first_path, return_frames=True

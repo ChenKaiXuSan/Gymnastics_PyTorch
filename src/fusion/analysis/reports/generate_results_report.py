@@ -5,9 +5,10 @@ import csv
 import json
 from pathlib import Path
 from statistics import mean, median
+from common.paths import TRIANGULATED_ROOT
 
 
-ROOT = Path("/home/data/xchen/gymnastics/sam3d_triangulated/person")
+ROOT = TRIANGULATED_ROOT
 OUT_DIR = Path("local/runs/analysis/triangulated_results")
 
 

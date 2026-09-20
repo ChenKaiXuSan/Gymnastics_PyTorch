@@ -2,11 +2,11 @@ paths:
   skeleton: src/configs/shared/skeleton_mhr70.yaml
   fold: local/runs/cohort_cycle/folds/fold_00.json
   cache_root: local/runs/fuse_rotation_aware/cache
-  sam3d_person_root: /home/data/xchen/gymnastics/sam3d_body_results/person
+  sam3d_person_root: ${oc.env:GYMNASTICS_DATA_ROOT}/sam3d_body_results/person
   camera_audit: local/runs/analysis/extrinsics/estimated_extrinsics.json
   face_calibration: local/runs/calibration_vis/IMG_2420/calibration_parameters.npz
   side_calibration: local/runs/calibration_vis/IMG_2676/calibration_parameters.npz
-  triangulated_root: /home/data/xchen/gymnastics/sam3d_triangulated/person
+  triangulated_root: ${oc.env:GYMNASTICS_DATA_ROOT}/sam3d_triangulated/person
   output_root: local/runs/fitted_camera_real/fold_00
   observation_cache: local/runs/fitted_camera_real/fold_00/input_cache
 

@@ -1,6 +1,6 @@
 # Triangulate SAM3D-Body 2D keypoints using split_cycle alignment records.
 
-data_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}
+data_root: ${oc.env:GYMNASTICS_DATA_ROOT}
 
 paths:
   sam3d_person_root: ${data_root}/sam3d_body_results/person

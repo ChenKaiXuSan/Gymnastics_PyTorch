@@ -13,14 +13,15 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 import numpy as np
+from common.paths import SAM3D_RESULTS_ROOT, TRIANGULATED_ROOT
 
-DEFAULT_SAM3D_ROOT = Path("/home/data/xchen/gymnastics/sam3d_body_results")
+DEFAULT_SAM3D_ROOT = SAM3D_RESULTS_ROOT
 DEFAULT_FUSED_ROOT = Path("local/runs/fuse_experiments")
 # The recommended leakage-free method (sim3_face_stable_joint_weight derives its
 # weights from the triangulated GT it is scored against, so it is not a valid
 # default for this comparison).
 DEFAULT_FUSED_METHOD = "avg_body_current"
-DEFAULT_TRIANGULATED_ROOT = Path("/home/data/xchen/gymnastics/sam3d_triangulated/person")
+DEFAULT_TRIANGULATED_ROOT = TRIANGULATED_ROOT
 DEFAULT_OUT_DIR = Path("local/runs/analysis/fused_vs_triangulated")
 PELVIS_INDICES = (9, 10)
 SOURCES = ("face", "side", "fuse")

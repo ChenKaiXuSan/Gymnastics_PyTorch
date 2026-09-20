@@ -9,7 +9,7 @@
 ## 端到端流程
 
 ```text
-/home/data/xchen/gymnastics/raw/person/<id>/ID<id>_{face,side}.MOV
+$GYMNASTICS_DATA_ROOT/raw/person/<id>/ID<id>_{face,side}.MOV
   -> SAM3D-Body 逐帧提取 2D/3D 关键点
   -> alignment 对齐 face/side 时间轴并切分动作周期
   -> triangulation 先估计逐人相机外参，再用两个视角的 2D 关键点生成 3D 伪真值
@@ -60,10 +60,10 @@
 
 | 数据或结果 | 默认路径 |
 |---|---|
-| 原始双视角视频 | `/home/data/xchen/gymnastics/raw/person` |
-| SAM3D-Body 逐帧结果 | `/home/data/xchen/gymnastics/sam3d_body_results/person` |
+| 原始双视角视频 | `$GYMNASTICS_DATA_ROOT/raw/person` |
+| SAM3D-Body 逐帧结果 | `$GYMNASTICS_DATA_ROOT/sam3d_body_results/person` |
 | 时间对齐和周期切分 | `local/runs/split_cycle` |
-| 三角化 3D 伪真值 | `/home/data/xchen/gymnastics/sam3d_triangulated/person` |
+| 三角化 3D 伪真值 | `$GYMNASTICS_DATA_ROOT/sam3d_triangulated/person` |
 | 融合实验结果 | `local/runs/fuse_experiments` |
 
 ## 入口命令

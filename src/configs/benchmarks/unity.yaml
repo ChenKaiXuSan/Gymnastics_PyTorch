@@ -1,5 +1,5 @@
 paths:
-  dataset_root: /home/data/xchen/gymnastics/unity_benchmark
+  dataset_root: ${oc.env:GYMNASTICS_DATA_ROOT}/unity_benchmark
   output_root: local/runs/unity_benchmark
   sam3d_config: src/configs/pose_estimation/sam3d_body.yaml
   skeleton: src/configs/shared/skeleton_mhr70.yaml

@@ -67,6 +67,7 @@ from typing import Dict, List, Literal, Optional, Sequence, Tuple, Union
 
 import cv2
 import numpy as np
+from common.paths import RAW_VIDEO_ROOT, SAM3D_RESULTS_ROOT
 try:
     import librosa
 except Exception:
@@ -825,13 +826,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--raw-root",
         type=Path,
-        default=Path("/home/data/xchen/gymnastics/raw"),
+        default=RAW_VIDEO_ROOT,
         help="Root that contains person/<id>/ID<id>_<view>.MOV",
     )
     parser.add_argument(
         "--kpt-root",
         type=Path,
-        default=Path("/home/data/xchen/gymnastics/sam3d_body_results"),
+        default=SAM3D_RESULTS_ROOT,
         help="Root that contains person/<id>/<view>/*_sam3d_body.npz",
     )
     parser.add_argument(
@@ -856,8 +857,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 # -------------------- main --------------------
 def main(
     num_threads: int = 4,
-    raw_root: Path = Path("/home/data/xchen/gymnastics/raw"),
-    kpt_root: Path = Path("/home/data/xchen/gymnastics/sam3d_body_results"),
+    raw_root: Path = RAW_VIDEO_ROOT,
+    kpt_root: Path = SAM3D_RESULTS_ROOT,
     log_root: Path = Path("local/runs/split_cycle"),
     person_ids: Optional[Sequence[str]] = None,
 ):

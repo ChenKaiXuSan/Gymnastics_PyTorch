@@ -11,10 +11,11 @@ from statistics import mean
 from typing import Any, Dict, Iterable, List, Set
 
 import numpy as np
+from common.paths import TRIANGULATED_ROOT
 
 
 DEFAULT_SPLIT_ROOT = Path("local/runs/split_cycle")
-DEFAULT_OUTPUT_ROOT = Path("/home/data/xchen/gymnastics/sam3d_triangulated/person")
+DEFAULT_OUTPUT_ROOT = TRIANGULATED_ROOT
 DEFAULT_REPORT = Path("local/runs/analysis/triangulated_results/validation_summary.json")
 
 

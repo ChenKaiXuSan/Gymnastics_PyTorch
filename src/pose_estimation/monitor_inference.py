@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass, field
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Sequence
+from common.paths import SAM3D_LOG_ROOT, SAM3D_PERSON_ROOT
 
 
 FATAL_MARKERS = (
@@ -27,8 +28,8 @@ FATAL_MARKERS = (
     "No module named",
 )
 
-DEFAULT_RESULT_ROOT = Path("/home/data/xchen/gymnastics/sam3d_body_results/person")
-DEFAULT_LOG_ROOT = Path("/home/data/xchen/gymnastics/sam3d_body_results/logs")
+DEFAULT_RESULT_ROOT = SAM3D_PERSON_ROOT
+DEFAULT_LOG_ROOT = SAM3D_LOG_ROOT
 DEFAULT_SMTP_CONFIG = Path(
     "/home/workspace/kaixu/.config/gymnastics/sam3d_monitor.env"
 )

@@ -20,6 +20,7 @@ import torch
 import yaml
 from torch.utils.data import DataLoader
 
+import common.paths  # noqa: F401  (exports GYMNASTICS_DATA_ROOT when unset)
 from fusion.keypoints.config import load_skeleton_spec
 from .corruptions import CorruptionConfig, write_corruption_manifest
 from fusion.keypoints.data import (

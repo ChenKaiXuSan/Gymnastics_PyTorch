@@ -88,7 +88,12 @@ DEFAULT_SUPERVISED_CONFIG = Path("src/configs/benchmarks/unity_supervised.yaml")
 
 
 def _load_config(path: Path) -> Mapping[str, object]:
-    payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    """Load the benchmark YAML, resolving ``${oc.env:...}`` interpolations."""
+    from omegaconf import OmegaConf
+
+    import common.paths  # noqa: F401  (exports GYMNASTICS_DATA_ROOT when unset)
+
+    payload = OmegaConf.to_container(OmegaConf.load(Path(path)), resolve=True)
     if not isinstance(payload, dict):
         raise ValueError("Unity benchmark config must be a mapping")
     return payload

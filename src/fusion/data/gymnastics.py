@@ -62,7 +62,7 @@ from typing import Callable, Sequence
 
 import numpy as np
 
-from common.paths import PROJECT_ROOT
+from common.paths import PROJECT_ROOT, SAM3D_RESULTS_ROOT, TRIANGULATED_ROOT
 from fusion.keypoints.schema import PosePairTrial, valid_from_points
 
 from ..sample import DualViewSample, sample_from_pose_pair_trial
@@ -196,7 +196,7 @@ class GymnasticsDataModule(DualViewDataModule):
 
             return load_from_cache
         if source == "raw":
-            sam3d_root = _resolve(options.get("sam3d_root", "/home/data/xchen/gymnastics/sam3d_body_results"))
+            sam3d_root = _resolve(options.get("sam3d_root", SAM3D_RESULTS_ROOT))
             split_root = _resolve(options.get("split_cycle_root", "local/runs/split_cycle"))
 
             def load_raw(person_id: str) -> Sequence[PosePairTrial]:
@@ -210,7 +210,7 @@ class GymnasticsDataModule(DualViewDataModule):
         raise ValueError("gymnastics options.source must be 'cache' or 'raw'")
 
     def _default_reference_loader(self) -> ReferenceLoader:
-        root = _resolve(self.config.options.get("triangulated_root", "/home/data/xchen/gymnastics/sam3d_triangulated/person"))
+        root = _resolve(self.config.options.get("triangulated_root", TRIANGULATED_ROOT))
 
         def load(person_id: str, cycle_id: str):
             from fusion.analysis.compare_fused_triangulated import load_triangulated_sequence

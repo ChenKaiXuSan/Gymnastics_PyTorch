@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from common.paths import UNITY_BENCHMARK_ROOT
 import os
 from pathlib import Path
 import subprocess
@@ -69,7 +70,7 @@ def test_oracle_triangulation_stage_writes_three_sequences(
 ) -> None:
     config = {
         "paths": {
-            "dataset_root": "/home/data/xchen/gymnastics/unity_benchmark",
+            "dataset_root": str(UNITY_BENCHMARK_ROOT),
             "output_root": str(tmp_path / "run"),
             "sam3d_config": "src/configs/pose_estimation/sam3d_body.yaml",
             "skeleton": "src/configs/shared/skeleton_mhr70.yaml",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from common.paths import UNITY_BENCHMARK_ROOT
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +16,7 @@ from fusion.benchmarks.unity.mapping import map_mhr70_to_unity
 from fusion.benchmarks.unity.schema import UnityBenchmark
 
 
-UNITY_ROOT = Path("/home/data/xchen/gymnastics/unity_benchmark")
+UNITY_ROOT = UNITY_BENCHMARK_ROOT
 
 
 def test_projection_reproduces_manifest_pixels() -> None:

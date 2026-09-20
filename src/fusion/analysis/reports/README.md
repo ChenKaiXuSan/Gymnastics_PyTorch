@@ -13,7 +13,7 @@ conda run -n gymnastic python -m fusion.analysis.reports.generate_results_report
 Default source:
 
 ```text
-/home/data/xchen/gymnastics/sam3d_triangulated/person
+$GYMNASTICS_DATA_ROOT/sam3d_triangulated/person
 ```
 
 Default outputs:

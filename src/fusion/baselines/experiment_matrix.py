@@ -14,9 +14,10 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 import numpy as np
 
 from fusion.baselines.save import save_fused_kpts
+from common.paths import SAM3D_RESULTS_ROOT, TRIANGULATED_ROOT
 
-DEFAULT_SAM3D_ROOT = Path("/home/data/xchen/gymnastics/sam3d_body_results")
-DEFAULT_TRIANGULATED_ROOT = Path("/home/data/xchen/gymnastics/sam3d_triangulated/person")
+DEFAULT_SAM3D_ROOT = SAM3D_RESULTS_ROOT
+DEFAULT_TRIANGULATED_ROOT = TRIANGULATED_ROOT
 DEFAULT_SPLIT_ROOT = Path("local/runs/split_cycle")
 DEFAULT_OUT_DIR = Path("local/runs/fuse_experiments")
 DEFAULT_EXTRINSICS_PATH = Path(

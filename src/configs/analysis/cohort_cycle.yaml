@@ -1,5 +1,5 @@
 paths:
-  data_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}
+  data_root: ${oc.env:GYMNASTICS_DATA_ROOT}
   shared_run_root: ${oc.env:GYMNASTICS_SHARED_RUN_ROOT,/home/workspace/kaixu/code/Gymnastics_PyTorch/local/runs}
   student_mapping: ${paths.data_root}/raw/person/student_id_mapping.csv
   organization_mapping: ${paths.data_root}/raw/person/organize_from_dropbox_20260718.csv

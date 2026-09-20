@@ -25,8 +25,9 @@ from pathlib import Path
 from typing import Dict, List
 
 import numpy as np
+from common.paths import TRIANGULATED_ROOT
 
-DEFAULT_TRIANGULATED_ROOT = Path("/home/data/xchen/gymnastics/sam3d_triangulated/person")
+DEFAULT_TRIANGULATED_ROOT = TRIANGULATED_ROOT
 DEFAULT_METRICS = Path("local/runs/fuse_experiments/metrics_by_person.csv")
 DEFAULT_OUT_DIR = Path("local/runs/analysis/body_scale_normalized")
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from common.paths import UNITY_BENCHMARK_ROOT
 import json
 from pathlib import Path
 
@@ -37,7 +38,7 @@ from fusion.archive.rotation_aware.model import RotationAwareFusionModel
 from fusion.archive.rotation_aware.training import save_checkpoint
 
 
-UNITY_ROOT = Path("/home/data/xchen/gymnastics/unity_benchmark")
+UNITY_ROOT = UNITY_BENCHMARK_ROOT
 SAM3D_ROOT = Path("local/runs/unity_benchmark/sam3d")
 SKELETON_PATH = Path("src/configs/shared/skeleton_mhr70.yaml")
 
