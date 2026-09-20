@@ -138,3 +138,7 @@ local/
 
 # NQSV job stdout (moved to local/runs/freeman_benchmark_cluster/joblogs/)
 freeman_subj.o*
+
+# NQSV job stdout/stderr dropped in the repo root
+*.o[0-9]*
+*.e[0-9]*

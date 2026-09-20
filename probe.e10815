@@ -1,4 +1,0 @@
-Signal 15 (TERM) caught by ps (3.3.17).
-/bin/ps:ps/display.c:70: please report this bug
-/usr/bin/basename: missing operand
-Try '/usr/bin/basename --help' for more information.
