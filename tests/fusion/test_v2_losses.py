@@ -296,7 +296,7 @@ def test_compute_losses_v2_end_to_end(tiny_config, tiny_batch, skeleton):
 
 def test_hydra_v2_default_and_v1_preset(tmp_path: Path):
     cfg = compose_config(["experiment=smoke", f"output_root={tmp_path}", "run_name=v2", "diagnostics.gradient_norm.enabled=true", "diagnostics.gradient_norm.interval=1"])
-    assert cfg.loss.cycle.weight == 1.0 and cfg.loss.reliability.weight == 0.02 and cfg.loss.recovery.weight == 0.0 and cfg.data.cycle_target.enabled
+    assert cfg.loss.cycle.weight == 1.0 and cfg.loss.reliability.weight == 0.02 and cfg.loss.recovery.weight == 0.0 and cfg.data.cycle_target.enabled and cfg.loss.periodicity.type == "contrastive"
     result = run(cfg)
     metrics = result["test_metrics"]
     assert "test/cycle_raw" in metrics and "test/cycle_weighted" in metrics and "test/total" in metrics and "test/cycle_target_error" in metrics
@@ -307,5 +307,5 @@ def test_hydra_v2_default_and_v1_preset(tmp_path: Path):
     v1 = compose_config(["experiment=v1", f"output_root={tmp_path}", "run_name=v1", "trainer=debug", "samples_per_cycle=8", "model.hidden_dim=16", "model.num_heads=2", "data.options.subjects=4", "data.options.frames=48", "data.options.period=12"])
     assert v1.loss.recovery.weight == 1.0 and v1.loss.cycle.weight == 0.0 and v1.loss.residual.norm == "l2"
     run(v1)
-    contrastive = compose_config(["experiment=smoke", "loss.periodicity.type=contrastive", f"output_root={tmp_path}", "run_name=v2c"])
+    contrastive = compose_config(["experiment=smoke", "loss.periodicity.type=cosine", f"output_root={tmp_path}", "run_name=v2c"])
     assert run(contrastive)["test_metrics"]["test/periodicity_raw"] >= 0

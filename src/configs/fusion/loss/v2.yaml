@@ -31,7 +31,11 @@ periodicity:
   # cosine: 1 - cos(F(phi, i), F(phi, i+1));
   # contrastive: InfoNCE with the same phase of the next cycle as positive and
   # phases farther than negative_phase_margin as negatives.
-  type: cosine
+  # Default contrastive: the 1000-step diagnostic (2026-09-20, private fold_01)
+  # showed the cosine version collapses F_motion (same/diff/random-joint
+  # similarity all 1.00, temporal variance 0.001) while contrastive keeps
+  # same 0.97 / diff -0.20 / random 0.49 with temporal variance 0.15.
+  type: contrastive
   temperature: 0.1
   # Circular phase distance (in cycles, 0..0.5) beyond which a sample counts as a negative.
   negative_phase_margin: 0.25

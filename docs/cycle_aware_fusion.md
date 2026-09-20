@@ -121,11 +121,16 @@ L = 1.0 · L_cycle + 0.02 · L_rel + 0.1 · L_period + 0.1 · L_sym + 0.01 · L_
   corruption damaged exactly one view (label = the undamaged view); weight
   0.02 (CE ≈ 0.69 at start versus `L_cycle` ≈ 0.02, so 0.05 made the
   auxiliary term dominate).
-* **`L_period`** on `F_motion` of adjacent cycles: `type: cosine`
-  (`1 − cos(F(φ, i), F(φ, i+1))`, default) or `type: contrastive` (InfoNCE:
-  positive = same phase of the next cycle, negatives = next-cycle phases
-  farther than `negative_phase_margin`, temperature `τ`; a constant feature
-  scores `log(1 + |negatives|)` so the trivial solution is not optimal).
+* **`L_period`** on `F_motion` of adjacent cycles: `type: contrastive`
+  (default; InfoNCE: positive = same phase of the next cycle, negatives =
+  next-cycle phases farther than `negative_phase_margin`, temperature `τ`; a
+  constant feature scores `log(1 + |negatives|)` so the trivial solution is
+  not optimal) or `type: cosine` (`1 − cos(F(φ, i), F(φ, i+1))`, preset
+  `experiment=periodicity_cosine`).  The 1000-step diagnostic on the private
+  fold_01 (2026-09-20) showed the cosine version collapsing `F_motion`
+  (same-phase, different-phase and random-joint similarity all 1.00,
+  temporal variance 0.001) while the contrastive version keeps
+  same 0.97 / different −0.20 / random 0.49 and temporal variance 0.15.
 * **`L_sym`**: `1 − cos(F_M(φ, j), F_M(φ + 0.5, mirror(j)))` within a cycle,
   mirror = left/right joint swap (the two halves of a trunk-rotation cycle
   are mirror states: twist +0.36 / −0.05 / −0.38 / +0.10 rad at phases

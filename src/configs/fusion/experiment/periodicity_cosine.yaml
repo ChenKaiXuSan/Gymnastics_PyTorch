@@ -1,0 +1,7 @@
+# @package _global_
+# Cosine periodicity (1 - cos) instead of the contrastive default; collapses the
+# motion feature (see the 2026-09-20 short diagnostic), kept for reproduction.
+run_name: ${data.name}_${model.name}_period_cosine_seed${seed}
+loss:
+  periodicity:
+    type: cosine
