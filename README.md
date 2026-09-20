@@ -20,18 +20,16 @@ All active Python code is installed from one package:
 
 ```text
 src/gymnastics/
-├── sam3d/              # inference orchestration and project adapters
-├── alignment/          # face/side alignment and cycle segmentation
-├── triangulation/      # extrinsics and pseudo-reference reconstruction
-├── fusion/
-│   ├── core/           # shared infrastructure: trial schema, skeleton, body frame, cache
-│   ├── deterministic/  # comparison matrix and classical baselines
-│   ├── cycle_aware/    # ACTIVE model: cycle-aware dual-view fusion (Lightning + Hydra)
-│   └── archive/        # frozen paper model (rotation_aware), reproduction only
+├── pose_estimation/    # ① SAM3D-Body inference on the raw videos
+├── cycle_alignment/    # ② face/side offset, cycle segmentation, cycle records
+├── pseudo_gt/          # ③ calibration, extrinsics, triangulated evaluation reference
+├── fusion/             # ④ the proposed cycle-aware dual-view fusion network (Lightning + Hydra)
+├── keypoints/          # shared 3D-keypoint representation: trial schema, skeleton, body frame, cache
+├── baselines/          # deterministic comparison matrix and classical baselines
 ├── benchmarks/         # Unity native-3D and FreeMan public-data benchmarks
 ├── analysis/           # metrics, reports, statistics, visualization
-├── calibration/        # camera calibration
-└── common/             # canonical paths and skeleton metadata
+├── common/             # canonical paths and skeleton metadata
+└── archive/            # frozen paper model (rotation_aware), reproduction only
 ```
 
 ## Installation
@@ -44,7 +42,7 @@ conda run -n gymnastic python -m pip install -e ".[analysis,training,test]"
 ```
 
 SAM3 and SAM-3D-Body are pinned below `third_party/`. Project code imports them
-through the adapter in `gymnastics.sam3d`; upstream source is not duplicated in
+through the adapter in `gymnastics.pose_estimation`; upstream source is not duplicated in
 the installed package.
 
 ## Commands
@@ -70,7 +68,7 @@ conda run -n gymnastic gymnastics fuse deterministic --methods avg_body_current
 # Train the cycle-aware dual-view fusion model (the active model; Hydra overrides).
 conda run -n gymnastic gymnastics fuse cycle-aware experiment=smoke
 
-# Archived paper model (reproduction only; see src/gymnastics/fusion/archive/README.md).
+# Archived paper model (reproduction only; see src/gymnastics/archive/README.md).
 conda run -n gymnastic gymnastics fuse rotation-aware --help
 
 # Analyze saved sequences.
@@ -130,7 +128,7 @@ remain under ignored `local/` paths.
 
 ## Cycle-aware dual-view fusion (Architecture v1.0)
 
-`gymnastics.fusion.cycle_aware` is a second, self-contained learned fusion
+`gymnastics.fusion` is a second, self-contained learned fusion
 model that treats the repeated-cycle structure of the recorded motion as a
 first-class signal. It is trained with PyTorch Lightning, configured with
 Hydra, and shares the SAM3D-Body inputs, the canonical body frame, and the
@@ -179,7 +177,7 @@ under swapping the views.
 ### Project structure
 
 ```text
-src/gymnastics/fusion/cycle_aware/
+src/gymnastics/fusion/
 ├── skeleton.py           common joint set (mhr70 / mhr70_major), bones, mirrors
 ├── sample.py             DualViewSample + FusionBatch contracts, canonicalisation
 ├── phase.py              cycle phase, phase normalisation, phase encoding, cycle estimation
@@ -196,7 +194,7 @@ src/gymnastics/fusion/cycle_aware/
 ├── lightning_module.py   training / validation / test / predict steps
 └── train.py              Hydra entry point (`gymnastics fuse cycle-aware`)
 configs/cycle_aware/      Hydra groups: model, data, loss, corruption, trainer, optimizer, experiment
-tests/cycle_aware/        unit and integration tests
+tests/fusion/        unit and integration tests
 ```
 
 ### Dataset interface
@@ -216,7 +214,7 @@ structure.
 | `synthetic` | generated in memory | exact | generating motion |
 
 Cycle detection (cycle start = right-wrist azimuth crossing, middle =
-turn-around extremum) lives entirely in `gymnastics.alignment`; the training
+turn-around extremum) lives entirely in `gymnastics.cycle_alignment`; the training
 package only reads the record files, so run the `align cycles` step before
 training:
 
@@ -265,12 +263,12 @@ recovery objective). See [docs/cycle_aware_fusion.md](docs/cycle_aware_fusion.md
 Cross-validation (5 folds, single seed, 50 epochs is the fixed protocol):
 `folds_dir=configs/cycle_aware/folds/gymnastics` runs the folds sequentially;
 on the cluster use the job scripts in `pegasus/` (one gpu job per fold) and
-`python -m gymnastics.fusion.cycle_aware.summarize <sweep_dir>` afterwards.
+`python -m gymnastics.fusion.summarize <sweep_dir>` afterwards.
 
 ### Testing
 
 ```bash
-conda run -n gymnastic python -m pytest tests/cycle_aware -q
+conda run -n gymnastic python -m pytest tests/fusion -q
 ```
 
 ### Ablation studies

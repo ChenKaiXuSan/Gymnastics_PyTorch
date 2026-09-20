@@ -7,7 +7,7 @@ from gymnastics.benchmarks.unity.camera_features import (
     build_camera_feature_sequence,
     fit_relative_camera_from_training_2d,
 )
-from gymnastics.triangulation.estimate_extrinsics import geodesic_deg
+from gymnastics.pseudo_gt.estimate_extrinsics import geodesic_deg
 
 
 def _rotation_y(degrees: float) -> np.ndarray:

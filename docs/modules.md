@@ -1,19 +1,20 @@
 # Module Map
 
-All active code belongs to the `gymnastics` package under `src/`.
+All active code belongs to the `gymnastics` package under `src/`. The
+package is organised as four pipeline stages plus supporting packages.
 
-| Package | Responsibility | Primary command |
-|---|---|---|
-| `gymnastics.sam3d` | Discover paired videos and orchestrate SAM3D-Body inference. | `gymnastics sam3d` |
-| `gymnastics.alignment` | Align face/side timelines and segment movement cycles. | `gymnastics align` |
-| `gymnastics.triangulation` | Estimate camera extrinsics and reconstruct the 3D pseudo-reference. | `gymnastics triangulate` |
-| `gymnastics.fusion.deterministic` | Run and evaluate the nine deterministic fusion methods. | `gymnastics fuse deterministic` |
-| `gymnastics.fusion.core` | Shared fusion infrastructure: `PosePairTrial`, `SkeletonSpec`, canonical body frame, trunk/quality features, person cache. | – |
-| `gymnastics.fusion.cycle_aware` | **Active model.** Cycle-aware dual-view fusion (transformer encoders, FiLM, cross-view reliability) trained with Lightning and configured with Hydra. | `gymnastics fuse cycle-aware` |
-| `gymnastics.fusion.archive.rotation_aware` | Archived paper model (frozen 2026-09-19); train/infer/evaluate kept for reproducing published tables. | `gymnastics fuse rotation-aware` |
-| `gymnastics.analysis` | Compute metrics, compare methods, create reports, and visualize results. | `gymnastics analyze` |
-| `gymnastics.calibration` | Calibrate cameras from local image/video inputs. | `gymnastics calibrate` |
-| `gymnastics.common` | Canonical project paths, geometry helpers, and MHR70 metadata. | Imported by other domains |
+| Stage | Package | Responsibility | Primary command |
+|---|---|---|---|
+| ① | `gymnastics.pose_estimation` | SAM3D-Body inference on paired face/side videos. | `gymnastics sam3d` |
+| ② | `gymnastics.cycle_alignment` | Align face/side timelines, segment movement cycles, write cycle records. | `gymnastics align` |
+| ③ | `gymnastics.pseudo_gt` | Camera calibration, per-person extrinsics, triangulated 3D pseudo-reference (evaluation only). | `gymnastics calibrate`, `gymnastics triangulate` |
+| ④ | `gymnastics.fusion` | **The proposed model.** Cycle-aware dual-view fusion (transformer encoders, FiLM, cross-view reliability) trained with Lightning and configured with Hydra. | `gymnastics fuse cycle-aware` |
+| support | `gymnastics.keypoints` | Shared 3D-keypoint representation: `PosePairTrial`, `SkeletonSpec`, canonical body frame, trunk/quality features, person cache. | – |
+| support | `gymnastics.baselines` | Deterministic fusion methods and classical baselines. | `gymnastics fuse deterministic` |
+| support | `gymnastics.benchmarks` | FreeMan and Unity benchmarks. | `gymnastics benchmark ...` |
+| support | `gymnastics.analysis` | Metrics, comparisons, reports, cohort statistics. | `gymnastics analyze`, `gymnastics cohort-cycle` |
+| support | `gymnastics.common` | Canonical project paths and MHR70 metadata. | Imported by other packages |
+| archive | `gymnastics.archive.rotation_aware` | Frozen paper model (2026-09-19); kept for reproducing published tables. | `gymnastics fuse rotation-aware` |
 
 ## Boundaries
 

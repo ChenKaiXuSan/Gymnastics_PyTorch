@@ -8,19 +8,19 @@ import torch
 
 from gymnastics.benchmarks.unity.camera_features import CameraFeatureSequence
 from gymnastics.common.skeletons.mhr70 import mhr_names
-from gymnastics.fusion.core.config import load_skeleton_spec
-from gymnastics.fusion.archive.rotation_aware.corruptions import CorruptionConfig
-from gymnastics.fusion.archive.rotation_aware.inference import canonicalize_trial
-from gymnastics.fusion.archive.rotation_aware.losses import LossConfig
-from gymnastics.fusion.archive.rotation_aware.model import RotationAwareFusionModel
-from gymnastics.fusion.archive.rotation_aware.real_camera_data import RealCameraTrial
-from gymnastics.fusion.archive.rotation_aware.real_camera_training import (
+from gymnastics.keypoints.config import load_skeleton_spec
+from gymnastics.archive.rotation_aware.corruptions import CorruptionConfig
+from gymnastics.archive.rotation_aware.inference import canonicalize_trial
+from gymnastics.archive.rotation_aware.losses import LossConfig
+from gymnastics.archive.rotation_aware.model import RotationAwareFusionModel
+from gymnastics.archive.rotation_aware.real_camera_data import RealCameraTrial
+from gymnastics.archive.rotation_aware.real_camera_training import (
     RealCameraTrainingConfig,
     expand_and_freeze_camera_model,
     infer_real_camera_cell,
     train_real_camera_cell,
 )
-from gymnastics.fusion.core.schema import PosePairTrial
+from gymnastics.keypoints.schema import PosePairTrial
 
 
 SPEC_PATH = Path("configs/fusion/skeleton_mhr70.yaml")
@@ -115,11 +115,11 @@ def test_training_writes_isolation_provenance_and_preserves_backbone(
         return {"loss": 1.0}
 
     monkeypatch.setattr(
-        "gymnastics.fusion.archive.rotation_aware.real_camera_training.train_one_epoch",
+        "gymnastics.archive.rotation_aware.real_camera_training.train_one_epoch",
         fake_train,
     )
     monkeypatch.setattr(
-        "gymnastics.fusion.archive.rotation_aware.real_camera_training.validate",
+        "gymnastics.archive.rotation_aware.real_camera_training.validate",
         lambda *args, **kwargs: {"loss": 0.5, "score": 0.75},
     )
     run = train_real_camera_cell(

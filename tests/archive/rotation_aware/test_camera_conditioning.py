@@ -3,11 +3,11 @@ from __future__ import annotations
 import pytest
 import torch
 
-from gymnastics.fusion.archive.rotation_aware.camera import (
+from gymnastics.archive.rotation_aware.camera import (
     CameraConditioningConfig,
     CameraFeatureBundle,
 )
-from gymnastics.fusion.archive.rotation_aware.model import RotationAwareFusionModel
+from gymnastics.archive.rotation_aware.model import RotationAwareFusionModel
 from tests.archive.rotation_aware.test_model import SPEC, _inputs
 
 

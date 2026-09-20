@@ -15,7 +15,7 @@ from typing import Any, Literal, Mapping
 import numpy as np
 import torch
 
-from gymnastics.fusion.archive.rotation_aware.dataset import build_split_manifest
+from gymnastics.archive.rotation_aware.dataset import build_split_manifest
 
 from .cohorts import sha256_file
 

@@ -1,4 +1,4 @@
-> **Archived (2026-09-19).** This model lives in `gymnastics.fusion.archive.rotation_aware` and is frozen; it is kept only to reproduce the Sports Engineering paper. New work uses `gymnastics.fusion.cycle_aware` (`docs/cycle_aware_fusion.md`).
+> **Archived (2026-09-19).** This model lives in `gymnastics.archive.rotation_aware` and is frozen; it is kept only to reproduce the Sports Engineering paper. New work uses `gymnastics.fusion` (`docs/cycle_aware_fusion.md`).
 
 # Rotation-Aware Self-Supervised Fusion
 
@@ -28,7 +28,7 @@ DTW or other fallback alignment is performed.
 
 Training, synthetic corruption targets, validation score, and checkpoint
 selection use no triangulated data. Triangulated pseudo-GT is imported only by
-`src/gymnastics/fusion/rotation_aware/evaluation.py` for the external post-training
+`src/gymnastics/archive/rotation_aware/evaluation.py` for the external post-training
 evaluation layer. It is not an input, pseudo-target, fusion weight, or model
 selection criterion.
 

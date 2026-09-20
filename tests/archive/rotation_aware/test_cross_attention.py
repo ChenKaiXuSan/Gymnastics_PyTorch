@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from gymnastics.fusion.archive.rotation_aware.cross_attention import (
+from gymnastics.archive.rotation_aware.cross_attention import (
     BidirectionalCrossViewAttention,
 )
 

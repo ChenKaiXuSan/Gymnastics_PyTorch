@@ -10,7 +10,7 @@
 #   ACCOUNT=HP260146 bash pegasus/submit_cycle_aware_5fold.sh gymnastics no_film   # HP260146 project, gen_S queue
 #
 # After the jobs finish, summarise with
-#   PYTHONPATH=src python -m gymnastics.fusion.cycle_aware.summarize local/runs/cycle_aware/<sweep>
+#   PYTHONPATH=src python -m gymnastics.fusion.summarize local/runs/cycle_aware/<sweep>
 set -eu
 DATA="${1:?usage: submit_cycle_aware_5fold.sh <gymnastics|freeman|freeman_all40> [experiment]}"
 EXPERIMENT="${2:-}"
@@ -40,4 +40,4 @@ for fold_file in "$FOLDS_DIR"/fold_*.json; do
   qsub -N "ca_${FOLD}" -o "$LOG" -v "$VARS" "$JOB_SCRIPT"
 done
 echo "submitted 5 folds of $DATA -> local/runs/cycle_aware/$SWEEP/<fold>; summarise with:"
-echo "  PYTHONPATH=src python -m gymnastics.fusion.cycle_aware.summarize local/runs/cycle_aware/$SWEEP"
+echo "  PYTHONPATH=src python -m gymnastics.fusion.summarize local/runs/cycle_aware/$SWEEP"

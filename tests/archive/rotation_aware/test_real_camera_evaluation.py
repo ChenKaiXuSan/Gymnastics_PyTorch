@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from gymnastics.fusion.archive.rotation_aware.real_camera_evaluation import (
+from gymnastics.archive.rotation_aware.real_camera_evaluation import (
     aggregate_camera_metrics,
     write_real_camera_report,
 )

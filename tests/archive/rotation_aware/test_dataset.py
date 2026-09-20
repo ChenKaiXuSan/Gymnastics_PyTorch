@@ -5,16 +5,16 @@ import numpy as np
 import torch
 
 from gymnastics.common.skeletons.mhr70 import mhr_names
-from gymnastics.fusion.archive.rotation_aware import dataset as dataset_module
-from gymnastics.fusion.archive.rotation_aware.dataset import (
+from gymnastics.archive.rotation_aware import dataset as dataset_module
+from gymnastics.archive.rotation_aware.dataset import (
     PosePairWindowDataset,
     SplitManifest,
     WindowConfig,
     build_split_manifest,
     collate_pose_pair_windows,
 )
-from gymnastics.fusion.core.config import load_skeleton_spec
-from gymnastics.fusion.core.schema import PosePairTrial
+from gymnastics.keypoints.config import load_skeleton_spec
+from gymnastics.keypoints.schema import PosePairTrial
 
 
 SPEC = load_skeleton_spec(Path("configs/fusion/skeleton_mhr70.yaml"))

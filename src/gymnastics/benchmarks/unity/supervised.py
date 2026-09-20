@@ -17,18 +17,18 @@ import yaml
 from torch.utils.data import DataLoader
 
 from gymnastics.common.skeletons.mhr70 import mhr_names
-from gymnastics.fusion.core.config import SkeletonSpec
-from gymnastics.fusion.archive.rotation_aware.corruptions import CorruptionConfig
-from gymnastics.fusion.archive.rotation_aware.dataset import (
+from gymnastics.keypoints.config import SkeletonSpec
+from gymnastics.archive.rotation_aware.corruptions import CorruptionConfig
+from gymnastics.archive.rotation_aware.dataset import (
     collate_pose_pair_windows,
 )
-from gymnastics.fusion.archive.rotation_aware.losses import (
+from gymnastics.archive.rotation_aware.losses import (
     LossConfig,
     compute_self_supervised_losses,
 )
-from gymnastics.fusion.archive.rotation_aware.inference import run_inference
-from gymnastics.fusion.archive.rotation_aware.model import RotationAwareFusionModel
-from gymnastics.fusion.archive.rotation_aware.training import _forward_window
+from gymnastics.archive.rotation_aware.inference import run_inference
+from gymnastics.archive.rotation_aware.model import RotationAwareFusionModel
+from gymnastics.archive.rotation_aware.training import _forward_window
 
 from .fusion import _save_sequence, load_rotation_aware_model
 from .schema import MethodSequence

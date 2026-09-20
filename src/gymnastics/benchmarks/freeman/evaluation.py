@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import wilcoxon
 
-from gymnastics.fusion.deterministic.experiment_matrix import (
+from gymnastics.baselines.experiment_matrix import (
     apply_sim3,
     fit_similarity,
 )

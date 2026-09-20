@@ -29,8 +29,8 @@ from typing import Any, Callable
 
 import numpy as np
 
-from gymnastics.fusion.core.data import write_person_cache
-from gymnastics.fusion.core.schema import PosePairTrial
+from gymnastics.keypoints.data import write_person_cache
+from gymnastics.keypoints.schema import PosePairTrial
 
 from .dataset import load_session_reference
 from .evaluation import SessionMetrics, evaluate_session
@@ -348,7 +348,7 @@ def fuse_rotation_aware_trained(
     loader = runtime_loader or _default_runtime_loader
     runtime = loader(checkpoint_path, config)
     if inference_runner is None:
-        from gymnastics.fusion.archive.rotation_aware.inference import run_inference
+        from gymnastics.archive.rotation_aware.inference import run_inference
 
         inference_runner = run_inference
     window = runtime.resolved_config.get("window", {})

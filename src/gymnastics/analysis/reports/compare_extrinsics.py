@@ -29,13 +29,13 @@ import cv2
 import numpy as np
 from omegaconf import OmegaConf
 
-from gymnastics.triangulation.estimate_extrinsics import (
+from gymnastics.pseudo_gt.estimate_extrinsics import (
     _camera_frame_3d,
     _valid_mask,
     assumed_relative_pose,
     undistort,
 )
-from gymnastics.triangulation.sam3d_from_split_cycle import (
+from gymnastics.pseudo_gt.sam3d_from_split_cycle import (
     load_calibration,
     load_sam3d_output,
     sam3d_frame_path,

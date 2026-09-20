@@ -1,6 +1,6 @@
 # Cycle-Aware Dual-View 3D Pose Fusion (Architecture v1.0)
 
-`gymnastics.fusion.cycle_aware` fuses two independent monocular 3D pose
+`gymnastics.fusion` fuses two independent monocular 3D pose
 estimates of one person (View A = face camera, View B = side camera on the
 private data) into one refined sequence, treating the repeated-cycle
 structure of the motion as a first-class signal. It is a pure PyTorch model
@@ -13,7 +13,7 @@ body frame, and the MHR70 skeleton metadata.
 ### 1.1 Inputs and coordinate frame
 
 Both views are mapped independently into the pelvis-centred canonical body
-frame (`gymnastics.fusion.core.geometry.canonicalize_pose`): origin
+frame (`gymnastics.keypoints.geometry.canonicalize_pose`): origin
 at the hip midpoint, x from left to right hip, y along pelvis→thorax, z
 completing a right-handed frame, and lengths divided by the median torso
 length of the sequence. The two views are therefore directly comparable
@@ -23,9 +23,9 @@ be mapped back into its world frame.
 ### 1.2 Cycles, middles and phase normalisation
 
 Cycle detection is **not** part of the training code. It runs once, offline,
-in `gymnastics.alignment` (`alignment/cycles.py`) and writes record files
-(`alignment/cycle_records.py`) that the DataModules read through
-`fusion/cycle_aware/data/cycle_records.py`:
+in `gymnastics.cycle_alignment` (`cycle_alignment/cycles.py`) and writes record files
+(`cycle_alignment/cycle_records.py`) that the DataModules read through
+`fusion/data/cycle_records.py`:
 
 | Dataset | Command | Record |
 |---|---|---|
@@ -80,7 +80,7 @@ over `T`; cross-view attention folds `B·T` and attends over `J` of the other
 view. Invalid joints and padding frames are excluded from attention through
 explicit masks and produce zero features.
 
-Properties enforced by tests (`tests/cycle_aware`):
+Properties enforced by tests (`tests/fusion`):
 
 * `w_A + w_B = 1` for every `(b, t, j)`; a joint valid in one view only takes
   that view; a joint valid in neither is flagged invalid.
@@ -233,7 +233,7 @@ conda run -n gymnastic gymnastics fuse cycle-aware data=gymnastics model.reliabi
 
 Every run writes `config.yaml`, `logs/` (CSV), `checkpoints/` and
 `result.json` below `local/runs/cycle_aware/<run_name>`. `python -m
-gymnastics.fusion.cycle_aware.train` is equivalent to the CLI.
+gymnastics.fusion.train` is equivalent to the CLI.
 
 On a large shared CPU box cap the threads and keep the DataLoader in-process
 (`trainer.num_threads=32 data.num_workers=0`); the default of one torch
@@ -259,14 +259,14 @@ The fixed protocol is **5-fold subject-disjoint cross-validation, single seed
   and writes `summary.{json,csv}`.
 * Cluster: `bash pegasus/submit_cycle_aware_5fold.sh gymnastics [experiment]`
   submits one gpu job per fold (`pegasus/cycle_aware_fold_qsub.sh`); collect
-  with `PYTHONPATH=src python -m gymnastics.fusion.cycle_aware.summarize
+  with `PYTHONPATH=src python -m gymnastics.fusion.summarize
   local/runs/cycle_aware/<sweep>`.
 * Unity is evaluation-only (two short single-sweep sequences, no cycles).
 
 ## 5. Tests
 
 ```bash
-conda run -n gymnastic python -m pytest tests/cycle_aware -q
+conda run -n gymnastic python -m pytest tests/fusion -q
 ```
 
 Coverage: skeleton variants, sample contract, velocity, phase utilities,

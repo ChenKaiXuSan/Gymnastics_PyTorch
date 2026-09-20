@@ -2,8 +2,8 @@ from pathlib import Path
 
 import torch
 
-from gymnastics.fusion.core.config import SkeletonSpec, load_skeleton_spec
-from gymnastics.fusion.core.geometry import build_pelvis_frame, build_thorax_frame, canonicalize_pose, restore_pose
+from gymnastics.keypoints.config import SkeletonSpec, load_skeleton_spec
+from gymnastics.keypoints.geometry import build_pelvis_frame, build_thorax_frame, canonicalize_pose, restore_pose
 
 
 SPEC = load_skeleton_spec(Path("configs/fusion/skeleton_mhr70.yaml"))

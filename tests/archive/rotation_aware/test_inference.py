@@ -5,16 +5,16 @@ import numpy as np
 import torch
 
 from gymnastics.common.skeletons.mhr70 import mhr_names
-from gymnastics.fusion.archive.rotation_aware import inference
-from gymnastics.fusion.core.config import load_skeleton_spec
-from gymnastics.fusion.archive.rotation_aware.corruptions import CorruptionConfig
-from gymnastics.fusion.archive.rotation_aware.inference import (
+from gymnastics.archive.rotation_aware import inference
+from gymnastics.keypoints.config import load_skeleton_spec
+from gymnastics.archive.rotation_aware.corruptions import CorruptionConfig
+from gymnastics.archive.rotation_aware.inference import (
     canonicalize_trial,
     overlap_taper,
     run_inference,
 )
-from gymnastics.fusion.archive.rotation_aware.model import RotationAwareFusionModel
-from gymnastics.fusion.core.schema import PosePairTrial, valid_from_points
+from gymnastics.archive.rotation_aware.model import RotationAwareFusionModel
+from gymnastics.keypoints.schema import PosePairTrial, valid_from_points
 
 
 SPEC = load_skeleton_spec(Path("configs/fusion/skeleton_mhr70.yaml"))

@@ -2,14 +2,14 @@ from pathlib import Path
 
 import torch
 
-from gymnastics.fusion.core.config import SkeletonSpec, load_skeleton_spec
-from gymnastics.fusion.core.features import (
+from gymnastics.keypoints.config import SkeletonSpec, load_skeleton_spec
+from gymnastics.keypoints.features import (
     QualityConfig,
     compute_disagreement_features,
     compute_quality_features,
     extract_pose_features,
 )
-from gymnastics.fusion.core.trunk import extract_trunk_features
+from gymnastics.keypoints.trunk import extract_trunk_features
 from tests.archive.rotation_aware.test_geometry import synthetic_mhr70_pose
 
 

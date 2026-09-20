@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from gymnastics.triangulation.estimate_extrinsics import (
+from gymnastics.pseudo_gt.estimate_extrinsics import (
     estimate_relative_pose,
     reprojection_error,
 )

@@ -38,7 +38,7 @@ from generate_comparison_tables import (  # noqa: E402
     load_test_people,
     reevaluate_compact_metrics,
 )
-from gymnastics.fusion.core.config import load_skeleton_spec  # noqa: E402
+from gymnastics.keypoints.config import load_skeleton_spec  # noqa: E402
 
 PRIVATE_SPLIT = ROOT / "configs/fusion/folds/paper_137_a6_split.json"
 _PRIVATE_EVALUATION_ROOT = ROOT / "local/runs/fuse_rotation_aware/evaluation"
@@ -376,7 +376,7 @@ def main() -> None:
     if not args.skip_private_reevaluation:
         for method in ("extrinsic_r_average", "extrinsic_r_quality_average"):
             reevaluate_roots[method] = PRIVATE_EXTRINSIC_ROOT / method
-        from gymnastics.fusion.deterministic.experiment_matrix import BASELINE_METHODS
+        from gymnastics.baselines.experiment_matrix import BASELINE_METHODS
 
         for method in BASELINE_METHODS:
             reevaluate_roots[method] = PRIVATE_EXTERNAL_ROOT / method

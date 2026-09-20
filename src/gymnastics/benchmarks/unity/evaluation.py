@@ -8,7 +8,7 @@ from typing import Mapping, Sequence
 
 import numpy as np
 
-from gymnastics.fusion.deterministic.experiment_matrix import (
+from gymnastics.baselines.experiment_matrix import (
     Sim3Transform,
     apply_sim3,
     fit_similarity,

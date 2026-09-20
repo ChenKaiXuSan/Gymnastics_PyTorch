@@ -11,10 +11,10 @@ import torch
 from torch.utils.data import DataLoader
 
 from gymnastics.common.skeletons.mhr70 import mhr_names
-from gymnastics.fusion.archive.rotation_aware import cli
-from gymnastics.fusion.core.config import load_skeleton_spec
-from gymnastics.fusion.archive.rotation_aware.prefetch import ThroughputConfig
-from gymnastics.fusion.archive.rotation_aware.cli import (
+from gymnastics.archive.rotation_aware import cli
+from gymnastics.keypoints.config import load_skeleton_spec
+from gymnastics.archive.rotation_aware.prefetch import ThroughputConfig
+from gymnastics.archive.rotation_aware.cli import (
     CROSS_ATTENTION_ABLATIONS,
     _cache_trial_paths,
     _cached_trials,
@@ -27,7 +27,7 @@ from gymnastics.fusion.archive.rotation_aware.cli import (
     model_kwargs_for_training,
     resolve_fold,
 )
-from gymnastics.fusion.archive.rotation_aware.losses import LossConfig
+from gymnastics.archive.rotation_aware.losses import LossConfig
 
 
 def test_training_schedule_resolves_batch64_method_epochs() -> None:
@@ -236,7 +236,7 @@ def test_training_schedule_rejects_invalid_ablation_or_epochs(
 
 
 def test_twist_ablation_loss_and_model_flags_are_correct() -> None:
-    from gymnastics.fusion.archive.rotation_aware.cli import loss_config_for_ablation, TWIST_ABLATIONS
+    from gymnastics.archive.rotation_aware.cli import loss_config_for_ablation, TWIST_ABLATIONS
 
     # A6 baseline untouched; A7 adds the ROM-peak anchor; A8 adds the twist model;
     # A9 adds the observed twist-rate anchor (改法3).

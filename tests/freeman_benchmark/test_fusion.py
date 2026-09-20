@@ -17,7 +17,7 @@ from gymnastics.benchmarks.freeman.fusion import (
 )
 from gymnastics.benchmarks.freeman.schema import PosePairInput, ViewPrediction
 from gymnastics.common.skeletons.mhr70 import MHR70_NAMES
-from gymnastics.fusion.deterministic.experiment_matrix import ALL_METHODS
+from gymnastics.baselines.experiment_matrix import ALL_METHODS
 
 
 def _view(

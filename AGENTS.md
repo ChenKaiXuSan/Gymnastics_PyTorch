@@ -38,10 +38,10 @@ The current active pipeline is:
 
 Important details:
 
-- `gymnastics.sam3d` runs SAM3D-Body inference on raw `face` and `side` videos.
-- `gymnastics.alignment` estimates face/side temporal alignment and segments each
+- `gymnastics.pose_estimation` runs SAM3D-Body inference on raw `face` and `side` videos.
+- `gymnastics.cycle_alignment` estimates face/side temporal alignment and segments each
   person's motion into cycles.
-- `gymnastics.triangulation` uses split-cycle frame records and
+- `gymnastics.pseudo_gt` uses split-cycle frame records and
   SAM3D 2D keypoints to triangulate 3D joints.
 - `gymnastics.fusion` runs the face/side 3D keypoint fusion experiment matrix and evaluates
   each method against triangulated pseudo-GT.
@@ -85,19 +85,24 @@ python -m pytest tests/test_sam3d_triangulation.py tests/test_compare_fused_tria
 
 ## Module Responsibilities
 
-| Module | Current Role |
-|---|---|
-| `src/gymnastics/sam3d/` | SAM3D-Body inference and keypoint extraction from raw videos. |
-| `src/gymnastics/alignment/` | Face/side time alignment, audio/keypoint offset selection, cycle segmentation with turn-around middles (`cycles.py`, `cycle_records.py`, `annotate_cycles.py`), and split-cycle videos. |
-| `src/gymnastics/triangulation/` | 3D triangulation from SAM3D 2D keypoints, camera helpers, and visualizations. |
-| `src/gymnastics/fusion/` | Multi-view fusion. `fusion/core` holds the model-agnostic infrastructure (trial schema, skeleton spec, canonical body frame, trunk/quality features, person cache). `fusion/cycle_aware` is the **active model** (`configs/cycle_aware`, `gymnastics fuse cycle-aware`, Lightning/Hydra, see `docs/cycle_aware_fusion.md`). `fusion/deterministic` is the comparison matrix plus classical baselines. `fusion/archive/rotation_aware` is the archived paper model (frozen, see `fusion/archive/README.md`). |
-| `src/gymnastics/benchmarks/` | Unity native-3D and FreeMan public-data benchmarks. |
-| `src/gymnastics/analysis/` | Metric comparison, plotting, reports, cohort/repeated-cycle analysis, and result inspection. |
-| `src/gymnastics/calibration/` | Camera calibration utilities. |
-| `src/gymnastics/common/` | Shared paths and canonical MHR70 metadata. |
-| `pegasus/` | NQSV job scripts for the cycle-aware fusion model (5-fold, single seed, 50 epochs); see `pegasus/README.md`. |
-| `third_party/` | Pinned upstream SAM3 and SAM-3D-Body repositories. |
-| `local/` | Ignored checkpoints, videos, run outputs, and caches. |
+`src/gymnastics/` is organised as the four pipeline stages plus supporting
+packages (see `gymnastics/__init__.py`):
+
+| Stage | Package | Role | Command |
+|---|---|---|---|
+| ① pose estimation | `src/gymnastics/pose_estimation/` | SAM3D-Body inference on the raw face/side videos; per-view 3D + 2D MHR70 keypoints. | `gymnastics sam3d` |
+| ② cycle alignment | `src/gymnastics/cycle_alignment/` | Side-to-face offset, cycle segmentation with turn-around middles (`cycles.py`, `cycle_records.py`, `annotate_cycles.py`), split-cycle records. | `gymnastics align`, `gymnastics align cycles ...` |
+| ③ pseudo ground truth | `src/gymnastics/pseudo_gt/` | Chessboard intrinsics (`calibration.py`), per-person extrinsics (`estimate_extrinsics.py`), triangulation of SAM3D 2D keypoints into the evaluation reference (`sam3d_from_split_cycle.py`). Evaluation-only; training never imports it. | `gymnastics calibrate`, `gymnastics triangulate` |
+| ④ fusion network | `src/gymnastics/fusion/` | **The proposed model**: cycle-aware dual-view fusion (data modules, model, losses, Lightning training, Hydra configs in `configs/cycle_aware`). See `docs/cycle_aware_fusion.md`. | `gymnastics fuse cycle-aware` |
+| support | `src/gymnastics/keypoints/` | Shared 3D-keypoint representation used by ③, ④, the baselines and the benchmarks: `PosePairTrial`, `SkeletonSpec`, canonical body frame, trunk/quality features, person cache. No model code. | – |
+| support | `src/gymnastics/baselines/` | Deterministic comparison matrix and classical baselines every model is compared against. | `gymnastics fuse deterministic` |
+| support | `src/gymnastics/benchmarks/` | FreeMan and Unity public benchmarks (adapters, zero-shot and trained evaluation). | `gymnastics benchmark ...` |
+| support | `src/gymnastics/analysis/` | Metrics, reports, cohort/repeated-cycle statistics, paper result tables. | `gymnastics analyze`, `gymnastics cohort-cycle` |
+| support | `src/gymnastics/common/` | Project paths, config helpers, MHR70 metadata. | – |
+| archive | `src/gymnastics/archive/rotation_aware/` | Frozen paper model (2026-09-19); kept only to regenerate published tables. See `archive/README.md`. | `gymnastics fuse rotation-aware` |
+| – | `pegasus/` | NQSV job scripts for the fusion model (5-fold, single seed, 50 epochs); see `pegasus/README.md`. | – |
+| – | `third_party/` | Pinned upstream SAM3 and SAM-3D-Body repositories. | – |
+| – | `local/` | Ignored checkpoints, videos, run outputs, and caches. | – |
 
 ## Current Fuse Direction
 
@@ -196,12 +201,12 @@ biased and it is not a valid recommendation.
 ## Model Policy (2026-09-19)
 
 All new modelling work uses only the cycle-aware architecture
-(`gymnastics.fusion.cycle_aware`, `gymnastics fuse cycle-aware`). The
-rotation-aware model was moved to `gymnastics.fusion.archive.rotation_aware`
+(`gymnastics.fusion`, `gymnastics fuse cycle-aware`). The
+rotation-aware model was moved to `gymnastics.archive.rotation_aware`
 and is frozen: it is kept solely to regenerate the Sports Engineering paper
 artefacts (ablations A0–A11, B1/B2, FreeMan zero-shot and subject-disjoint
 rows, cohort OOF). Do not add experiments, losses or configs to it; bug fixes
-go to `gymnastics.fusion.core` when they concern the shared infrastructure.
+go to `gymnastics.keypoints` when they concern the shared infrastructure.
 
 The deterministic `gymnastics fuse deterministic` experiment matrix (including
 the classical baselines in `classical_baselines.py`) remains the comparison

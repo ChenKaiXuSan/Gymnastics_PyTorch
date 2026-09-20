@@ -13,30 +13,30 @@ from gymnastics.common.paths import LOCAL_ROOT
 
 
 _COMMANDS = {
-    "sam3d": ("gymnastics.sam3d.main", "main", False),
-    "align": ("gymnastics.alignment.main", "cli_main", True),
+    "sam3d": ("gymnastics.pose_estimation.main", "main", False),
+    "align": ("gymnastics.cycle_alignment.main", "cli_main", True),
     "triangulate:run": (
-        "gymnastics.triangulation.sam3d_from_split_cycle",
+        "gymnastics.pseudo_gt.sam3d_from_split_cycle",
         "main",
         False,
     ),
     "triangulate:estimate-extrinsics": (
-        "gymnastics.triangulation.estimate_extrinsics",
+        "gymnastics.pseudo_gt.estimate_extrinsics",
         "main",
         False,
     ),
     "fuse:deterministic": (
-        "gymnastics.fusion.deterministic.experiment_matrix",
+        "gymnastics.baselines.experiment_matrix",
         "main",
         False,
     ),
     "fuse:rotation-aware": (
-        "gymnastics.fusion.archive.rotation_aware.cli",
+        "gymnastics.archive.rotation_aware.cli",
         "main",
         True,
     ),
     "fuse:cycle-aware": (
-        "gymnastics.fusion.cycle_aware.train",
+        "gymnastics.fusion.train",
         "main",
         True,
     ),
@@ -46,7 +46,7 @@ _COMMANDS = {
         "main",
         True,
     ),
-    "calibrate": ("gymnastics.calibration.main", "main", False),
+    "calibrate": ("gymnastics.pseudo_gt.calibration", "main", False),
     "benchmark:freeman": (
         "gymnastics.benchmarks.freeman.cli",
         "main",

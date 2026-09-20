@@ -37,7 +37,7 @@ class CachedPose:
 def _default_estimator_factory(config_path: Path, device: str):
     from omegaconf import OmegaConf
 
-    from gymnastics.sam3d.infer import setup_sam_3d_body
+    from gymnastics.pose_estimation.infer import setup_sam_3d_body
 
     config = OmegaConf.load(config_path)
     config.infer.gpu = device

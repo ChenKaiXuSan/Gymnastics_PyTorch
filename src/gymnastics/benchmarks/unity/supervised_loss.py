@@ -9,7 +9,7 @@ from typing import Mapping
 import torch
 from torch.nn import functional as F
 
-from gymnastics.fusion.archive.rotation_aware.model import FusionOutput
+from gymnastics.archive.rotation_aware.model import FusionOutput
 
 from .mapping import EVALUATION_JOINT_NAMES, MHR70_EVALUATION_SOURCES
 

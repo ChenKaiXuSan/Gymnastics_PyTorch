@@ -43,7 +43,7 @@ from gymnastics.analysis.visualize import (
     plot_all_visualizations,
     plot_derived_metrics_summary,
 )
-from gymnastics.fusion.deterministic.load import load_fused_sequence as _load_fused_seq
+from gymnastics.baselines.load import load_fused_sequence as _load_fused_seq
 
 
 def _moving_average(values: np.ndarray, window: int) -> np.ndarray:

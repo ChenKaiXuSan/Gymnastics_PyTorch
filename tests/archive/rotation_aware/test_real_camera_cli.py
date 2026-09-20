@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from gymnastics.fusion.archive.rotation_aware.real_camera_cli import build_parser
+from gymnastics.archive.rotation_aware.real_camera_cli import build_parser
 
 
 def test_train_matrix_cli_collects_seed_subset_and_device() -> None:

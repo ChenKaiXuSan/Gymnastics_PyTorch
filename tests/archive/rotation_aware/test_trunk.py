@@ -1,6 +1,6 @@
 import torch
 
-from gymnastics.fusion.core.trunk import (
+from gymnastics.keypoints.trunk import (
     axial_rotation_angle,
     axial_rotation_angle_from_points,
     extract_trunk_features,

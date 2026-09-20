@@ -10,7 +10,7 @@ import pandas as pd
 import yaml
 
 from gymnastics.analysis.cohort_cycle.cli import main as cohort_cycle_main
-from gymnastics.fusion.archive.rotation_aware.cli import (
+from gymnastics.archive.rotation_aware.cli import (
     _paths as rotation_paths,
     load_config as load_rotation_config,
 )

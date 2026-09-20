@@ -27,14 +27,14 @@ from gymnastics.benchmarks.unity.supervised_data import (
 from gymnastics.benchmarks.unity.supervised_loss import (
     UnitySupervisedLossConfig,
 )
-from gymnastics.fusion.core.config import load_skeleton_spec
-from gymnastics.fusion.archive.rotation_aware.corruptions import CorruptionConfig
-from gymnastics.fusion.archive.rotation_aware.dataset import (
+from gymnastics.keypoints.config import load_skeleton_spec
+from gymnastics.archive.rotation_aware.corruptions import CorruptionConfig
+from gymnastics.archive.rotation_aware.dataset import (
     collate_pose_pair_windows,
 )
-from gymnastics.fusion.archive.rotation_aware.losses import LossConfig
-from gymnastics.fusion.archive.rotation_aware.model import RotationAwareFusionModel
-from gymnastics.fusion.archive.rotation_aware.training import save_checkpoint
+from gymnastics.archive.rotation_aware.losses import LossConfig
+from gymnastics.archive.rotation_aware.model import RotationAwareFusionModel
+from gymnastics.archive.rotation_aware.training import save_checkpoint
 
 
 UNITY_ROOT = Path("/home/data/xchen/gymnastics/unity_benchmark")

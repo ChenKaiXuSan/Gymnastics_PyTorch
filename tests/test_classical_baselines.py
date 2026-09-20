@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from gymnastics.fusion.deterministic.classical_baselines import (
+from gymnastics.baselines.classical_baselines import (
     BASELINE_METHODS,
     CLASSICAL_METHODS,
     _kalman_channels,
@@ -11,7 +11,7 @@ from gymnastics.fusion.deterministic.classical_baselines import (
     jitter_weighted_body_average,
     kalman_body_fusion,
 )
-from gymnastics.fusion.deterministic.experiment_matrix import (
+from gymnastics.baselines.experiment_matrix import (
     ALL_METHODS,
     NO_EXTRINSIC_METHODS,
     current_body_average,

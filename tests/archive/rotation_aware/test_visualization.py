@@ -3,8 +3,8 @@ from pathlib import Path
 import numpy as np
 
 from gymnastics.common.skeletons.mhr70 import mhr_names
-from gymnastics.fusion.core.config import load_skeleton_spec
-from gymnastics.fusion.archive.rotation_aware.visualization import visualize_saved_sequence
+from gymnastics.keypoints.config import load_skeleton_spec
+from gymnastics.archive.rotation_aware.visualization import visualize_saved_sequence
 
 
 def test_visualization_writes_curves_without_mutating_saved_arrays(

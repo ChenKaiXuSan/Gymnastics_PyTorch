@@ -14,8 +14,8 @@ import torch
 import yaml
 
 from gymnastics.common.skeletons.mhr70 import mhr_names
-import gymnastics.fusion.archive.rotation_aware.cli as cli
-from gymnastics.fusion.archive.rotation_aware.cli import _training_config_for_ablation, load_config, main
+import gymnastics.archive.rotation_aware.cli as cli
+from gymnastics.archive.rotation_aware.cli import _training_config_for_ablation, load_config, main
 
 
 def _pose(frame: int, side: bool) -> np.ndarray:

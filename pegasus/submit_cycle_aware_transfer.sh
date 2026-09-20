@@ -9,7 +9,7 @@
 #        gymnastics freeman_all40_refsup_f01_to_gymnastics
 #
 # Summarise afterwards with
-#   PYTHONPATH=src python -m gymnastics.fusion.cycle_aware.summarize local/runs/cycle_aware/<sweep_name>
+#   PYTHONPATH=src python -m gymnastics.fusion.summarize local/runs/cycle_aware/<sweep_name>
 set -eu
 CKPT="${1:?checkpoint path}"
 TARGET="${2:?target protocol: gymnastics|freeman|freeman_all40}"

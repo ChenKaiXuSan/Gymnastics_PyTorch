@@ -7,7 +7,7 @@ seed 0, 50 epochs, `mhr70_major` (20 joints), 128-sample windows (2 cycles x
 residual 0.01`). One preset switched off per sweep
 (`configs/cycle_aware/experiment/*.yaml`); everything else identical to the
 baseline sweep `gymnastics_v1_5fold_seed0`. Each fold is one gpu job of about
-6 minutes. Table built by `python -m gymnastics.fusion.cycle_aware.ablation_table`
+6 minutes. Table built by `python -m gymnastics.fusion.ablation_table`
 (`local/runs/cycle_aware/ablation_gymnastics_seed0.{md,json}`).
 
 Two evaluation conditions, because the learned components behave differently
@@ -89,7 +89,7 @@ bash pegasus/submit_cycle_aware_5fold.sh gymnastics                    # baselin
 for e in no_short_motion no_long_motion no_phase no_film no_cross_view equal_reliability no_residual pose_only; do
   bash pegasus/submit_cycle_aware_5fold.sh gymnastics $e               # or ACCOUNT=HP260146 for the gen_S queue
 done
-PYTHONPATH=src python -m gymnastics.fusion.cycle_aware.ablation_table \
+PYTHONPATH=src python -m gymnastics.fusion.ablation_table \
   --baseline local/runs/cycle_aware/gymnastics_v1_5fold_seed0 \
   local/runs/cycle_aware/gymnastics_v1_{no_short_motion,no_long_motion,no_phase,no_film,no_cross_view,equal_reliability,no_residual,pose_only}_5fold_seed0 \
   --scale-mm 500 --out local/runs/cycle_aware/ablation_gymnastics_seed0

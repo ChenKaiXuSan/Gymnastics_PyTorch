@@ -4,12 +4,12 @@ from pathlib import Path
 import pytest
 import torch
 
-from gymnastics.fusion.archive.rotation_aware.corruptions import (
+from gymnastics.archive.rotation_aware.corruptions import (
     CorruptionConfig,
     apply_corruptions,
     write_corruption_manifest,
 )
-from gymnastics.fusion.core.config import RoleSpec, SkeletonSpec, load_skeleton_spec
+from gymnastics.keypoints.config import RoleSpec, SkeletonSpec, load_skeleton_spec
 
 
 def _inputs():

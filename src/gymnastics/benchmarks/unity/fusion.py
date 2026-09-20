@@ -13,8 +13,8 @@ import numpy as np
 import torch
 
 from gymnastics.common.skeletons.mhr70 import mhr_names
-from gymnastics.fusion.deterministic.classical_baselines import fuse_baseline
-from gymnastics.fusion.deterministic.experiment_matrix import (
+from gymnastics.baselines.classical_baselines import fuse_baseline
+from gymnastics.baselines.experiment_matrix import (
     ALL_METHODS,
     BASELINE_METHODS,
     STABLE_SIM3_JOINTS,
@@ -28,11 +28,11 @@ from gymnastics.fusion.deterministic.experiment_matrix import (
     sim3_align_to_reference,
     smooth_sequence,
 )
-from gymnastics.fusion.core.config import SkeletonSpec, load_skeleton_spec
-from gymnastics.fusion.archive.rotation_aware.inference import run_inference
+from gymnastics.keypoints.config import SkeletonSpec, load_skeleton_spec
+from gymnastics.archive.rotation_aware.inference import run_inference
 from torch import nn
-from gymnastics.fusion.core.schema import PosePairTrial
-from gymnastics.fusion.archive.rotation_aware.training import load_checkpoint
+from gymnastics.keypoints.schema import PosePairTrial
+from gymnastics.archive.rotation_aware.training import load_checkpoint
 
 from .dataset import group_evaluation_sequences
 from .mapping import (
@@ -105,7 +105,7 @@ def load_rotation_aware_model(
         raise ValueError("rotation-aware checkpoint has no ablation")
     hidden_channels = int(training.get("hidden_channels", 128))
     skeleton = load_skeleton_spec(Path(skeleton_path))
-    from gymnastics.fusion.archive.rotation_aware.cli import build_fusion_model
+    from gymnastics.archive.rotation_aware.cli import build_fusion_model
 
     model = build_fusion_model(skeleton, training)
     payload = load_checkpoint(

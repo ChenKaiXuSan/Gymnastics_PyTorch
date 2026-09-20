@@ -5,18 +5,18 @@ from dataclasses import replace
 import pytest
 import torch
 
-from gymnastics.fusion.core.config import RoleSpec, SkeletonSpec
-from gymnastics.fusion.archive.rotation_aware import losses as losses_module
-from gymnastics.fusion.core.features import extract_pose_features
-from gymnastics.fusion.archive.rotation_aware.losses import (
+from gymnastics.keypoints.config import RoleSpec, SkeletonSpec
+from gymnastics.archive.rotation_aware import losses as losses_module
+from gymnastics.keypoints.features import extract_pose_features
+from gymnastics.archive.rotation_aware.losses import (
     LossConfig,
     _complete_cycle_mask,
     _rom_loss,
     _rom_peak_loss,
     compute_self_supervised_losses,
 )
-from gymnastics.fusion.archive.rotation_aware.model import FusionOutput
-from gymnastics.fusion.core.trunk import extract_trunk_features
+from gymnastics.archive.rotation_aware.model import FusionOutput
+from gymnastics.keypoints.trunk import extract_trunk_features
 
 
 def _spec() -> SkeletonSpec:
@@ -199,7 +199,7 @@ def test_twist_overshoot_is_zero_within_envelope_and_positive_beyond_it() -> Non
     # 改法3 is a one-sided bound. Within the wider per-view twist rate it must be
     # exactly zero (so it never suppresses the twist / fights 改法4); beyond it, it
     # penalises the excess and carries gradient.
-    from gymnastics.fusion.archive.rotation_aware.losses import _twist_overshoot_loss
+    from gymnastics.archive.rotation_aware.losses import _twist_overshoot_loss
 
     valid = torch.ones((1, 4), dtype=torch.bool)
     omega_face = torch.tensor([[0.0, 0.3, -0.4, 0.5]])
@@ -224,7 +224,7 @@ def test_twist_overshoot_gradient_is_finite_despite_nan_at_masked_frames() -> No
     # poisoned every network weight and diverged training in ~1 epoch. The loss
     # must sanitise inputs so the gradient is finite and driven only by the valid,
     # over-rotating frames.
-    from gymnastics.fusion.archive.rotation_aware.losses import _twist_overshoot_loss
+    from gymnastics.archive.rotation_aware.losses import _twist_overshoot_loss
 
     valid = torch.tensor([[True, True, True, False]])  # last frame padded
     omega_face = torch.tensor([[0.0, 0.3, 0.4, float("nan")]])

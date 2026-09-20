@@ -7,18 +7,18 @@ import numpy as np
 import pytest
 
 from gymnastics.common.skeletons.mhr70 import mhr_names
-from gymnastics.fusion.core.config import load_skeleton_spec
-from gymnastics.fusion.archive.rotation_aware.dataset import (
+from gymnastics.keypoints.config import load_skeleton_spec
+from gymnastics.archive.rotation_aware.dataset import (
     PosePairWindowDataset,
     SplitManifest,
     WindowConfig,
 )
-from gymnastics.fusion.archive.rotation_aware.real_camera_data import (
+from gymnastics.archive.rotation_aware.real_camera_data import (
     CameraWindowDataset,
     load_real_camera_trials,
     prepare_real_camera_observation_cache,
 )
-from gymnastics.fusion.core.schema import PosePairTrial
+from gymnastics.keypoints.schema import PosePairTrial
 
 
 SPEC = load_skeleton_spec(Path("configs/fusion/skeleton_mhr70.yaml"))

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from gymnastics.fusion.archive.rotation_aware.cli import (
+from gymnastics.archive.rotation_aware.cli import (
     LEARNED_ABLATIONS,
     _training_config_for_ablation,
     architecture_for_training,
@@ -10,18 +10,18 @@ from gymnastics.fusion.archive.rotation_aware.cli import (
     loss_config_for_ablation,
     model_metadata_for_training,
 )
-from gymnastics.fusion.core.config import load_skeleton_spec
-from gymnastics.fusion.archive.rotation_aware.evaluation import ABLATION_REGISTRY, LEARNED_ABLATION_IDS
-from gymnastics.fusion.core.features import (
+from gymnastics.keypoints.config import load_skeleton_spec
+from gymnastics.archive.rotation_aware.evaluation import ABLATION_REGISTRY, LEARNED_ABLATION_IDS
+from gymnastics.keypoints.features import (
     compute_disagreement_features,
     compute_quality_features,
     extract_pose_features,
 )
-from gymnastics.fusion.archive.rotation_aware.losses import LossConfig
-from gymnastics.fusion.archive.rotation_aware.model import FusionOutput, RotationAwareFusionModel
-from gymnastics.fusion.archive.rotation_aware.plain_tcn import PlainTemporalFusionModel
-from gymnastics.fusion.core.trunk import extract_trunk_features
-from gymnastics.fusion.core.features import FeatureBundle
+from gymnastics.archive.rotation_aware.losses import LossConfig
+from gymnastics.archive.rotation_aware.model import FusionOutput, RotationAwareFusionModel
+from gymnastics.archive.rotation_aware.plain_tcn import PlainTemporalFusionModel
+from gymnastics.keypoints.trunk import extract_trunk_features
+from gymnastics.keypoints.features import FeatureBundle
 
 SKELETON = load_skeleton_spec("configs/fusion/skeleton_mhr70.yaml")
 

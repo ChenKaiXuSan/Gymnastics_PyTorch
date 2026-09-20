@@ -111,7 +111,7 @@ Qin 2026, D3PRefiner, Theia3D.
 ## Implementation status (2026-09-18)
 
 Implemented as shared label-free methods in
-`src/gymnastics/fusion/deterministic/classical_baselines.py`, registered in
+`src/gymnastics/baselines/classical_baselines.py`, registered in
 `experiment_matrix.BASELINE_METHODS` and dispatched by the private matrix,
 the FreeMan benchmark and the Unity benchmark alike:
 

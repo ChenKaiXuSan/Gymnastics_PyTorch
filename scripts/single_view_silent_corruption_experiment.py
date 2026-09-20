@@ -24,16 +24,16 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 os.environ.setdefault("GYMNASTICS_DATA_ROOT", "/work/1/HP260146/chenkaixu/gymnastics")
 
-from gymnastics.fusion.core.config import load_skeleton_spec
-from gymnastics.fusion.archive.rotation_aware.corruptions import CorruptionConfig, apply_corruptions
-from gymnastics.fusion.core.data import load_cached_trial, resolve_cache_manifest
-from gymnastics.fusion.archive.rotation_aware.evaluation import (
+from gymnastics.keypoints.config import load_skeleton_spec
+from gymnastics.archive.rotation_aware.corruptions import CorruptionConfig, apply_corruptions
+from gymnastics.keypoints.data import load_cached_trial, resolve_cache_manifest
+from gymnastics.archive.rotation_aware.evaluation import (
     MethodSequence, external_metrics_from_reference, load_triangulated_references,
 )
-from gymnastics.fusion.archive.rotation_aware.inference import canonicalize_trial, overlap_taper, _starts, _forward
-from gymnastics.fusion.archive.rotation_aware.model import RotationAwareFusionModel
-from gymnastics.fusion.archive.rotation_aware.cli import model_kwargs_for_training
-from gymnastics.fusion.archive.rotation_aware.training import load_checkpoint
+from gymnastics.archive.rotation_aware.inference import canonicalize_trial, overlap_taper, _starts, _forward
+from gymnastics.archive.rotation_aware.model import RotationAwareFusionModel
+from gymnastics.archive.rotation_aware.cli import model_kwargs_for_training
+from gymnastics.archive.rotation_aware.training import load_checkpoint
 
 RUNS = REPO / "local/runs/fuse_rotation_aware"
 TRI_ROOT = Path(os.environ["GYMNASTICS_DATA_ROOT"]) / "sam3d_triangulated/person"

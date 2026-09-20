@@ -7,9 +7,9 @@ import numpy as np
 import pytest
 
 from gymnastics.common.skeletons.mhr70 import mhr_names
-from gymnastics.fusion.core import data
-from gymnastics.fusion.core.config import RoleSpec, SkeletonSpec, load_skeleton_spec
-from gymnastics.fusion.core.schema import PosePairTrial, valid_from_points
+from gymnastics.keypoints import data
+from gymnastics.keypoints.config import RoleSpec, SkeletonSpec, load_skeleton_spec
+from gymnastics.keypoints.schema import PosePairTrial, valid_from_points
 
 
 def fake_sam3d_loader(_root, _person_id, view):

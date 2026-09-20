@@ -20,7 +20,7 @@ def load_fused_frame(frame_path: Union[str, Path]) -> Dict:
     Returns:
         包含kpts_world, kpts_body等信息的字典
     """
-    from gymnastics.fusion.deterministic.load import load_fused_frame as _load_frame
+    from gymnastics.baselines.load import load_fused_frame as _load_frame
     return _load_frame(frame_path)
 
 
@@ -44,7 +44,7 @@ def load_fused_sequence(
         kpts_body: (T, J, 3) 身体坐标系下的关键点
         metadata: 元数据字典
     """
-    from gymnastics.fusion.deterministic.load import load_fused_sequence as _load_sequence
+    from gymnastics.baselines.load import load_fused_sequence as _load_sequence
     
     if person_root is None:
         person_root = Path("local/runs/fuse") / f"person_{person_id}"
@@ -67,7 +67,7 @@ def get_fused_frame_mapping(
         face_map: (T,) 到原始face视频的帧映射
         side_map: (T,) 到原始side视频的帧映射
     """
-    from gymnastics.fusion.deterministic.load import get_fused_frame_mapping as _get_mapping
+    from gymnastics.baselines.load import get_fused_frame_mapping as _get_mapping
     
     if person_root is None:
         person_root = Path("local/runs/fuse") / f"person_{person_id}"

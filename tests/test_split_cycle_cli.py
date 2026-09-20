@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from gymnastics.alignment import main as split_main
+from gymnastics.cycle_alignment import main as split_main
 
 
 def test_resolve_person_ids_filters_requested_people(tmp_path):

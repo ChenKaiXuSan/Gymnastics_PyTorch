@@ -80,7 +80,7 @@ def _write_dataset_summaries(output_root, person_ids):
 
 
 def test_collect_person_summaries_reads_all_people_in_numeric_order(tmp_path):
-    from gymnastics.triangulation.sam3d_from_split_cycle import collect_person_summaries
+    from gymnastics.pseudo_gt.sam3d_from_split_cycle import collect_person_summaries
 
     _write_json(tmp_path / "person_10" / "summary.json", {"person_id": "10"})
     _write_json(tmp_path / "person_2" / "summary.json", {"person_id": "2"})

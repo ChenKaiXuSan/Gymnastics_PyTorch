@@ -166,7 +166,7 @@ local/runs/analysis/triangulated_results/triangulated_person_summary.csv
 
 - `src/gymnastics/analysis/compare_fused_triangulated.py` compares face/side/fused SAM3D-Body
   3D keypoints against the triangulated reference.
-- `src/gymnastics/fusion/deterministic/experiment_matrix.py` can evaluate fusion variants against the
+- `src/gymnastics/baselines/experiment_matrix.py` can evaluate fusion variants against the
   triangulated dataset.
 
 ## Tests

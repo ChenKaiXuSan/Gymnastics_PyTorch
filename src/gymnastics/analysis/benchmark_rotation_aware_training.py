@@ -19,7 +19,7 @@ from typing import Any, Mapping
 import torch
 from torch.utils.data import DataLoader
 
-from gymnastics.fusion.archive.rotation_aware.cli import (
+from gymnastics.archive.rotation_aware.cli import (
     _build_training_loaders,
     _cached_trials_with_provenance,
     _manifest_people,
@@ -29,19 +29,19 @@ from gymnastics.fusion.archive.rotation_aware.cli import (
     loss_config_for_ablation,
     resolve_fold,
 )
-from gymnastics.fusion.core.config import SkeletonSpec, load_skeleton_spec
-from gymnastics.fusion.archive.rotation_aware.corruptions import CorruptionConfig
-from gymnastics.fusion.archive.rotation_aware.dataset import (
+from gymnastics.keypoints.config import SkeletonSpec, load_skeleton_spec
+from gymnastics.archive.rotation_aware.corruptions import CorruptionConfig
+from gymnastics.archive.rotation_aware.dataset import (
     PosePairCompleteCycleDataset,
     PosePairWindowDataset,
     WindowConfig,
     build_split_manifest,
     collate_pose_pair_windows,
 )
-from gymnastics.fusion.archive.rotation_aware.model import RotationAwareFusionModel
-from gymnastics.fusion.archive.rotation_aware.prefetch import ThroughputConfig
-from gymnastics.fusion.archive.rotation_aware.profiling import StageProfiler
-from gymnastics.fusion.archive.rotation_aware.training import (
+from gymnastics.archive.rotation_aware.model import RotationAwareFusionModel
+from gymnastics.archive.rotation_aware.prefetch import ThroughputConfig
+from gymnastics.archive.rotation_aware.profiling import StageProfiler
+from gymnastics.archive.rotation_aware.training import (
     TrainingTrace,
     prepare_validation_batches,
     train_one_epoch,

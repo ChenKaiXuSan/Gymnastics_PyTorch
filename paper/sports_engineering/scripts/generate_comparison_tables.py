@@ -14,13 +14,13 @@ from scipy.stats import spearmanr, wilcoxon
 
 from gymnastics.analysis.cohort_cycle.joints import MAJOR_JOINT_INDICES
 from gymnastics.common.skeletons import MHR70_NAMES
-from gymnastics.fusion.deterministic.experiment_matrix import (
+from gymnastics.baselines.experiment_matrix import (
     NO_EXTRINSIC_METHODS,
     build_pair_index,
     load_triangulated_sequence,
 )
-from gymnastics.fusion.core.config import SkeletonSpec, load_skeleton_spec
-from gymnastics.fusion.archive.rotation_aware.evaluation import _external_errors
+from gymnastics.keypoints.config import SkeletonSpec, load_skeleton_spec
+from gymnastics.archive.rotation_aware.evaluation import _external_errors
 
 
 LEARNED_JOINT_METHODS = ("A0", "A1", "A2", "A6")

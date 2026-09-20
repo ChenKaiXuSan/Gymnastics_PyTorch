@@ -193,7 +193,7 @@ def _validate_inference(
 
 def _default_estimator_factory(config: Mapping[str, Any]) -> Any:
     from gymnastics.common.config import load_config as load_project_config
-    from gymnastics.sam3d.infer import setup_sam_3d_body
+    from gymnastics.pose_estimation.infer import setup_sam_3d_body
 
     device = int(config["sam3d"]["device"])
     estimator_config = load_project_config(

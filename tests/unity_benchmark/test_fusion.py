@@ -12,7 +12,7 @@ from gymnastics.benchmarks.unity.fusion import (
     run_rotation_aware_fusion,
 )
 from gymnastics.benchmarks.unity.schema import UnityBenchmark
-from gymnastics.fusion.deterministic.experiment_matrix import (
+from gymnastics.baselines.experiment_matrix import (
     ALL_METHODS,
     current_body_average,
 )

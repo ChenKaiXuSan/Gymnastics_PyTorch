@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from gymnastics.fusion.core.config import load_skeleton_spec
-from gymnastics.fusion.deterministic.experiment_matrix import joint_errors
+from gymnastics.keypoints.config import load_skeleton_spec
+from gymnastics.baselines.experiment_matrix import joint_errors
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 

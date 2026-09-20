@@ -101,4 +101,4 @@ def test_unified_cli_exposes_cycle_aware_fusion():
 
     assert result.returncode == 0, result.stderr
     assert "cycle-aware" in result.stdout
-    assert unified_cli._COMMANDS["fuse:cycle-aware"][0] == "gymnastics.fusion.cycle_aware.train"
+    assert unified_cli._COMMANDS["fuse:cycle-aware"][0] == "gymnastics.fusion.train"
