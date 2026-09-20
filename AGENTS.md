@@ -1,6 +1,7 @@
 # Workspace Instructions
 
 - For commands that run project code, tests, scripts, or Python tooling in this workspace, use the `gymnastic` conda environment by default, for example `conda run -n gymnastic ...`.
+- All code lives under `src/` with `PYTHONPATH=src`. There is no umbrella package: the four pipeline stages are the top-level packages and the only entry points (`python -m pose_estimation`, `python -m cycle_alignment`, `python -m pseudo_gt`, `python -m fusion`); `src/common/` is a shared library and `src/configs/` holds every configuration file, one sub-directory per stage.
 
 ## Repository Purpose
 
@@ -27,25 +28,25 @@ The current active pipeline is:
 
 ```text
 /home/data/xchen/gymnastics/raw/person
-  -> gymnastics sam3d
+  -> python -m pose_estimation run
   -> /home/data/xchen/gymnastics/sam3d_body_results/person
-  -> gymnastics align
-  -> gymnastics triangulate
+  -> python -m cycle_alignment align
+  -> python -m pseudo_gt triangulate
   -> /home/data/xchen/gymnastics/sam3d_triangulated/person
-  -> gymnastics fuse deterministic
-  -> gymnastics analyze / gymnastics cohort-cycle / gymnastics benchmark
+  -> python -m fusion deterministic
+  -> python -m fusion analyze / python -m fusion cohort-cycle / python -m fusion benchmark-*
 ```
 
 Important details:
 
-- `gymnastics.pose_estimation` runs SAM3D-Body inference on raw `face` and `side` videos.
-- `gymnastics.cycle_alignment` estimates face/side temporal alignment and segments each
+- `pose_estimation` runs SAM3D-Body inference on raw `face` and `side` videos.
+- `cycle_alignment` estimates face/side temporal alignment and segments each
   person's motion into cycles.
-- `gymnastics.pseudo_gt` uses split-cycle frame records and
+- `pseudo_gt` uses split-cycle frame records and
   SAM3D 2D keypoints to triangulate 3D joints.
-- `gymnastics.fusion` runs the face/side 3D keypoint fusion experiment matrix and evaluates
+- `fusion` runs the face/side 3D keypoint fusion experiment matrix and evaluates
   each method against triangulated pseudo-GT.
-- `gymnastics.analysis` contains comparison, metrics, reporting, and visualization tools.
+- `fusion.analysis` contains comparison, metrics, reporting, and visualization tools.
 
 ## Key Entry Points
 
@@ -53,27 +54,27 @@ Use `conda run -n gymnastic ...` for these commands.
 
 ```bash
 # Run SAM3D-Body on raw face/side videos.
-gymnastics sam3d
+python -m pose_estimation run
 
 # Segment aligned motion into cycles.
-gymnastics align
+python -m cycle_alignment align
 
 # Add cycle middles (turn-around frames) to the private records / detect
 # cycles for FreeMan and Unity. Training never detects cycles itself.
-gymnastics align cycles private
-gymnastics align cycles freeman
-gymnastics align cycles unity
-gymnastics align cycles index      # local/runs/cycle_records/{gymnastics,freeman,unity} + index.json
+python -m cycle_alignment cycles private
+python -m cycle_alignment cycles freeman
+python -m cycle_alignment cycles unity
+python -m cycle_alignment cycles index      # local/runs/cycle_records/{gymnastics,freeman,unity} + index.json
 
 # Triangulate SAM3D face/side 2D keypoints into pseudo-GT 3D joints.
-gymnastics triangulate
+python -m pseudo_gt triangulate
 
 # Run the fusion experiment matrix.
-gymnastics fuse deterministic
+python -m fusion deterministic
 
 # Metrics, reports, and the out-of-fold cohort analysis.
-gymnastics analyze
-gymnastics cohort-cycle
+python -m fusion analyze
+python -m fusion cohort-cycle
 ```
 
 Focused verification commands:
@@ -85,21 +86,23 @@ python -m pytest tests/test_sam3d_triangulation.py tests/test_compare_fused_tria
 
 ## Module Responsibilities
 
-`src/gymnastics/` is organised as the four pipeline stages plus supporting
-packages (see `gymnastics/__init__.py`):
+`src/` is organised as the four pipeline stages, each with its own
+``python -m <stage>`` entry point, plus the shared library `common/` and the
+configuration tree `configs/`:
 
 | Stage | Package | Role | Command |
 |---|---|---|---|
-| ① pose estimation | `src/gymnastics/pose_estimation/` | SAM3D-Body inference on the raw face/side videos; per-view 3D + 2D MHR70 keypoints. | `gymnastics sam3d` |
-| ② cycle alignment | `src/gymnastics/cycle_alignment/` | Side-to-face offset, cycle segmentation with turn-around middles (`cycles.py`, `cycle_records.py`, `annotate_cycles.py`), split-cycle records. | `gymnastics align`, `gymnastics align cycles ...` |
-| ③ pseudo ground truth | `src/gymnastics/pseudo_gt/` | Chessboard intrinsics (`calibration.py`), per-person extrinsics (`estimate_extrinsics.py`), triangulation of SAM3D 2D keypoints into the evaluation reference (`sam3d_from_split_cycle.py`). Evaluation-only; training never imports it. | `gymnastics calibrate`, `gymnastics triangulate` |
-| ④ fusion network | `src/gymnastics/fusion/` | **The proposed model**: cycle-aware dual-view fusion (data modules, model, losses, Lightning training, Hydra configs in `configs/cycle_aware`). See `docs/cycle_aware_fusion.md`. | `gymnastics fuse cycle-aware` |
-| support | `src/gymnastics/keypoints/` | Shared 3D-keypoint representation used by ③, ④, the baselines and the benchmarks: `PosePairTrial`, `SkeletonSpec`, canonical body frame, trunk/quality features, person cache. No model code. | – |
-| support | `src/gymnastics/baselines/` | Deterministic comparison matrix and classical baselines every model is compared against. | `gymnastics fuse deterministic` |
-| support | `src/gymnastics/benchmarks/` | FreeMan and Unity public benchmarks (adapters, zero-shot and trained evaluation). | `gymnastics benchmark ...` |
-| support | `src/gymnastics/analysis/` | Metrics, reports, cohort/repeated-cycle statistics, paper result tables. | `gymnastics analyze`, `gymnastics cohort-cycle` |
-| support | `src/gymnastics/common/` | Project paths, config helpers, MHR70 metadata. | – |
-| archive | `src/gymnastics/archive/rotation_aware/` | Frozen paper model (2026-09-19); kept only to regenerate published tables. See `archive/README.md`. | `gymnastics fuse rotation-aware` |
+| ① pose estimation | `src/pose_estimation/` | SAM3D-Body inference on the raw face/side videos; per-view 3D + 2D MHR70 keypoints. | `python -m pose_estimation run` |
+| ② cycle alignment | `src/cycle_alignment/` | Side-to-face offset, cycle segmentation with turn-around middles (`cycles.py`, `cycle_records.py`, `annotate_cycles.py`), split-cycle records. | `python -m cycle_alignment align`, `python -m cycle_alignment cycles ...` |
+| ③ pseudo ground truth | `src/pseudo_gt/` | Chessboard intrinsics (`calibration.py`), per-person extrinsics (`estimate_extrinsics.py`), triangulation of SAM3D 2D keypoints into the evaluation reference (`sam3d_from_split_cycle.py`). Evaluation-only; training never imports it. | `python -m pseudo_gt calibrate`, `python -m pseudo_gt triangulate` |
+| ④ fusion network | `src/fusion/` | **The proposed model**: cycle-aware dual-view fusion (data modules, model, losses, Lightning training, Hydra configs in `src/configs/fusion`). See `docs/cycle_aware_fusion.md`. | `python -m fusion train` |
+| support | `src/fusion/keypoints/` | Shared 3D-keypoint representation used by ③, ④, the baselines and the benchmarks: `PosePairTrial`, `SkeletonSpec`, canonical body frame, trunk/quality features, person cache. No model code. | – |
+| support | `src/fusion/baselines/` | Deterministic comparison matrix and classical baselines every model is compared against. | `python -m fusion deterministic` |
+| support | `src/fusion/benchmarks/` | FreeMan and Unity public benchmarks (adapters, zero-shot and trained evaluation). | `python -m fusion benchmark-{freeman,freeman-train,unity}` |
+| support | `src/fusion/analysis/` | Metrics, reports, cohort/repeated-cycle statistics, paper result tables. | `python -m fusion analyze`, `python -m fusion cohort-cycle` |
+| support | `src/common/` | Project paths, config helpers, MHR70 metadata, the shared CLI dispatcher. Library only, no entry point. | – |
+| config | `src/configs/` | `pose_estimation/`, `pseudo_gt/`, `fusion/` (Hydra tree of the model), `shared/` (MHR70 skeleton spec, fold files), `benchmarks/`, `analysis/`, `archive/` (old-model configs). | – |
+| archive | `src/fusion/archive/rotation_aware/` | Frozen paper model (2026-09-19); kept only to regenerate published tables. See `archive/README.md`. | `python -m fusion rotation-aware` |
 | – | `pegasus/` | NQSV job scripts for the fusion model (5-fold, single seed, 50 epochs); see `pegasus/README.md`. | – |
 | – | `third_party/` | Pinned upstream SAM3 and SAM-3D-Body repositories. | – |
 | – | `local/` | Ignored checkpoints, videos, run outputs, and caches. | – |
@@ -201,14 +204,14 @@ biased and it is not a valid recommendation.
 ## Model Policy (2026-09-19)
 
 All new modelling work uses only the cycle-aware architecture
-(`gymnastics.fusion`, `gymnastics fuse cycle-aware`). The
-rotation-aware model was moved to `gymnastics.archive.rotation_aware`
+(`fusion`, `python -m fusion train`). The
+rotation-aware model was moved to `fusion.archive.rotation_aware`
 and is frozen: it is kept solely to regenerate the Sports Engineering paper
 artefacts (ablations A0–A11, B1/B2, FreeMan zero-shot and subject-disjoint
 rows, cohort OOF). Do not add experiments, losses or configs to it; bug fixes
-go to `gymnastics.keypoints` when they concern the shared infrastructure.
+go to `fusion.keypoints` when they concern the shared infrastructure.
 
-The deterministic `gymnastics fuse deterministic` experiment matrix (including
+The deterministic `python -m fusion deterministic` experiment matrix (including
 the classical baselines in `classical_baselines.py`) remains the comparison
 suite for every model.
 
@@ -222,17 +225,17 @@ fusion weights, checkpoint selection, or training losses.
 Reproduce the paper runs with:
 
 ```bash
-conda run -n gymnastic gymnastics fuse rotation-aware prepare --config configs/fusion/rotation_aware.yaml
-conda run -n gymnastic gymnastics fuse rotation-aware train --config configs/fusion/rotation_aware.yaml --run-id paper_a6 --ablation A6
-conda run -n gymnastic gymnastics fuse rotation-aware infer --config configs/fusion/rotation_aware.yaml --run-id paper_a6
-conda run -n gymnastic gymnastics fuse rotation-aware evaluate --config configs/fusion/rotation_aware.yaml --run-id paper_a6
+conda run -n gymnastic python -m fusion rotation-aware prepare --config src/configs/archive/rotation_aware.yaml
+conda run -n gymnastic python -m fusion rotation-aware train --config src/configs/archive/rotation_aware.yaml --run-id paper_a6 --ablation A6
+conda run -n gymnastic python -m fusion rotation-aware infer --config src/configs/archive/rotation_aware.yaml --run-id paper_a6
+conda run -n gymnastic python -m fusion rotation-aware evaluate --config src/configs/archive/rotation_aware.yaml --run-id paper_a6
 ```
 
 Train A4, A5, and A6 under separate run IDs, then combine them with repeated
 `--run-id` options:
 
 ```bash
-conda run -n gymnastic gymnastics fuse rotation-aware evaluate --config configs/fusion/rotation_aware.yaml --run-id paper_a4 --run-id paper_a5 --run-id paper_a6
+conda run -n gymnastic python -m fusion rotation-aware evaluate --config src/configs/archive/rotation_aware.yaml --run-id paper_a4 --run-id paper_a5 --run-id paper_a6
 ```
 
 New artifacts are isolated under `local/runs/fuse_rotation_aware/{cache,runs,inference,evaluation}`.

@@ -7,8 +7,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from gymnastics.analysis.cohort_cycle.features import CORE_OUTCOMES
-from gymnastics.analysis.cohort_cycle.report import (
+from fusion.analysis.cohort_cycle.features import CORE_OUTCOMES
+from fusion.analysis.cohort_cycle.report import (
     _repetition_panel_title,
     render_report,
 )

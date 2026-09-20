@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from gymnastics.benchmarks.unity import cli as unity_cli
+from fusion.benchmarks.unity import cli as unity_cli
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -15,7 +15,7 @@ def _run(*arguments: str) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(PROJECT_ROOT / "src")
     return subprocess.run(
-        [sys.executable, "-m", "gymnastics", *arguments],
+        [sys.executable, "-m", "fusion", *arguments],
         cwd=PROJECT_ROOT,
         env=environment,
         capture_output=True,
@@ -25,7 +25,7 @@ def _run(*arguments: str) -> subprocess.CompletedProcess[str]:
 
 
 def test_unity_cli_exposes_supervised_stages() -> None:
-    help_result = _run("benchmark", "unity", "--help")
+    help_result = _run("benchmark-unity", "--help")
 
     assert help_result.returncode == 0, help_result.stderr
     for stage in (

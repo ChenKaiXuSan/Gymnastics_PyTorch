@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from gymnastics.benchmarks.unity.camera_guided_evaluation import (
+from fusion.benchmarks.unity.camera_guided_evaluation import (
     aggregate_camera_guided_results,
     paired_comparisons_vs_g0,
     write_camera_guided_report,

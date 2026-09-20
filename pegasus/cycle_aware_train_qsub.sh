@@ -54,7 +54,7 @@ if [ -n "$OVERRIDES" ]; then
   ARGS+=("${EXTRA_ARGS[@]}")
 fi
 
-"$PYBIN" -u -m gymnastics fuse cycle-aware "${ARGS[@]}"
+"$PYBIN" -u -m fusion train "${ARGS[@]}"
 status=$?
 echo "[ca_train] run=$RUN_NAME exit=$status end=$(date -Is)"
 exit $status

@@ -4,7 +4,7 @@ This page is the tracked entry point for the project's current results. The
 numeric tables are regenerated from local per-person and per-fold artefacts:
 
 ```bash
-conda run -n gymnastic python -m gymnastics.analysis.project_results
+conda run -n gymnastic python -m fusion.analysis.project_results
 ```
 
 The detailed generated report is

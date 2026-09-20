@@ -4,13 +4,13 @@ import numpy as np
 import pytest
 import torch
 
-from gymnastics.fusion.phase import (
+from fusion.phase import (
     PhaseEncoding,
     normalize_sample_to_phase,
     phase_from_cycle_bounds,
 )
-from gymnastics.fusion.sample import DualViewSample, collate_fusion_batch
-from gymnastics.fusion.velocity import compute_velocity
+from fusion.sample import DualViewSample, collate_fusion_batch
+from fusion.velocity import compute_velocity
 from tests.fusion.conftest import make_sample
 
 

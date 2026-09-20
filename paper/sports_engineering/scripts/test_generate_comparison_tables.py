@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from gymnastics.keypoints.config import load_skeleton_spec
-from gymnastics.baselines.experiment_matrix import joint_errors
+from fusion.keypoints.config import load_skeleton_spec
+from fusion.baselines.experiment_matrix import joint_errors
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -118,7 +118,7 @@ def test_build_joint_summary_rejects_mixed_evaluation_protocols() -> None:
 
 
 def test_matched_joint_evaluator_removes_framewise_root_translation() -> None:
-    skeleton = load_skeleton_spec(Path("configs/fusion/skeleton_mhr70.yaml"))
+    skeleton = load_skeleton_spec(Path("src/configs/shared/skeleton_mhr70.yaml"))
     rng = np.random.default_rng(7)
     base_pose = rng.normal(size=(1, 70, 3)).astype("float64") + 2.0
     reference = np.repeat(base_pose, 5, axis=0)
@@ -136,7 +136,7 @@ def test_matched_joint_evaluator_removes_framewise_root_translation() -> None:
 
 
 def test_matched_evaluator_returns_pooled_person_and_joint_metrics() -> None:
-    skeleton = load_skeleton_spec(Path("configs/fusion/skeleton_mhr70.yaml"))
+    skeleton = load_skeleton_spec(Path("src/configs/shared/skeleton_mhr70.yaml"))
     rng = np.random.default_rng(11)
     base_pose = rng.normal(size=(1, 70, 3)).astype("float64") + 2.0
     reference = np.repeat(base_pose, 4, axis=0)
@@ -156,7 +156,7 @@ def test_matched_evaluator_returns_pooled_person_and_joint_metrics() -> None:
 
 
 def test_compact_reevaluation_emits_person_and_joint_rows(tmp_path: Path) -> None:
-    skeleton = load_skeleton_spec(Path("configs/fusion/skeleton_mhr70.yaml"))
+    skeleton = load_skeleton_spec(Path("src/configs/shared/skeleton_mhr70.yaml"))
     method_root = tmp_path / "avg_body_current"
     person_root = method_root / "person_1"
     person_root.mkdir(parents=True)

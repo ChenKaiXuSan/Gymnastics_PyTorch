@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from gymnastics.analysis.cohort_cycle.qc import (
+from fusion.analysis.cohort_cycle.qc import (
     evaluate_cycle_qc,
     interpolate_short_gaps,
 )

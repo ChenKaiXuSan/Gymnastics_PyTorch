@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from gymnastics.fusion.modules import (
+from fusion.modules import (
     BidirectionalCrossViewAttention,
     FiLMMotionGuidance,
     JointReliabilityHead,
@@ -15,8 +15,8 @@ from gymnastics.fusion.modules import (
     SpatialTransformer,
     weighted_pose_fusion,
 )
-from gymnastics.fusion.modules.temporal_transformer import local_band_mask
-from gymnastics.fusion.modules.transformer import build_blocked_mask
+from fusion.modules.temporal_transformer import local_band_mask
+from fusion.modules.transformer import build_blocked_mask
 
 B, T, J, D = 2, 12, 5, 16
 

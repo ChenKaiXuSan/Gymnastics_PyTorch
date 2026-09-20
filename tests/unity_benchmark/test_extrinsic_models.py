@@ -4,13 +4,13 @@ import numpy as np
 import pytest
 import torch
 
-from gymnastics.benchmarks.unity.extrinsic_models import (
+from fusion.benchmarks.unity.extrinsic_models import (
     ExtrinsicGateModel,
     ExtrinsicResidualTCN,
     LearnableTriangulationModel,
     relative_camera_rotation,
 )
-from gymnastics.benchmarks.unity.schema import UnityCamera
+from fusion.benchmarks.unity.schema import UnityCamera
 
 
 def _camera(

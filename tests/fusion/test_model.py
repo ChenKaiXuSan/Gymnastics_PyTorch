@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 import torch
 
-from gymnastics.fusion.model import CycleAwareFusionModel, CycleAwareModelConfig
-from gymnastics.fusion.outputs import PoseFusionOutput
+from fusion.model import CycleAwareFusionModel, CycleAwareModelConfig
+from fusion.outputs import PoseFusionOutput
 
 
 def test_forward_shapes_and_identities(tiny_config, tiny_batch, skeleton):

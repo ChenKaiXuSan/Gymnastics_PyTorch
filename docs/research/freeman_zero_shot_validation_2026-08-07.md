@@ -113,8 +113,8 @@ temporal alignment, or any hyperparameter.
   `local/runs/freeman_benchmark_cluster/evaluation/`
 - Manuscript integration: `paper/image_and_vision_computing/`
   (protocol §FreeMan, results RQ5, `tables/freeman_zero_shot.tex`)
-- Configs: `configs/benchmarks/freeman_cluster.yaml`,
-  `configs/sam3d/sam3d_body_freeman_batched.yaml`
+- Configs: `src/configs/benchmarks/freeman_cluster.yaml`,
+  `src/configs/pose_estimation/sam3d_body_freeman_batched.yaml`
 - Job script: `scripts/freeman_qsub_subject.sh`
 
 ## Remaining work

@@ -2,11 +2,11 @@ from pathlib import Path
 
 import torch
 
-from gymnastics.keypoints.config import SkeletonSpec, load_skeleton_spec
-from gymnastics.keypoints.geometry import build_pelvis_frame, build_thorax_frame, canonicalize_pose, restore_pose
+from fusion.keypoints.config import SkeletonSpec, load_skeleton_spec
+from fusion.keypoints.geometry import build_pelvis_frame, build_thorax_frame, canonicalize_pose, restore_pose
 
 
-SPEC = load_skeleton_spec(Path("configs/fusion/skeleton_mhr70.yaml"))
+SPEC = load_skeleton_spec(Path("src/configs/shared/skeleton_mhr70.yaml"))
 
 
 def synthetic_mhr70_pose(*, theta_deg: float = 0.0, batch: int = 1, frames: int = 3):

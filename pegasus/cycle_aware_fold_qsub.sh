@@ -8,8 +8,8 @@
 #   DATA       gymnastics | freeman            (required)
 #   FOLD       fold_01 .. fold_05              (required)
 #   SWEEP      sweep name; run dir = local/runs/cycle_aware/<SWEEP>/<FOLD>  (default <DATA>_v1_5fold)
-#   FOLDS_DIR  fold-file directory (default: configs/cycle_aware/folds/gymnastics
-#              or configs/fusion/folds/freeman; configs/cycle_aware/folds/freeman_all40
+#   FOLDS_DIR  fold-file directory (default: src/configs/fusion/folds/gymnastics
+#              or src/configs/shared/folds/freeman; src/configs/fusion/folds/freeman_all40
 #              for the 40-subject FreeMan protocol)
 #   EXPERIMENT optional Hydra experiment preset (no_film, no_cross_view, ...)
 #   SEED       seed (default 0)
@@ -39,8 +39,8 @@ EPOCHS="${EPOCHS:-50}"
 EXPERIMENT="${EXPERIMENT:-}"
 OVERRIDES="${OVERRIDES:-}"
 case "$DATA" in
-  gymnastics) DEFAULT_FOLDS=configs/cycle_aware/folds/gymnastics ;;
-  freeman)    DEFAULT_FOLDS=configs/fusion/folds/freeman ;;
+  gymnastics) DEFAULT_FOLDS=src/configs/fusion/folds/gymnastics ;;
+  freeman)    DEFAULT_FOLDS=src/configs/shared/folds/freeman ;;
   *) echo "[ca_fold] unsupported DATA=$DATA"; exit 2 ;;
 esac
 FOLDS_DIR="${FOLDS_DIR:-$DEFAULT_FOLDS}"
@@ -68,7 +68,7 @@ if [ -n "$OVERRIDES" ]; then
   ARGS+=("${EXTRA_ARGS[@]}")
 fi
 
-"$PYBIN" -u -m gymnastics fuse cycle-aware "${ARGS[@]}"
+"$PYBIN" -u -m fusion train "${ARGS[@]}"
 status=$?
 echo "[ca_fold] data=$DATA fold=$FOLD exit=$status end=$(date -Is)"
 exit $status

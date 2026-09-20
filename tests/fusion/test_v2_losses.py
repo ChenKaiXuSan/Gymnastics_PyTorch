@@ -8,9 +8,9 @@ import numpy as np
 import pytest
 import torch
 
-from gymnastics.fusion.cycle_target import CycleTargetConfig, cross_cycle_target
-from gymnastics.fusion.data.windows import CycleWindowDataset, WindowConfig
-from gymnastics.fusion.losses import (
+from fusion.cycle_target import CycleTargetConfig, cross_cycle_target
+from fusion.data.windows import CycleWindowDataset, WindowConfig
+from fusion.losses import (
     LossConfig,
     compute_losses,
     cycle_loss,
@@ -18,8 +18,8 @@ from gymnastics.fusion.losses import (
     feature_symmetry_loss,
     reliability_loss,
 )
-from gymnastics.fusion.model import CycleAwareFusionModel
-from gymnastics.fusion.train import compose_config, run
+from fusion.model import CycleAwareFusionModel
+from fusion.train import compose_config, run
 from tests.fusion.conftest import make_sample
 
 S = 8

@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from gymnastics.analysis.cohort_cycle.features import (
+from fusion.analysis.cohort_cycle.features import (
     axial_rotation_from_pose,
     angular_jerk,
     compute_core_scalars,

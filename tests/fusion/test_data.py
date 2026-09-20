@@ -6,12 +6,12 @@ import numpy as np
 import pytest
 import torch
 
-from gymnastics.fusion.corruptions import CorruptionConfig
-from gymnastics.fusion.data import build_datamodule
-from gymnastics.fusion.data.base import DataConfig, SplitSpec
-from gymnastics.fusion.data.synthetic import SyntheticDataModule
-from gymnastics.fusion.data.windows import CycleWindowDataset, WindowConfig, window_starts
-from gymnastics.fusion.sample import collate_fusion_batch
+from fusion.corruptions import CorruptionConfig
+from fusion.data import build_datamodule
+from fusion.data.base import DataConfig, SplitSpec
+from fusion.data.synthetic import SyntheticDataModule
+from fusion.data.windows import CycleWindowDataset, WindowConfig, window_starts
+from fusion.sample import collate_fusion_batch
 from tests.fusion.conftest import make_sample
 
 
@@ -72,7 +72,7 @@ def test_window_dataset_corruption_is_reproducible_per_epoch(skeleton):
 
 
 def test_window_dataset_rejects_wrong_skeleton(skeleton):
-    from gymnastics.fusion.skeleton import build_common_skeleton
+    from fusion.skeleton import build_common_skeleton
 
     sample = make_sample(skeleton)
     with pytest.raises(ValueError):
@@ -124,7 +124,7 @@ def test_explicit_split_and_cap():
 
 
 def test_sample_cache_round_trip(tmp_path, skeleton):
-    from gymnastics.fusion.data.sample_cache import load_samples, save_samples
+    from fusion.data.sample_cache import load_samples, save_samples
 
     samples = [make_sample(skeleton, with_reference=True), make_sample(skeleton, subject="s2", cycles=False)]
     directory = save_samples(tmp_path / "cache", samples, config={"name": "synthetic"})
@@ -158,6 +158,6 @@ def test_full_context_window_is_one_window_per_sequence(skeleton):
     dataset = CycleWindowDataset(samples, skeleton=skeleton, window=window, split="train")
     assert len(dataset) == 2 and dataset.length == 24  # longest sequence: 3 cycles * 8
     assert dataset[1]["frame_mask"].sum() == 16
-    from gymnastics.fusion.model import CycleAwareModelConfig
+    from fusion.model import CycleAwareModelConfig
 
     assert CycleAwareModelConfig.from_mapping({"samples_per_cycle": 8, "long_motion": {"num_cycles": None}}).window_length is None

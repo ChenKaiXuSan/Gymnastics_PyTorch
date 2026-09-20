@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from gymnastics.benchmarks.unity.evaluation import (
+from fusion.benchmarks.unity.evaluation import (
     angular_residual_deg,
     build_reference_sequence,
     evaluate_method_sequence,
@@ -12,10 +12,10 @@ from gymnastics.benchmarks.unity.evaluation import (
     summarize_results,
     to_evaluation_sequence,
 )
-from gymnastics.benchmarks.unity.dataset import load_unity_benchmark
-from gymnastics.benchmarks.unity.mapping import EVALUATION_JOINT_NAMES
-from gymnastics.benchmarks.unity.report import write_report
-from gymnastics.benchmarks.unity.schema import MethodSequence
+from fusion.benchmarks.unity.dataset import load_unity_benchmark
+from fusion.benchmarks.unity.mapping import EVALUATION_JOINT_NAMES
+from fusion.benchmarks.unity.report import write_report
+from fusion.benchmarks.unity.schema import MethodSequence
 
 
 def _rotation_z(angle: float) -> np.ndarray:

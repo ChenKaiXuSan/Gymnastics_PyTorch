@@ -12,15 +12,15 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr, wilcoxon
 
-from gymnastics.analysis.cohort_cycle.joints import MAJOR_JOINT_INDICES
-from gymnastics.common.skeletons import MHR70_NAMES
-from gymnastics.baselines.experiment_matrix import (
+from fusion.analysis.cohort_cycle.joints import MAJOR_JOINT_INDICES
+from common.skeletons import MHR70_NAMES
+from fusion.baselines.experiment_matrix import (
     NO_EXTRINSIC_METHODS,
     build_pair_index,
     load_triangulated_sequence,
 )
-from gymnastics.keypoints.config import SkeletonSpec, load_skeleton_spec
-from gymnastics.archive.rotation_aware.evaluation import _external_errors
+from fusion.keypoints.config import SkeletonSpec, load_skeleton_spec
+from fusion.archive.rotation_aware.evaluation import _external_errors
 
 
 LEARNED_JOINT_METHODS = ("A0", "A1", "A2", "A6")
@@ -792,7 +792,7 @@ def _default_paths() -> dict[str, Path]:
     )
     return {
         "root": root,
-        "split": root / "configs/fusion/folds/paper_137_a6_split.json",
+        "split": root / "src/configs/shared/folds/paper_137_a6_split.json",
         "learned_joint": evaluation / "metrics_by_joint.csv",
         "deterministic_root": root / "local/runs/fuse_experiments/avg_body_current",
         "extrinsic_root": root / "local/runs/fuse_extrinsic_baselines",
@@ -800,7 +800,7 @@ def _default_paths() -> dict[str, Path]:
         "triangulated_root": Path(
             "/home/data/xchen/gymnastics/sam3d_triangulated/person"
         ),
-        "skeleton": root / "configs/fusion/skeleton_mhr70.yaml",
+        "skeleton": root / "src/configs/shared/skeleton_mhr70.yaml",
         "output": root / "paper/sports_engineering/generated",
     }
 

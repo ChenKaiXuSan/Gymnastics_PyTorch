@@ -1,4 +1,4 @@
-"""Cycle / middle detection and record files (gymnastics.cycle_alignment)."""
+"""Cycle / middle detection and record files (cycle_alignment)."""
 
 from __future__ import annotations
 
@@ -8,14 +8,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from gymnastics.cycle_alignment import annotate_cycles
-from gymnastics.cycle_alignment.cycle_records import (
+from cycle_alignment import annotate_cycles
+from cycle_alignment.cycle_records import (
     augment_alignment_record,
     cycle_record_path,
     read_cycle_record,
     write_cycle_record,
 )
-from gymnastics.cycle_alignment.cycles import (
+from cycle_alignment.cycles import (
     CycleSpan,
     DetectionSettings,
     annotate_mid_points,
@@ -24,7 +24,7 @@ from gymnastics.cycle_alignment.cycles import (
     hand_theta_unwrapped,
     mid_point,
 )
-from gymnastics.common.skeletons.mhr70 import MHR70_INDEX
+from common.skeletons.mhr70 import MHR70_INDEX
 
 FPS = 30.0
 
@@ -141,7 +141,7 @@ def test_annotate_private_person_adds_middles(tmp_path: Path, monkeypatch: pytes
     cycles = [{"cycle_index": i, "face_video_frames": {"start": 30 + 60 * i, "end": 90 + 60 * i}, "side_video_frames": {"start": 33 + 60 * i, "end": 93 + 60 * i}} for i in range(4)]
     record.write_text(json.dumps({"metadata": {"person_id": "9", "offset_side_to_face": 3, "fps": 30.0}, "cycles": cycles}))
 
-    import gymnastics.cycle_alignment.load as load_module
+    import cycle_alignment.load as load_module
 
     monkeypatch.setattr(load_module, "load_sam3d_body_sequence", lambda root, person_id, subdir: ([], face if subdir == "face" else side))
     summary = annotate_cycles.annotate_private_person("9", kpt_root=tmp_path, log_root=log_root, smooth_window=5, plot=False)

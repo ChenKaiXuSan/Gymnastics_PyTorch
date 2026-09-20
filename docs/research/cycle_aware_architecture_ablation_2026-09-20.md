@@ -1,13 +1,13 @@
 # Cycle-aware model: architecture ablation (private data, 2026-09-20)
 
 Protocol: 5-fold subject-disjoint cross-validation on the 137 private
-participants (`configs/cycle_aware/folds/gymnastics`, cohort-stratified),
+participants (`src/configs/fusion/folds/gymnastics`, cohort-stratified),
 seed 0, 50 epochs, `mhr70_major` (20 joints), 128-sample windows (2 cycles x
 64 samples), default losses (`recovery 1.0, periodicity 0.1, symmetry 0.1,
 residual 0.01`). One preset switched off per sweep
-(`configs/cycle_aware/experiment/*.yaml`); everything else identical to the
+(`src/configs/fusion/experiment/*.yaml`); everything else identical to the
 baseline sweep `gymnastics_v1_5fold_seed0`. Each fold is one gpu job of about
-6 minutes. Table built by `python -m gymnastics.fusion.ablation_table`
+6 minutes. Table built by `python -m fusion.ablation_table`
 (`local/runs/cycle_aware/ablation_gymnastics_seed0.{md,json}`).
 
 Two evaluation conditions, because the learned components behave differently
@@ -79,7 +79,7 @@ about 0.1 are noise; the paired sign counts are the more useful column.
   option being added (FreeMan multi-view / Unity references, never the
   private pseudo-reference) is the right next experiment, together with
   evaluation under the paper protocol (export to `fused_sequence.npz` +
-  `gymnastics fuse rotation-aware evaluate`) so the numbers become comparable
+  `python -m fusion rotation-aware evaluate`) so the numbers become comparable
   with Table 1 and the reliability-weighted classical baseline (57.4 mm).
 
 ## Reproduction
@@ -89,7 +89,7 @@ bash pegasus/submit_cycle_aware_5fold.sh gymnastics                    # baselin
 for e in no_short_motion no_long_motion no_phase no_film no_cross_view equal_reliability no_residual pose_only; do
   bash pegasus/submit_cycle_aware_5fold.sh gymnastics $e               # or ACCOUNT=HP260146 for the gen_S queue
 done
-PYTHONPATH=src python -m gymnastics.fusion.ablation_table \
+PYTHONPATH=src python -m fusion.ablation_table \
   --baseline local/runs/cycle_aware/gymnastics_v1_5fold_seed0 \
   local/runs/cycle_aware/gymnastics_v1_{no_short_motion,no_long_motion,no_phase,no_film,no_cross_view,equal_reliability,no_residual,pose_only}_5fold_seed0 \
   --scale-mm 500 --out local/runs/cycle_aware/ablation_gymnastics_seed0

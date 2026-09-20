@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from gymnastics.analysis.cohort_cycle.preprocess import (
+from fusion.analysis.cohort_cycle.preprocess import (
     align_rotation_direction,
     normalized_cycle_positions,
     phase_normalize,

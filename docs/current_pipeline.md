@@ -4,7 +4,7 @@
 
 当前活动流水线以同一人的 `face` 和 `side` 双视角视频为输入。两个视角需要属于同一次动作采集，并使用相同的人物编号。
 
-当前 `gymnastics sam3d` 数据集入口会检查两个视角是否齐全；缺少任一视角时，该人物会被跳过。即使通过其他方式取得单视角关键点，也不能完成本流水线的双视角时间对齐、三角化或融合。
+当前 `python -m pose_estimation run` 数据集入口会检查两个视角是否齐全；缺少任一视角时，该人物会被跳过。即使通过其他方式取得单视角关键点，也不能完成本流水线的双视角时间对齐、三角化或融合。
 
 ## 端到端流程
 
@@ -33,8 +33,8 @@
 - `fusion` 必须读取对齐记录中的 `offset_side_to_face`，不会回退到新的关键点 DTW 偏移估算。
 - 当前融合以 `face` 为参考视角，将 `side` 的 3D 关键点变换到 `face` 坐标系。
 - 三角化结果是融合实验的 3D 伪真值。没有三角化结果时仍可生成融合序列，但无法得到有效的伪真值误差指标。
-- 三角化的相机内参来自棋盘格标定，外参由 `gymnastics triangulate estimate-extrinsics` 从数据估计。两视角几何是无尺度的，重投影误差无法反映基线长度是否正确；伪真值的米制尺度来自 SAM3D 单目 3D，未经器械标定。
-- 融合指标默认使用 `similarity` 对齐（逐序列拟合含尺度的 Sim3），因此**方法排序和相对比较对伪真值的尺度误差完全免疫**；只有绝对毫米值与尺度误差成正比。报告绝对精度时应同时给出 `gymnastics.analysis.normalize_by_body_scale` 产出的无量纲指标（误差占体长百分比），该指标与尺度无关。
+- 三角化的相机内参来自棋盘格标定，外参由 `python -m pseudo_gt estimate-extrinsics` 从数据估计。两视角几何是无尺度的，重投影误差无法反映基线长度是否正确；伪真值的米制尺度来自 SAM3D 单目 3D，未经器械标定。
+- 融合指标默认使用 `similarity` 对齐（逐序列拟合含尺度的 Sim3），因此**方法排序和相对比较对伪真值的尺度误差完全免疫**；只有绝对毫米值与尺度误差成正比。报告绝对精度时应同时给出 `fusion.analysis.normalize_by_body_scale` 产出的无量纲指标（误差占体长百分比），该指标与尺度无关。
 - 分类训练是可选下游任务，不是生成三角化或融合关键点的必要步骤。
 
 ## 推荐融合方法
@@ -73,37 +73,37 @@
 1. 提取 SAM3D-Body 关键点：
 
    ```bash
-   conda run -n gymnastic gymnastics sam3d
+   conda run -n gymnastic python -m pose_estimation run
    ```
 
 2. 对齐双视角并切分周期：
 
    ```bash
-   conda run -n gymnastic gymnastics align
+   conda run -n gymnastic python -m cycle_alignment align
    ```
 
 3. 估计逐人相机外参（三角化的前置步骤，相机在不同场次间被重新摆放过）：
 
    ```bash
-   conda run -n gymnastic gymnastics triangulate estimate-extrinsics
+   conda run -n gymnastic python -m pseudo_gt estimate-extrinsics
    ```
 
 4. 生成三角化 3D 伪真值：
 
    ```bash
-   conda run -n gymnastic gymnastics triangulate
+   conda run -n gymnastic python -m pseudo_gt triangulate
    ```
 
 5. 运行推荐融合方法：
 
    ```bash
-   conda run -n gymnastic gymnastics fuse deterministic --methods avg_body_current
+   conda run -n gymnastic python -m fusion deterministic --methods avg_body_current
    ```
 
 6. 刷新三角化质量报告：
 
    ```bash
-   conda run -n gymnastic python -m gymnastics.analysis.reports.generate_results_report
+   conda run -n gymnastic python -m fusion.analysis.reports.generate_results_report
    ```
 
 单个人物的完整命令、预期输出和故障排查见[数据处理运行手册](runbook.md)。

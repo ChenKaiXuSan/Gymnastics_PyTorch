@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from gymnastics.benchmarks.unity.supervised_evaluation import (
+from fusion.benchmarks.unity.supervised_evaluation import (
     FineTunedRunEvaluation,
     aggregate_finetuned_results,
     build_finetuned_bundle,

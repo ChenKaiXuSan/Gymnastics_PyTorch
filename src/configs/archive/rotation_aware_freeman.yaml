@@ -1,0 +1,63 @@
+# Subject-disjoint FreeMan training of the rotation-aware fusion model.
+#
+# Same network, losses, optimizer, window geometry and checkpoint-selection
+# score as src/configs/archive/rotation_aware.yaml (the private-data paper protocol).
+# Only the data source and the person split differ: one "person" is one
+# FreeMan subject, one trial is one session, and the two views are the
+# near-orthogonal pair selected by the zero-shot benchmark with native zero
+# temporal offset. The FreeMan 3D reference is never read during cache
+# preparation, training, validation or checkpoint selection.
+#
+# Epoch budget: one FreeMan fold has ~13.5k training windows (private protocol:
+# 1,555), so 12 epochs at batch 32 give ~5.1k window-optimizer steps, matching
+# the ~4.9k steps of the private 100-epoch run.
+paths:
+  # Required keys of the shared trainer; the FreeMan trainer never reads them.
+  sam3d_root: local/runs/freeman_benchmark_cluster/sam3d
+  split_cycle_root: local/runs/freeman_benchmark_cluster/manifests
+  output_root: local/runs/fuse_rotation_aware_freeman
+  skeleton: src/configs/shared/skeleton_mhr70.yaml
+  fold_root: src/configs/shared/folds/freeman
+  default_fold: fold_01.json
+data:
+  fps: 25.0
+  cache_dir: ${paths.output_root}/cache
+window:
+  length: 128
+  train_stride: 32
+  eval_stride: 64
+training:
+  epochs: 12
+  batch_size: 32
+  learning_rate: 0.001
+  hidden_channels: 128
+  seed: 0
+  device: cuda:0
+freeman_training:
+  benchmark_root: local/runs/freeman_benchmark_cluster
+  benchmark_config: src/configs/benchmarks/freeman_cluster.yaml
+  evaluation_output_root: local/runs/freeman_trained_fusion
+  baselines_output_root: local/runs/freeman_external_baselines
+  ablation: A6
+  # The ten paper subjects (552 sessions). Test groups partition them so that
+  # every session receives an out-of-fold prediction; groups were paired to
+  # balance frame counts (subject 22 is the largest, 15 the smallest).
+  evaluation_subjects: [1, 7, 9, 12, 15, 19, 22, 29, 35, 36]
+  test_groups:
+    - [15, 22]
+    - [1, 12]
+    - [35, 36]
+    - [9, 29]
+    - [7, 19]
+  # Fixed checkpoint-selection subjects, outside the evaluation cohort, shared
+  # by every fold (61 sessions cached by the zero-shot benchmark).
+  validation_subjects: [2, 4, 5, 6, 8, 10, 11]
+  run_id_template: freeman_{fold}_a6_e12_s{seed}
+  family_template: a6_e12_s{seed}
+  # Zero-shot benchmark methods the trained model is paired against.
+  comparison_methods:
+    - avg_body_current
+    - rotation_aware:all137_a6_e100_seed0
+    - view_a
+  random_seed: 20260726
+  bootstrap_samples: 10000

@@ -5,22 +5,22 @@ from pathlib import Path
 
 import torch
 
-from gymnastics.benchmarks.unity.camera_guided_data import (
+from fusion.benchmarks.unity.camera_guided_data import (
     build_camera_guided_sequences,
 )
-from gymnastics.benchmarks.unity.camera_guided_training import (
+from fusion.benchmarks.unity.camera_guided_training import (
     CameraGuidedTrainingConfig,
     load_camera_guided_model,
     run_camera_guided_inference,
     train_camera_guided_run,
 )
-from gymnastics.benchmarks.unity.dataset import load_unity_benchmark
-from gymnastics.benchmarks.unity.supervised_data import UNITY_SUPERVISED_FOLDS
+from fusion.benchmarks.unity.dataset import load_unity_benchmark
+from fusion.benchmarks.unity.supervised_data import UNITY_SUPERVISED_FOLDS
 
 
 UNITY_ROOT = Path("/home/data/xchen/gymnastics/unity_benchmark")
 SAM3D_ROOT = Path("local/runs/unity_benchmark/sam3d")
-SKELETON = Path("configs/fusion/skeleton_mhr70.yaml")
+SKELETON = Path("src/configs/shared/skeleton_mhr70.yaml")
 SOURCE_A6 = Path(
     "local/runs/fuse_rotation_aware/runs/"
     "all137_a6_e100_seed0/checkpoints/best.pt"

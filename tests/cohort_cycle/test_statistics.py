@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from gymnastics.analysis.cohort_cycle import statistics as statistics_module
-from gymnastics.analysis.cohort_cycle.statistics import (
+from fusion.analysis.cohort_cycle import statistics as statistics_module
+from fusion.analysis.cohort_cycle.statistics import (
     _fit_model,
     adjust_phase_cluster_families,
     analyze_feature_artifacts,

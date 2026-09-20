@@ -19,17 +19,19 @@ paired face/side videos
 All active Python code is installed from one package:
 
 ```text
-src/gymnastics/
-├── pose_estimation/    # ① SAM3D-Body inference on the raw videos
-├── cycle_alignment/    # ② face/side offset, cycle segmentation, cycle records
-├── pseudo_gt/          # ③ calibration, extrinsics, triangulated evaluation reference
-├── fusion/             # ④ the proposed cycle-aware dual-view fusion network (Lightning + Hydra)
-├── keypoints/          # shared 3D-keypoint representation: trial schema, skeleton, body frame, cache
-├── baselines/          # deterministic comparison matrix and classical baselines
-├── benchmarks/         # Unity native-3D and FreeMan public-data benchmarks
-├── analysis/           # metrics, reports, statistics, visualization
-├── common/             # canonical paths and skeleton metadata
-└── archive/            # frozen paper model (rotation_aware), reproduction only
+src/
+├── pose_estimation/    # ① SAM3D-Body inference            python -m pose_estimation
+├── cycle_alignment/    # ② offset, cycles, cycle records    python -m cycle_alignment {align,cycles}
+├── pseudo_gt/          # ③ calibration, extrinsics, triangulated reference
+│                       #                                    python -m pseudo_gt {calibrate,estimate-extrinsics,triangulate}
+├── fusion/             # ④ the proposed cycle-aware fusion network   python -m fusion train
+│   ├── keypoints/      #    shared 3D-keypoint representation (trial schema, skeleton, body frame, cache)
+│   ├── baselines/      #    deterministic matrix + classical baselines   python -m fusion deterministic
+│   ├── benchmarks/     #    FreeMan / Unity                              python -m fusion benchmark-*
+│   ├── analysis/       #    metrics, reports, cohort statistics          python -m fusion analyze | cohort-cycle
+│   └── archive/        #    frozen paper model (rotation_aware)          python -m fusion rotation-aware
+├── common/             # shared library: paths, config helpers, MHR70 metadata, CLI dispatcher
+└── configs/            # all configuration files, one sub-directory per stage
 ```
 
 ## Installation
@@ -42,7 +44,7 @@ conda run -n gymnastic python -m pip install -e ".[analysis,training,test]"
 ```
 
 SAM3 and SAM-3D-Body are pinned below `third_party/`. Project code imports them
-through the adapter in `gymnastics.pose_estimation`; upstream source is not duplicated in
+through the adapter in `pose_estimation`; upstream source is not duplicated in
 the installed package.
 
 ## Commands
@@ -51,31 +53,31 @@ Run commands from the repository root:
 
 ```bash
 # Extract SAM3D-Body keypoints.
-conda run -n gymnastic gymnastics sam3d
+conda run -n gymnastic python -m pose_estimation run
 
 # Align face/side timelines and segment cycles.
-conda run -n gymnastic gymnastics align
+conda run -n gymnastic python -m cycle_alignment align
 
 # Estimate per-person camera extrinsics.
-conda run -n gymnastic gymnastics triangulate estimate-extrinsics
+conda run -n gymnastic python -m pseudo_gt estimate-extrinsics
 
 # Build the triangulated pseudo-reference.
-conda run -n gymnastic gymnastics triangulate
+conda run -n gymnastic python -m pseudo_gt triangulate
 
 # Run the deterministic fusion matrix.
-conda run -n gymnastic gymnastics fuse deterministic --methods avg_body_current
+conda run -n gymnastic python -m fusion deterministic --methods avg_body_current
 
 # Train the cycle-aware dual-view fusion model (the active model; Hydra overrides).
-conda run -n gymnastic gymnastics fuse cycle-aware experiment=smoke
+conda run -n gymnastic python -m fusion train experiment=smoke
 
-# Archived paper model (reproduction only; see src/gymnastics/archive/README.md).
-conda run -n gymnastic gymnastics fuse rotation-aware --help
+# Archived paper model (reproduction only; see src/fusion/archive/README.md).
+conda run -n gymnastic python -m fusion rotation-aware --help
 
 # Analyze saved sequences.
-conda run -n gymnastic gymnastics analyze
+conda run -n gymnastic python -m fusion analyze
 
 # Calibrate cameras.
-conda run -n gymnastic gymnastics calibrate
+conda run -n gymnastic python -m pseudo_gt calibrate
 ```
 
 Configuration is grouped by domain under `configs/`.
@@ -89,7 +91,7 @@ results, failure coverage, and unfinished experiments, is in
 Regenerate the detailed local tables from the saved per-person/fold artefacts:
 
 ```bash
-conda run -n gymnastic python -m gymnastics.analysis.project_results
+conda run -n gymnastic python -m fusion.analysis.project_results
 ```
 
 ## Data and local assets
@@ -118,9 +120,9 @@ FreeMan's markerless multi-view 3D reference. That reference is not independent
 marker-based motion capture.
 
 ```bash
-conda run -n gymnastic gymnastics benchmark freeman inspect
-conda run -n gymnastic gymnastics benchmark freeman download
-conda run -n gymnastic gymnastics benchmark freeman run
+conda run -n gymnastic python -m fusion benchmark-freeman inspect
+conda run -n gymnastic python -m fusion benchmark-freeman download
+conda run -n gymnastic python -m fusion benchmark-freeman run
 ```
 
 Downloaded archives, extracted subject workspaces, predictions, and reports all
@@ -128,7 +130,7 @@ remain under ignored `local/` paths.
 
 ## Cycle-aware dual-view fusion (Architecture v1.0)
 
-`gymnastics.fusion` is a second, self-contained learned fusion
+`fusion` is a second, self-contained learned fusion
 model that treats the repeated-cycle structure of the recorded motion as a
 first-class signal. It is trained with PyTorch Lightning, configured with
 Hydra, and shares the SAM3D-Body inputs, the canonical body frame, and the
@@ -177,7 +179,7 @@ under swapping the views.
 ### Project structure
 
 ```text
-src/gymnastics/fusion/
+src/fusion/
 ├── skeleton.py           common joint set (mhr70 / mhr70_major), bones, mirrors
 ├── sample.py             DualViewSample + FusionBatch contracts, canonicalisation
 ├── phase.py              cycle phase, phase normalisation, phase encoding, cycle estimation
@@ -192,8 +194,8 @@ src/gymnastics/fusion/
 ├── data/                 base DataModule, windows, sample cache, and one adapter per
 │                         dataset (gymnastics, freeman, unity) plus synthetic
 ├── lightning_module.py   training / validation / test / predict steps
-└── train.py              Hydra entry point (`gymnastics fuse cycle-aware`)
-configs/cycle_aware/      Hydra groups: model, data, loss, corruption, trainer, optimizer, experiment
+└── train.py              Hydra entry point (`python -m fusion train`)
+src/configs/fusion/      Hydra groups: model, data, loss, corruption, trainer, optimizer, experiment
 tests/fusion/        unit and integration tests
 ```
 
@@ -208,47 +210,47 @@ structure.
 
 | Adapter | Source | Cycles + middles (precomputed) | Reference |
 |---|---|---|---|
-| `gymnastics` | rotation-aware person cache or SAM3D + split-cycle records | `alignment_record_<id>.json` (`gymnastics align`, middles via `gymnastics align cycles private`) | triangulated pseudo-reference |
-| `freeman` | zero-shot benchmark SAM3D cache | `local/runs/cycle_records/freeman` (`gymnastics align cycles freeman`) | `keypoints3d_optim` (COCO17) |
-| `unity` | Unity manifest + SAM3D camera cache | `local/runs/cycle_records/unity` (`gymnastics align cycles unity`) | native 3D (Unity22) |
+| `gymnastics` | rotation-aware person cache or SAM3D + split-cycle records | `alignment_record_<id>.json` (`python -m cycle_alignment align`, middles via `python -m cycle_alignment cycles private`) | triangulated pseudo-reference |
+| `freeman` | zero-shot benchmark SAM3D cache | `local/runs/cycle_records/freeman` (`python -m cycle_alignment cycles freeman`) | `keypoints3d_optim` (COCO17) |
+| `unity` | Unity manifest + SAM3D camera cache | `local/runs/cycle_records/unity` (`python -m cycle_alignment cycles unity`) | native 3D (Unity22) |
 | `synthetic` | generated in memory | exact | generating motion |
 
 Cycle detection (cycle start = right-wrist azimuth crossing, middle =
-turn-around extremum) lives entirely in `gymnastics.cycle_alignment`; the training
+turn-around extremum) lives entirely in `cycle_alignment`; the training
 package only reads the record files, so run the `align cycles` step before
 training:
 
 ```bash
-conda run -n gymnastic gymnastics align cycles private      # adds "mid" to the 137 records
-conda run -n gymnastic gymnastics align cycles freeman      # local/runs/cycle_records/freeman
-conda run -n gymnastic gymnastics align cycles unity        # local/runs/cycle_records/unity
-conda run -n gymnastic gymnastics align cycles index        # unified tree + index.json + README.md
+conda run -n gymnastic python -m cycle_alignment cycles private      # adds "mid" to the 137 records
+conda run -n gymnastic python -m cycle_alignment cycles freeman      # local/runs/cycle_records/freeman
+conda run -n gymnastic python -m cycle_alignment cycles unity        # local/runs/cycle_records/unity
+conda run -n gymnastic python -m cycle_alignment cycles index        # unified tree + index.json + README.md
 ```
 
 ### Configuration
 
-Hydra composes `configs/cycle_aware/config.yaml` with the groups `model`,
+Hydra composes `src/configs/fusion/config.yaml` with the groups `model`,
 `data`, `loss`, `corruption`, `trainer`, `optimizer`, and the optional
 `experiment` presets. Every command-line argument is an override:
 
 ```bash
-conda run -n gymnastic gymnastics fuse cycle-aware print_config=true data=freeman
+conda run -n gymnastic python -m fusion train print_config=true data=freeman
 ```
 
 ### Training
 
 ```bash
 # Smoke run on synthetic data (CPU, seconds).
-conda run -n gymnastic gymnastics fuse cycle-aware experiment=smoke
+conda run -n gymnastic python -m fusion train experiment=smoke
 
 # Private data, fixed 96/27/14 split, 50 epochs.
-conda run -n gymnastic gymnastics fuse cycle-aware data=gymnastics trainer.max_epochs=50
+conda run -n gymnastic python -m fusion train data=gymnastics trainer.max_epochs=50
 
-# FreeMan, subject-disjoint split (cycle records from `gymnastics align cycles freeman`).
-conda run -n gymnastic gymnastics fuse cycle-aware data=freeman
+# FreeMan, subject-disjoint split (cycle records from `python -m cycle_alignment cycles freeman`).
+conda run -n gymnastic python -m fusion train data=freeman
 
 # Unity direction-transfer fold.
-conda run -n gymnastic gymnastics fuse cycle-aware data=unity data.options.fold=right_to_left
+conda run -n gymnastic python -m fusion train data=unity data.options.fold=right_to_left
 ```
 
 Outputs (resolved config, CSV logs, checkpoints, `result.json`) are written
@@ -261,9 +263,9 @@ from the current window's own two views (`loss=v1_recovery` keeps the earlier
 recovery objective). See [docs/cycle_aware_fusion.md](docs/cycle_aware_fusion.md).
 
 Cross-validation (5 folds, single seed, 50 epochs is the fixed protocol):
-`folds_dir=configs/cycle_aware/folds/gymnastics` runs the folds sequentially;
+`folds_dir=src/configs/fusion/folds/gymnastics` runs the folds sequentially;
 on the cluster use the job scripts in `pegasus/` (one gpu job per fold) and
-`python -m gymnastics.fusion.summarize <sweep_dir>` afterwards.
+`python -m fusion.summarize <sweep_dir>` afterwards.
 
 ### Testing
 
@@ -274,11 +276,11 @@ conda run -n gymnastic python -m pytest tests/fusion -q
 ### Ablation studies
 
 Each module has a Hydra switch under `model.*` and a ready-made preset under
-`configs/cycle_aware/experiment/`:
+`src/configs/fusion/experiment/`:
 
 ```bash
-conda run -n gymnastic gymnastics fuse cycle-aware data=gymnastics experiment=no_film
-conda run -n gymnastic gymnastics fuse cycle-aware data=gymnastics model.cross_view.enabled=false
+conda run -n gymnastic python -m fusion train data=gymnastics experiment=no_film
+conda run -n gymnastic python -m fusion train data=gymnastics model.cross_view.enabled=false
 ```
 
 Presets: `no_film`, `no_cross_view`, `no_short_motion`, `no_long_motion`,
@@ -288,7 +290,7 @@ Presets: `no_film`, `no_cross_view`, `no_short_motion`, `no_long_motion`,
 
 ## Repository boundaries
 
-- `src/gymnastics/`: active project-owned Python code.
+- `src/`: active project-owned Python code.
 - `tests/`: tests mirroring the active package.
 - `configs/`: runtime configuration grouped by domain.
 - `docs/`: current workflow, module, and runbook documentation.

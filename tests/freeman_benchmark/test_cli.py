@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import gymnastics.benchmarks.freeman.cli as freeman_cli
-from gymnastics.benchmarks.freeman.cli import (
+import fusion.benchmarks.freeman.cli as freeman_cli
+from fusion.benchmarks.freeman.cli import (
     DefaultStageOperations,
     StageOperations,
     main,

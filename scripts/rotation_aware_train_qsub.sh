@@ -2,7 +2,7 @@
 # Generic rotation-aware family training job for the cluster gpu queue.
 #
 #   qsub -o local/runs/fuse_rotation_aware/joblogs/<run_id>.log \
-#        -v CONFIG=configs/fusion/rotation_aware_plain_tcn.yaml,RUN_ID=all137_b1_e100_seed0,ABLATION=B1 \
+#        -v CONFIG=src/configs/archive/rotation_aware_plain_tcn.yaml,RUN_ID=all137_b1_e100_seed0,ABLATION=B1 \
 #        scripts/rotation_aware_train_qsub.sh
 #
 # CONFIG, RUN_ID, ABLATION (required); FOLD (optional, passed to --fold);
@@ -53,7 +53,7 @@ if [ -n "${FOLD:-}" ]; then
   FOLD_ARGS=(--fold "$FOLD")
 fi
 
-"$PYBIN" -m gymnastics fuse rotation-aware train \
+"$PYBIN" -m fusion rotation-aware train \
   --config "$ACTIVE_CONFIG" "${FOLD_ARGS[@]}" \
   --run-id "$RUN_ID" --ablation "$ABLATION"
 status=$?

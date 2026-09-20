@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 import torch
 
-from gymnastics.benchmarks.unity.mapping import map_mhr70_to_unity
-from gymnastics.benchmarks.unity.supervised_loss import (
+from fusion.benchmarks.unity.mapping import map_mhr70_to_unity
+from fusion.benchmarks.unity.supervised_loss import (
     UnitySupervisedLossConfig,
     apply_torch_sim3,
     compute_unity_supervised_loss,

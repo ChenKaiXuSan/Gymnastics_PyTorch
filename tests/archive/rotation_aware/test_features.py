@@ -2,18 +2,18 @@ from pathlib import Path
 
 import torch
 
-from gymnastics.keypoints.config import SkeletonSpec, load_skeleton_spec
-from gymnastics.keypoints.features import (
+from fusion.keypoints.config import SkeletonSpec, load_skeleton_spec
+from fusion.keypoints.features import (
     QualityConfig,
     compute_disagreement_features,
     compute_quality_features,
     extract_pose_features,
 )
-from gymnastics.keypoints.trunk import extract_trunk_features
+from fusion.keypoints.trunk import extract_trunk_features
 from tests.archive.rotation_aware.test_geometry import synthetic_mhr70_pose
 
 
-SPEC = load_skeleton_spec(Path("configs/fusion/skeleton_mhr70.yaml"))
+SPEC = load_skeleton_spec(Path("src/configs/shared/skeleton_mhr70.yaml"))
 
 
 def test_identical_views_have_zero_disagreement():

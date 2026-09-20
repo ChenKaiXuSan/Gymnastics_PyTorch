@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import torch
 
-from gymnastics.analysis.cohort_cycle.oof import (
+from fusion.analysis.cohort_cycle.oof import (
     OOFRun,
     collect_oof_cycles,
     publish_oof_cycles,

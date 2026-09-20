@@ -8,13 +8,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from gymnastics.cycle_alignment.cycle_records import cycle_record_path, write_cycle_record
-from gymnastics.cycle_alignment.cycles import CycleSpan, DetectionSettings
-from gymnastics.common.skeletons.mhr70 import MHR70_INDEX, mhr_names
-from gymnastics.fusion.data.freeman import FreeManDataModule, coco17_to_mhr70
-from gymnastics.fusion.data.gymnastics import GymnasticsDataModule, concatenate_cycles, reference_from_triangulation
-from gymnastics.fusion.data.unity import UnityDataModule, unity22_to_mhr70
-from gymnastics.keypoints.schema import PosePairTrial
+from cycle_alignment.cycle_records import cycle_record_path, write_cycle_record
+from cycle_alignment.cycles import CycleSpan, DetectionSettings
+from common.skeletons.mhr70 import MHR70_INDEX, mhr_names
+from fusion.data.freeman import FreeManDataModule, coco17_to_mhr70
+from fusion.data.gymnastics import GymnasticsDataModule, concatenate_cycles, reference_from_triangulation
+from fusion.data.unity import UnityDataModule, unity22_to_mhr70
+from fusion.keypoints.schema import PosePairTrial
 
 FPS = 30.0
 
@@ -147,7 +147,7 @@ def test_gymnastics_datamodule_with_injected_loaders(tmp_path: Path):
     # Records without middles are rejected unless explicitly allowed.
     _write_alignment_records(tmp_path / "no_mid", trials, with_mid=False)
     strict = GymnasticsDataModule({"name": "gymnastics", "options": {**options, "split_cycle_root": str(tmp_path / "no_mid")}}, trial_loader=lambda person: trials[person], reference_loader=reference_loader)
-    with pytest.raises(ValueError, match="align cycles"):
+    with pytest.raises(ValueError, match="cycle_alignment cycles"):
         strict.setup("fit")
     lenient = GymnasticsDataModule({"name": "gymnastics", "options": {**options, "split_cycle_root": str(tmp_path / "no_mid"), "require_cycle_mids": False}}, trial_loader=lambda person: trials[person], reference_loader=reference_loader)
     lenient.setup("fit")

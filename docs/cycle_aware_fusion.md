@@ -1,6 +1,6 @@
 # Cycle-Aware Dual-View 3D Pose Fusion (Architecture v1.0)
 
-`gymnastics.fusion` fuses two independent monocular 3D pose
+`fusion` fuses two independent monocular 3D pose
 estimates of one person (View A = face camera, View B = side camera on the
 private data) into one refined sequence, treating the repeated-cycle
 structure of the motion as a first-class signal. It is a pure PyTorch model
@@ -13,7 +13,7 @@ body frame, and the MHR70 skeleton metadata.
 ### 1.1 Inputs and coordinate frame
 
 Both views are mapped independently into the pelvis-centred canonical body
-frame (`gymnastics.keypoints.geometry.canonicalize_pose`): origin
+frame (`fusion.keypoints.geometry.canonicalize_pose`): origin
 at the hip midpoint, x from left to right hip, y along pelvis→thorax, z
 completing a right-handed frame, and lengths divided by the median torso
 length of the sequence. The two views are therefore directly comparable
@@ -23,15 +23,15 @@ be mapped back into its world frame.
 ### 1.2 Cycles, middles and phase normalisation
 
 Cycle detection is **not** part of the training code. It runs once, offline,
-in `gymnastics.cycle_alignment` (`cycle_alignment/cycles.py`) and writes record files
+in `cycle_alignment` (`cycle_alignment/cycles.py`) and writes record files
 (`cycle_alignment/cycle_records.py`) that the DataModules read through
 `fusion/data/cycle_records.py`:
 
 | Dataset | Command | Record |
 |---|---|---|
-| private | `gymnastics align` (boundaries) + `gymnastics align cycles private` (middles) | `local/runs/split_cycle/person_<id>/alignment_record_<id>.json` |
-| FreeMan | `gymnastics align cycles freeman` | `local/runs/cycle_records/freeman/subject_NN/<session>.json` |
-| Unity | `gymnastics align cycles unity` | `local/runs/cycle_records/unity/subject_<seq>/<seq>.json` |
+| private | `python -m cycle_alignment align` (boundaries) + `python -m cycle_alignment cycles private` (middles) | `local/runs/split_cycle/person_<id>/alignment_record_<id>.json` |
+| FreeMan | `python -m cycle_alignment cycles freeman` | `local/runs/cycle_records/freeman/subject_NN/<session>.json` |
+| Unity | `python -m cycle_alignment cycles unity` | `local/runs/cycle_records/unity/subject_<seq>/<seq>.json` |
 
 One shared definition is used everywhere: the right-wrist azimuth in the
 pelvis body frame (smoothed, unwrapped) starts a cycle each time it crosses
@@ -174,7 +174,7 @@ docstring.
 
 The private adapter uses the rotation-aware person cache by default
 (`options.source: cache`) and the paper split
-`configs/fusion/folds/paper_137_a6_split.json`. FreeMan reads the SAM3D
+`src/configs/shared/folds/paper_137_a6_split.json`. FreeMan reads the SAM3D
 cache of the zero-shot benchmark (`local/runs/freeman_benchmark_cluster`);
 Unity reads the benchmark manifest plus `local/runs/unity_benchmark/sam3d`.
 Converted samples can be cached with `data.cache_dir` (on by default for the
@@ -183,7 +183,7 @@ three real datasets).
 ## 3. Configuration
 
 ```
-configs/cycle_aware/
+src/configs/fusion/
 ├── config.yaml              root: samples_per_cycle, num_cycles, seed, run_name, output_root
 ├── model/v1.yaml            architecture and ablation switches
 ├── data/{synthetic,gymnastics,freeman,unity}.yaml   (+ _common.yaml)
@@ -205,35 +205,35 @@ whole sequence as context (one padded window per sequence; preset
 
 ```bash
 # Print the composed configuration.
-conda run -n gymnastic gymnastics fuse cycle-aware print_config=true data=gymnastics
+conda run -n gymnastic python -m fusion train print_config=true data=gymnastics
 
 # Smoke run (synthetic, CPU, seconds).
-conda run -n gymnastic gymnastics fuse cycle-aware experiment=smoke
+conda run -n gymnastic python -m fusion train experiment=smoke
 
 # Private data.
-conda run -n gymnastic gymnastics fuse cycle-aware data=gymnastics trainer.max_epochs=50
+conda run -n gymnastic python -m fusion train data=gymnastics trainer.max_epochs=50
 
 # Precompute cycles + middles (once per dataset), then build the unified tree
 # local/runs/cycle_records/{gymnastics,freeman,unity} + index.json + README.md.
-conda run -n gymnastic gymnastics align cycles private
-conda run -n gymnastic gymnastics align cycles freeman
-conda run -n gymnastic gymnastics align cycles unity
-conda run -n gymnastic gymnastics align cycles index
+conda run -n gymnastic python -m cycle_alignment cycles private
+conda run -n gymnastic python -m cycle_alignment cycles freeman
+conda run -n gymnastic python -m cycle_alignment cycles unity
+conda run -n gymnastic python -m cycle_alignment cycles index
 
 # FreeMan (subject-disjoint) on a subject subset.
-conda run -n gymnastic gymnastics fuse cycle-aware data=freeman 'data.options.subjects=[1,2,3,4,5,6]'
+conda run -n gymnastic python -m fusion train data=freeman 'data.options.subjects=[1,2,3,4,5,6]'
 
 # Unity direction transfer.
-conda run -n gymnastic gymnastics fuse cycle-aware data=unity data.options.fold=left_to_right
+conda run -n gymnastic python -m fusion train data=unity data.options.fold=left_to_right
 
 # Ablations.
-conda run -n gymnastic gymnastics fuse cycle-aware data=gymnastics experiment=no_film
-conda run -n gymnastic gymnastics fuse cycle-aware data=gymnastics model.reliability.enabled=false
+conda run -n gymnastic python -m fusion train data=gymnastics experiment=no_film
+conda run -n gymnastic python -m fusion train data=gymnastics model.reliability.enabled=false
 ```
 
 Every run writes `config.yaml`, `logs/` (CSV), `checkpoints/` and
 `result.json` below `local/runs/cycle_aware/<run_name>`. `python -m
-gymnastics.fusion.train` is equivalent to the CLI.
+fusion.train` is equivalent to the CLI.
 
 On a large shared CPU box cap the threads and keep the DataLoader in-process
 (`trainer.num_threads=32 data.num_workers=0`); the default of one torch
@@ -250,16 +250,16 @@ FreeMan and Unity references use `pa_mpjpe`.
 The fixed protocol is **5-fold subject-disjoint cross-validation, single seed
 (0), 50 epochs**, run separately per dataset.
 
-* Fold files: `configs/cycle_aware/folds/gymnastics/fold_01..05.json` (137
+* Fold files: `src/configs/fusion/folds/gymnastics/fold_01..05.json` (137
   people, stratified by elderly / student cohort; every person is tested
   exactly once, the validation people of fold *k* are the test people of fold
-  *k + 1*) and the existing `configs/fusion/folds/freeman/fold_01..05.json`.
+  *k + 1*) and the existing `src/configs/shared/folds/freeman/fold_01..05.json`.
 * `data.fold_json=<file>` selects one fold (it also restricts which subjects
   are loaded); `folds_dir=<dir>` runs every fold sequentially in one process
   and writes `summary.{json,csv}`.
 * Cluster: `bash pegasus/submit_cycle_aware_5fold.sh gymnastics [experiment]`
   submits one gpu job per fold (`pegasus/cycle_aware_fold_qsub.sh`); collect
-  with `PYTHONPATH=src python -m gymnastics.fusion.summarize
+  with `PYTHONPATH=src python -m fusion.summarize
   local/runs/cycle_aware/<sweep>`.
 * Unity is evaluation-only (two short single-sweep sequences, no cycles).
 
@@ -280,9 +280,9 @@ checkpoint reload.
 
 * New dataset: subclass `DualViewDataModule`, implement `load_samples` (return
   `DualViewSample` objects, e.g. through `sample_from_pose_pair_trial`) and
-  `default_split`, add `configs/cycle_aware/data/<name>.yaml`, and register the
+  `default_split`, add `src/configs/fusion/data/<name>.yaml`, and register the
   name in `data/__init__.build_datamodule`.
 * New ablation: add a `@package _global_` preset under
-  `configs/cycle_aware/experiment/` that sets `model.<block>.enabled`.
+  `src/configs/fusion/experiment/` that sets `model.<block>.enabled`.
 * New loss: add a term to `losses.compute_losses` and a weight to
   `LossConfig` / `loss/default.yaml`.

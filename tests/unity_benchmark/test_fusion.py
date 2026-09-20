@@ -3,16 +3,16 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from gymnastics.benchmarks.unity.dataset import load_unity_benchmark
-from gymnastics.benchmarks.unity.fusion import (
+from fusion.benchmarks.unity.dataset import load_unity_benchmark
+from fusion.benchmarks.unity.fusion import (
     build_pose_pair_trial,
     fuse_deterministic_sequence,
     load_rotation_aware_model,
     run_deterministic_fusion,
     run_rotation_aware_fusion,
 )
-from gymnastics.benchmarks.unity.schema import UnityBenchmark
-from gymnastics.baselines.experiment_matrix import (
+from fusion.benchmarks.unity.schema import UnityBenchmark
+from fusion.baselines.experiment_matrix import (
     ALL_METHODS,
     current_body_average,
 )
@@ -138,7 +138,7 @@ def test_loads_existing_rotation_checkpoint_metadata() -> None:
 
     loaded = load_rotation_aware_model(
         checkpoint,
-        "configs/fusion/skeleton_mhr70.yaml",
+        "src/configs/shared/skeleton_mhr70.yaml",
         "cpu",
     )
 
@@ -171,7 +171,7 @@ def test_runs_existing_rotation_checkpoint_zero_shot(tmp_path) -> None:
                 "all137_a4_e100_seed0/checkpoints/best.pt"
             )
         },
-        skeleton_path="configs/fusion/skeleton_mhr70.yaml",
+        skeleton_path="src/configs/shared/skeleton_mhr70.yaml",
         fps=60.0,
         device="cpu",
     )

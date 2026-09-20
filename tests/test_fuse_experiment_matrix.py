@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from gymnastics.baselines.experiment_matrix import (
+from fusion.baselines.experiment_matrix import (
     ALL_METHODS,
     AVAILABLE_METHODS,
     EXTRINSIC_METHODS,
@@ -285,8 +285,8 @@ def test_build_aligned_timeline_converts_positions_to_frame_ids(monkeypatch):
     def fake_offset(face_theta, side_theta):
         return -1
 
-    monkeypatch.setattr("gymnastics.baselines.experiment_matrix.compute_theta_unwrap_from_world", fake_theta)
-    monkeypatch.setattr("gymnastics.baselines.experiment_matrix.estimate_offset_by_dtw", fake_offset)
+    monkeypatch.setattr("fusion.baselines.experiment_matrix.compute_theta_unwrap_from_world", fake_theta)
+    monkeypatch.setattr("fusion.baselines.experiment_matrix.estimate_offset_by_dtw", fake_offset)
 
     face_by_frame = {
         10: np.full((2, 3), 10.0, dtype=np.float32),
@@ -312,7 +312,7 @@ def test_build_aligned_timeline_uses_split_offset_override(monkeypatch):
     def fail_if_called(face_theta, side_theta):
         raise AssertionError("DTW should not run when split offset is provided")
 
-    monkeypatch.setattr("gymnastics.baselines.experiment_matrix.estimate_offset_by_dtw", fail_if_called)
+    monkeypatch.setattr("fusion.baselines.experiment_matrix.estimate_offset_by_dtw", fail_if_called)
 
     face_by_frame = {
         10: np.full((2, 3), 10.0, dtype=np.float32),

@@ -38,9 +38,9 @@ from generate_comparison_tables import (  # noqa: E402
     load_test_people,
     reevaluate_compact_metrics,
 )
-from gymnastics.keypoints.config import load_skeleton_spec  # noqa: E402
+from fusion.keypoints.config import load_skeleton_spec  # noqa: E402
 
-PRIVATE_SPLIT = ROOT / "configs/fusion/folds/paper_137_a6_split.json"
+PRIVATE_SPLIT = ROOT / "src/configs/shared/folds/paper_137_a6_split.json"
 _PRIVATE_EVALUATION_ROOT = ROOT / "local/runs/fuse_rotation_aware/evaluation"
 _PRIVATE_LEARNED_CANDIDATES = (
     # Preferred: the evaluation that also contains the B1 plain-TCN run.
@@ -66,7 +66,7 @@ PRIVATE_EXTERNAL_ROOT = ROOT / "local/runs/fuse_external_baselines"
 PRIVATE_TRIANGULATED_ROOT = Path(
     "/work/1/HP260146/chenkaixu/gymnastics/sam3d_triangulated/person"
 )
-SKELETON = ROOT / "configs/fusion/skeleton_mhr70.yaml"
+SKELETON = ROOT / "src/configs/shared/skeleton_mhr70.yaml"
 FREEMAN_ROOTS = (
     ROOT / "local/runs/freeman_benchmark_cluster",
     ROOT / "local/runs/freeman_external_baselines",
@@ -376,7 +376,7 @@ def main() -> None:
     if not args.skip_private_reevaluation:
         for method in ("extrinsic_r_average", "extrinsic_r_quality_average"):
             reevaluate_roots[method] = PRIVATE_EXTRINSIC_ROOT / method
-        from gymnastics.baselines.experiment_matrix import BASELINE_METHODS
+        from fusion.baselines.experiment_matrix import BASELINE_METHODS
 
         for method in BASELINE_METHODS:
             reevaluate_roots[method] = PRIVATE_EXTERNAL_ROOT / method

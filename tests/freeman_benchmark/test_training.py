@@ -7,10 +7,10 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from gymnastics.benchmarks.freeman.evaluation import SessionMetrics
-from gymnastics.benchmarks.freeman.fusion import RotationRuntime
-from gymnastics.benchmarks.freeman.schema import PosePairInput, ViewPrediction
-from gymnastics.benchmarks.freeman.training import (
+from fusion.benchmarks.freeman.evaluation import SessionMetrics
+from fusion.benchmarks.freeman.fusion import RotationRuntime
+from fusion.benchmarks.freeman.schema import PosePairInput, ViewPrediction
+from fusion.benchmarks.freeman.training import (
     FoldRun,
     METHOD_PREFIX,
     TRAINING_SOURCE,
@@ -25,10 +25,10 @@ from gymnastics.benchmarks.freeman.training import (
     make_subject_disjoint_folds,
     write_subject_disjoint_folds,
 )
-from gymnastics.benchmarks.freeman.training_cli import paired_subject_comparison
-from gymnastics.common.skeletons.mhr70 import MHR70_NAMES
-from gymnastics.keypoints.data import load_cached_trial
-from gymnastics.archive.rotation_aware.dataset import build_split_manifest
+from fusion.benchmarks.freeman.training_cli import paired_subject_comparison
+from common.skeletons.mhr70 import MHR70_NAMES
+from fusion.keypoints.data import load_cached_trial
+from fusion.archive.rotation_aware.dataset import build_split_manifest
 
 PAIR = {
     "session_id": "20220101_fixture_subj05",
@@ -306,7 +306,7 @@ def test_paired_subject_comparison_uses_subject_means() -> None:
 
 
 def test_deterministic_baselines_write_session_metrics(benchmark_root: Path, tmp_path: Path) -> None:
-    from gymnastics.benchmarks.freeman.training import (
+    from fusion.benchmarks.freeman.training import (
         evaluate_deterministic_methods,
         load_session_metric_rows,
     )

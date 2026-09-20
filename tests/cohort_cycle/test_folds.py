@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from gymnastics.analysis.cohort_cycle.cohorts import CohortRecord
-from gymnastics.analysis.cohort_cycle.folds import (
+from fusion.analysis.cohort_cycle.cohorts import CohortRecord
+from fusion.analysis.cohort_cycle.folds import (
     FoldSplit,
     build_crossfit_folds,
     write_crossfit_artifacts,

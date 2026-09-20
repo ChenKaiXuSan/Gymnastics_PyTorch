@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from gymnastics.analysis.project_results import (
+from fusion.analysis.project_results import (
     generate_project_results,
     holm_adjust,
     load_split_manifest,

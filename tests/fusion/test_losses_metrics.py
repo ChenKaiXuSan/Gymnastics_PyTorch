@@ -3,15 +3,15 @@ from __future__ import annotations
 import pytest
 import torch
 
-from gymnastics.fusion.losses import (
+from fusion.losses import (
     LossConfig,
     compute_losses,
     periodicity_loss,
     pseudo_target,
     symmetry_loss,
 )
-from gymnastics.fusion.metrics import mean_per_joint_position_error, procrustes_align
-from gymnastics.fusion.model import CycleAwareFusionModel
+from fusion.metrics import mean_per_joint_position_error, procrustes_align
+from fusion.model import CycleAwareFusionModel
 
 
 def test_pseudo_target_rules():

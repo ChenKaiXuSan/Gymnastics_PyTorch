@@ -6,22 +6,22 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from gymnastics.common.skeletons.mhr70 import mhr_names
-from gymnastics.keypoints.config import load_skeleton_spec
-from gymnastics.archive.rotation_aware.dataset import (
+from common.skeletons.mhr70 import mhr_names
+from fusion.keypoints.config import load_skeleton_spec
+from fusion.archive.rotation_aware.dataset import (
     PosePairWindowDataset,
     SplitManifest,
     WindowConfig,
 )
-from gymnastics.archive.rotation_aware.real_camera_data import (
+from fusion.archive.rotation_aware.real_camera_data import (
     CameraWindowDataset,
     load_real_camera_trials,
     prepare_real_camera_observation_cache,
 )
-from gymnastics.keypoints.schema import PosePairTrial
+from fusion.keypoints.schema import PosePairTrial
 
 
-SPEC = load_skeleton_spec(Path("configs/fusion/skeleton_mhr70.yaml"))
+SPEC = load_skeleton_spec(Path("src/configs/shared/skeleton_mhr70.yaml"))
 
 
 def _trial() -> PosePairTrial:

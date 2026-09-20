@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from gymnastics.analysis.cohort_cycle.phase_statistics import (
+from fusion.analysis.cohort_cycle.phase_statistics import (
     cluster_permutation_test,
 )
 

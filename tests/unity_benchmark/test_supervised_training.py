@@ -9,8 +9,8 @@ import torch
 import yaml
 from torch.utils.data import DataLoader
 
-from gymnastics.benchmarks.unity.dataset import load_unity_benchmark
-from gymnastics.benchmarks.unity.supervised import (
+from fusion.benchmarks.unity.dataset import load_unity_benchmark
+from fusion.benchmarks.unity.supervised import (
     UnityFineTuneConfig,
     discover_completed_runs,
     run_finetuned_inference,
@@ -18,28 +18,28 @@ from gymnastics.benchmarks.unity.supervised import (
     train_supervised_epoch,
     validate_completed_run,
 )
-from gymnastics.benchmarks.unity.supervised_data import (
+from fusion.benchmarks.unity.supervised_data import (
     UNITY_SUPERVISED_FOLDS,
     UnitySupervisedWindowDataset,
     build_supervised_sequence,
     build_supervised_sequences,
 )
-from gymnastics.benchmarks.unity.supervised_loss import (
+from fusion.benchmarks.unity.supervised_loss import (
     UnitySupervisedLossConfig,
 )
-from gymnastics.keypoints.config import load_skeleton_spec
-from gymnastics.archive.rotation_aware.corruptions import CorruptionConfig
-from gymnastics.archive.rotation_aware.dataset import (
+from fusion.keypoints.config import load_skeleton_spec
+from fusion.archive.rotation_aware.corruptions import CorruptionConfig
+from fusion.archive.rotation_aware.dataset import (
     collate_pose_pair_windows,
 )
-from gymnastics.archive.rotation_aware.losses import LossConfig
-from gymnastics.archive.rotation_aware.model import RotationAwareFusionModel
-from gymnastics.archive.rotation_aware.training import save_checkpoint
+from fusion.archive.rotation_aware.losses import LossConfig
+from fusion.archive.rotation_aware.model import RotationAwareFusionModel
+from fusion.archive.rotation_aware.training import save_checkpoint
 
 
 UNITY_ROOT = Path("/home/data/xchen/gymnastics/unity_benchmark")
 SAM3D_ROOT = Path("local/runs/unity_benchmark/sam3d")
-SKELETON_PATH = Path("configs/fusion/skeleton_mhr70.yaml")
+SKELETON_PATH = Path("src/configs/shared/skeleton_mhr70.yaml")
 
 
 @pytest.fixture(scope="module")

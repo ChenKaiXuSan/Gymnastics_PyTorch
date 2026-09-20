@@ -4,18 +4,18 @@ from pathlib import Path
 
 import numpy as np
 
-from gymnastics.benchmarks.unity.camera_guided_data import (
+from fusion.benchmarks.unity.camera_guided_data import (
     UnityCameraGuidedWindowDataset,
     build_camera_guided_sequences,
     camera_conditioning_config,
 )
-from gymnastics.benchmarks.unity.dataset import load_unity_benchmark
-from gymnastics.benchmarks.unity.supervised_data import UNITY_SUPERVISED_FOLDS
+from fusion.benchmarks.unity.dataset import load_unity_benchmark
+from fusion.benchmarks.unity.supervised_data import UNITY_SUPERVISED_FOLDS
 
 
 UNITY_ROOT = Path("/home/data/xchen/gymnastics/unity_benchmark")
 SAM3D_ROOT = Path("local/runs/unity_benchmark/sam3d")
-SKELETON = Path("configs/fusion/skeleton_mhr70.yaml")
+SKELETON = Path("src/configs/shared/skeleton_mhr70.yaml")
 
 
 def _sequences(ablation: str):

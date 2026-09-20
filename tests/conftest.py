@@ -14,7 +14,7 @@ def tiny_smoothnet_checkpoint(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """
     import torch
 
-    from gymnastics.baselines.classical_baselines import (
+    from fusion.baselines.classical_baselines import (
         SMOOTHNET_CHECKPOINT_ENV,
         build_smoothnet,
     )

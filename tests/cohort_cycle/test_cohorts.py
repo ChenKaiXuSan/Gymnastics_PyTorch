@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from gymnastics.analysis.cohort_cycle.cohorts import (
+from fusion.analysis.cohort_cycle.cohorts import (
     load_cohort_records,
     sha256_file,
 )

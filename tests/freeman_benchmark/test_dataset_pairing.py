@@ -8,13 +8,13 @@ import cv2
 import numpy as np
 import pytest
 
-from gymnastics.benchmarks.freeman.dataset import (
+from fusion.benchmarks.freeman.dataset import (
     load_session_reference,
     load_subject_sessions,
 )
-from gymnastics.benchmarks.freeman.mapping import FREEMAN_COCO17_NAMES
-from gymnastics.benchmarks.freeman.pairing import select_camera_pair
-from gymnastics.benchmarks.freeman.schema import FreeManCamera, FreeManSession
+from fusion.benchmarks.freeman.mapping import FREEMAN_COCO17_NAMES
+from fusion.benchmarks.freeman.pairing import select_camera_pair
+from fusion.benchmarks.freeman.schema import FreeManCamera, FreeManSession
 
 
 def test_loads_both_fps_subsets_and_exact_subject(freeman_fixture) -> None:

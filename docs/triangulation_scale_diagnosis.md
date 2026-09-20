@@ -10,13 +10,13 @@
 ## 结论
 
 三角化伪真值的绝对尺度不可信，逐人尺度也不一致。根因是**双相机外参从未标定**，
-而是由 `configs/triangulation/sam3d_triangulation.yaml` 里写死的名义几何合成出来的。
+而是由 `src/configs/pseudo_gt/sam3d_triangulation.yaml` 里写死的名义几何合成出来的。
 
 ## 证据
 
 ### 1. 外参是合成的，不是标定的
 
-`configs/triangulation/sam3d_triangulation.yaml` 中：
+`src/configs/pseudo_gt/sam3d_triangulation.yaml` 中：
 
 ```yaml
 camera_position:

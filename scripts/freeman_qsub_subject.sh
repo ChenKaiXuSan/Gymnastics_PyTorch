@@ -5,7 +5,7 @@
 #
 # SUBJECT (required): FreeMan subject ID 1..40.
 # FRAME_STRIDE (optional): overrides the config stride (default: config value).
-# CONFIG (optional): benchmark YAML path (default configs/benchmarks/freeman_cluster.yaml).
+# CONFIG (optional): benchmark YAML path (default src/configs/benchmarks/freeman_cluster.yaml).
 # The pipeline caches per-session results, so resubmitting the same subject
 # resumes instead of recomputing.
 #
@@ -22,7 +22,7 @@ REPO=/work/HP260146/chenkaixu/Gymnastics_PyTorch
 cd "$REPO" || exit 1
 
 : "${SUBJECT:?SUBJECT (1..40) must be passed via qsub -v}"
-CONFIG="${CONFIG:-configs/benchmarks/freeman_cluster.yaml}"
+CONFIG="${CONFIG:-src/configs/benchmarks/freeman_cluster.yaml}"
 STRIDE_ARGS=()
 if [ -n "${FRAME_STRIDE:-}" ]; then
   STRIDE_ARGS=(--frame-stride "$FRAME_STRIDE")
@@ -54,7 +54,7 @@ fi
 ENVBIN=/home/SKIING/chenkaixu/miniconda3/envs/sam_3d_body/bin
 export PATH="$ENVBIN:$PATH"
 PYBIN="$ENVBIN/python"
-"$PYBIN" -m gymnastics benchmark freeman run \
+"$PYBIN" -m fusion benchmark-freeman run \
   --config "$CONFIG" \
   --subject "$SUBJECT" \
   "${STRIDE_ARGS[@]}"

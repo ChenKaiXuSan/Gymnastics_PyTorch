@@ -1,0 +1,73 @@
+# SAM3D-Body config for the FreeMan benchmark's batched inference path.
+# Identical model stack to sam3d_body.yaml; the added `inference:` block
+# switches fusion.benchmarks.freeman to windowed batched full-mode
+# inference. This file's sha256 is part of the SAM3D cache identity, so
+# batched caches never mix with per-frame caches.
+
+# hydra config
+hydra:
+  run:
+    dir: ${paths.log_path}
+  job:
+    chdir: false
+
+# Path
+data_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}
+
+paths:
+  video_path: ${data_root}/raw/person
+  log_path: local/runs/sam3d
+  result_output_path: ${data_root}/sam3d_body_results/person
+
+# Model
+model:
+  root_path: ${oc.env:GYMNASTICS_CHECKPOINT_ROOT,local/checkpoints/models}/sam-3d-body-dinov3
+  checkpoint_path: ${model.root_path}/model.ckpt
+  mhr_path: ${model.root_path}/assets/mhr_model.pt
+
+  # detector_name: yolov8n
+  # segmentor_name: sam_vit_b
+  fov_name: moge2
+
+visualize:
+  save_focal_length: false
+  save_mesh_ply: false
+  save_mesh_overlay: true
+  save_bbox_image: true
+  save_3d_mesh: false
+  save_3d_keypoints: true
+  save_together: true
+
+infer:
+  conf_thres: 50.0
+  keep_frames: true
+  num_inference_steps: 4
+  gpu: [0, 1] # 指定使用的 GPU 列表
+  workers_per_gpu: 1 # 每个 GPU 使用的工作线程数,3090 建议 2
+  person_list: [-1] # 指定需要处理的人物 ID 列表，-1 表示处理所有人物
+  rotate_frames: false # 是否在推理前旋转输入帧
+  rotate_code: ROTATE_90_CLOCKWISE # rotate_frames=true 时使用的 cv2 旋转方式
+
+dataset:
+  recursive: true
+
+# Batched FreeMan inference (read by fusion.benchmarks.freeman.sam3d).
+# Deviations from the per-frame path, all deliberate:
+# - camera intrinsics: median MoGe estimate over the first fov_probe_frames
+#   of each session view, reused for the whole view (fixed camera), instead
+#   of one MoGe forward per frame;
+# - detection and pose run over frame windows in batch;
+# - no per-frame torch.cuda.empty_cache().
+inference:
+  batched: true
+  window: 32
+  detect_batch: 8
+  fov_probe_frames: 5
+  # Caches produced under these SAM3D config hashes are accepted as
+  # equivalent to this config. Declared after the 2026-08-05 parity
+  # validation of batched vs per-frame inference on subject 01 / stride 25:
+  # mean 0.85 mm / median 0.38 mm keypoint difference on the 17 evaluation
+  # joints, identical failed-frame sets, end-to-end metrics identical.
+  # Hash below = src/configs/pose_estimation/sam3d_body.yaml (per-frame path).
+  identity_aliases:
+    - dce26ba300acaa2c8183c711a05ef79005689e05da260f58fed7851461edc466

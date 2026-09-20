@@ -10,9 +10,9 @@ import pytorch_lightning as pl
 import torch
 from omegaconf import OmegaConf
 
-from gymnastics.fusion.data.synthetic import SyntheticDataModule
-from gymnastics.fusion.lightning_module import CycleAwareFusionModule, OptimizerConfig
-from gymnastics.fusion.train import build_module, compose_config, run
+from fusion.data.synthetic import SyntheticDataModule
+from fusion.lightning_module import CycleAwareFusionModule, OptimizerConfig
+from fusion.train import build_module, compose_config, run
 
 TINY_MODEL = {"hidden_dim": 16, "num_heads": 2, "samples_per_cycle": 8, "spatial": {"layers": 1}, "short_motion": {"layers": 1}, "long_motion": {"layers": 1}}
 TINY_DATA = {"name": "synthetic", "batch_size": 4, "window": {"num_cycles": 2, "samples_per_cycle": 8}, "options": {"subjects": 4, "sequences_per_subject": 1, "frames": 48, "period": 12}}
@@ -76,8 +76,8 @@ def test_full_hydra_smoke_run(tmp_path: Path):
 
 
 def test_fold_files_and_sweep(tmp_path: Path):
-    from gymnastics.fusion.data.folds import make_subject_folds, read_fold_file, write_fold_files
-    from gymnastics.fusion.train import run_folds
+    from fusion.data.folds import make_subject_folds, read_fold_file, write_fold_files
+    from fusion.train import run_folds
 
     subjects = [f"subject_{i:02d}" for i in range(6)]
     folds = make_subject_folds(subjects, k=3, seed=0, stratify=lambda s: "a" if int(s[-2:]) % 2 else "b")
@@ -101,7 +101,7 @@ def test_fold_files_and_sweep(tmp_path: Path):
 
 
 def test_summarize_sweep_collects_fold_results(tmp_path: Path):
-    from gymnastics.fusion.summarize import summarize_sweep
+    from fusion.summarize import summarize_sweep
 
     for fold, value in (("fold_01", 0.1), ("fold_02", 0.3)):
         (tmp_path / fold).mkdir()
@@ -114,7 +114,7 @@ def test_summarize_sweep_collects_fold_results(tmp_path: Path):
 
 
 def test_weighted_folds_balance_volume():
-    from gymnastics.fusion.data.folds import make_subject_folds
+    from fusion.data.folds import make_subject_folds
 
     subjects = [f"{i:02d}" for i in range(1, 21)]
     weights = {s: float(i * i) for i, s in enumerate(subjects, start=1)}  # 1 .. 400

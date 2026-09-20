@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from gymnastics.benchmarks.freeman.download import (
+from fusion.benchmarks.freeman.download import (
     cleanup_subject_workspace,
     download_release,
     extract_shared_annotations,
@@ -19,7 +19,7 @@ from gymnastics.benchmarks.freeman.download import (
     subject_archive_set,
     validate_downloads,
 )
-from gymnastics.benchmarks.freeman.schema import ArchiveEntry
+from fusion.benchmarks.freeman.schema import ArchiveEntry
 
 
 @dataclass(frozen=True)

@@ -111,7 +111,7 @@ Qin 2026, D3PRefiner, Theia3D.
 ## Implementation status (2026-09-18)
 
 Implemented as shared label-free methods in
-`src/gymnastics/baselines/classical_baselines.py`, registered in
+`src/fusion/baselines/classical_baselines.py`, registered in
 `experiment_matrix.BASELINE_METHODS` and dispatched by the private matrix,
 the FreeMan benchmark and the Unity benchmark alike:
 
@@ -126,9 +126,9 @@ the FreeMan benchmark and the Unity benchmark alike:
 Runs: private `local/runs/fuse_external_baselines/` (137 people, compact
 NPZ per method, re-evaluated on the 14 held-out people by
 `paper/sports_engineering/scripts/generate_main_matrix.py`); FreeMan
-`local/runs/freeman_external_baselines/` (`gymnastics benchmark freeman-train
-baselines`); Unity `local/runs/unity_benchmark/` (`gymnastics benchmark unity
-fuse --config configs/benchmarks/unity_hp260146.yaml --method ...` then
+`local/runs/freeman_external_baselines/` (`python -m fusion benchmark-freeman-train
+baselines`); Unity `local/runs/unity_benchmark/` (`python -m fusion benchmark-unity
+fuse --config src/configs/benchmarks/unity_hp260146.yaml --method ...` then
 `evaluate`; previous evaluation backed up as `evaluation.bak_2026-09-18`).
 
 The cross-dataset main matrix (rows = method blocks, columns = private /

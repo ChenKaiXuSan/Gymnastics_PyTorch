@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from gymnastics.fusion.corruptions import (
+from fusion.corruptions import (
     CORRUPTION_FAMILIES,
     CorruptionConfig,
     corrupt_view,

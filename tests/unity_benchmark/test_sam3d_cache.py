@@ -4,8 +4,8 @@ from pathlib import Path
 
 import numpy as np
 
-from gymnastics.benchmarks.unity.dataset import load_unity_benchmark
-from gymnastics.benchmarks.unity.sam3d import (
+from fusion.benchmarks.unity.dataset import load_unity_benchmark
+from fusion.benchmarks.unity.sam3d import (
     _read_rgb_image,
     load_sam3d_camera_cache,
     run_sam3d_inference,
@@ -13,7 +13,7 @@ from gymnastics.benchmarks.unity.sam3d import (
 
 
 UNITY_ROOT = Path("/home/data/xchen/gymnastics/unity_benchmark")
-CONFIG = Path("configs/sam3d/sam3d_body.yaml")
+CONFIG = Path("src/configs/pose_estimation/sam3d_body.yaml")
 
 
 class FakeEstimator:

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from gymnastics.common.skeletons.mhr70 import MHR70_MAJOR_JOINT_INDICES, mhr_names
-from gymnastics.fusion.skeleton import build_common_skeleton
+from common.skeletons.mhr70 import MHR70_MAJOR_JOINT_INDICES, mhr_names
+from fusion.skeleton import build_common_skeleton
 
 
 def test_full_skeleton_matches_mhr70():

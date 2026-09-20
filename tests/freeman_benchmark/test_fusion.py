@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from gymnastics.benchmarks.freeman.fusion import (
+from fusion.benchmarks.freeman.fusion import (
     METHOD_CLASSIFICATION,
     RotationRuntime,
     build_rotation_aware_trial,
@@ -15,9 +15,9 @@ from gymnastics.benchmarks.freeman.fusion import (
     load_method_prediction,
     save_method_prediction,
 )
-from gymnastics.benchmarks.freeman.schema import PosePairInput, ViewPrediction
-from gymnastics.common.skeletons.mhr70 import MHR70_NAMES
-from gymnastics.baselines.experiment_matrix import ALL_METHODS
+from fusion.benchmarks.freeman.schema import PosePairInput, ViewPrediction
+from common.skeletons.mhr70 import MHR70_NAMES
+from fusion.baselines.experiment_matrix import ALL_METHODS
 
 
 def _view(

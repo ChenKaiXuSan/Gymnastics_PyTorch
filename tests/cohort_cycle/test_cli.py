@@ -9,8 +9,8 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from gymnastics.analysis.cohort_cycle.cli import main as cohort_cycle_main
-from gymnastics.archive.rotation_aware.cli import (
+from fusion.analysis.cohort_cycle.cli import main as cohort_cycle_main
+from fusion.archive.rotation_aware.cli import (
     _paths as rotation_paths,
     load_config as load_rotation_config,
 )
@@ -33,7 +33,7 @@ def test_cohort_cycle_help_lists_pipeline_stages():
         [
             sys.executable,
             "-m",
-            "gymnastics",
+            "fusion",
             "cohort-cycle",
             "--help",
         ],
@@ -56,7 +56,7 @@ def test_a6_crossfit_config_resolves_shared_cache_environment(
     """A nested unresolved interpolation makes every cross-fit run miss cache."""
     monkeypatch.setenv("GYMNASTICS_SHARED_RUN_ROOT", str(tmp_path))
     config = load_rotation_config(
-        PROJECT_ROOT / "configs/analysis/cohort_cycle_a6_train.yaml"
+        PROJECT_ROOT / "src/configs/analysis/cohort_cycle_a6_train.yaml"
     )
 
     paths = rotation_paths(config, None)

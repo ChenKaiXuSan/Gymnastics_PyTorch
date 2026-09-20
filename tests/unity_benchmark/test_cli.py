@@ -9,7 +9,7 @@ import yaml
 
 import numpy as np
 
-from gymnastics.benchmarks.unity.cli import (
+from fusion.benchmarks.unity.cli import (
     _load_method_sequence,
     main as unity_main,
 )
@@ -21,7 +21,7 @@ def _run(*arguments: str) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(PROJECT_ROOT / "src")
     return subprocess.run(
-        [sys.executable, "-m", "gymnastics", *arguments],
+        [sys.executable, "-m", "fusion", *arguments],
         cwd=PROJECT_ROOT,
         env=environment,
         capture_output=True,
@@ -32,10 +32,10 @@ def _run(*arguments: str) -> subprocess.CompletedProcess[str]:
 
 def test_unified_cli_exposes_all_unity_stages() -> None:
     top = _run("--help")
-    nested = _run("benchmark", "unity", "--help")
+    nested = _run("benchmark-unity", "--help")
 
     assert top.returncode == 0, top.stderr
-    assert "benchmark" in top.stdout
+    assert "benchmark-unity" in top.stdout
     assert nested.returncode == 0, nested.stderr
     for stage in (
         "inspect",
@@ -51,11 +51,10 @@ def test_unified_cli_exposes_all_unity_stages() -> None:
 
 def test_inspect_reports_real_dataset_inventory() -> None:
     result = _run(
-        "benchmark",
-        "unity",
+        "benchmark-unity",
         "inspect",
         "--config",
-        "configs/benchmarks/unity.yaml",
+        "src/configs/benchmarks/unity.yaml",
     )
 
     assert result.returncode == 0, result.stderr
@@ -72,8 +71,8 @@ def test_oracle_triangulation_stage_writes_three_sequences(
         "paths": {
             "dataset_root": "/home/data/xchen/gymnastics/unity_benchmark",
             "output_root": str(tmp_path / "run"),
-            "sam3d_config": "configs/sam3d/sam3d_body.yaml",
-            "skeleton": "configs/fusion/skeleton_mhr70.yaml",
+            "sam3d_config": "src/configs/pose_estimation/sam3d_body.yaml",
+            "skeleton": "src/configs/shared/skeleton_mhr70.yaml",
         },
         "checkpoints": {},
         "data": {"fps": 60.0},

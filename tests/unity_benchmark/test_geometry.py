@@ -4,15 +4,15 @@ from pathlib import Path
 
 import numpy as np
 
-from gymnastics.benchmarks.unity.dataset import load_unity_benchmark
-from gymnastics.benchmarks.unity.geometry import (
+from fusion.benchmarks.unity.dataset import load_unity_benchmark
+from fusion.benchmarks.unity.geometry import (
     project_world,
     run_oracle_triangulation,
     run_sam3d_triangulation,
     triangulate_pixels,
 )
-from gymnastics.benchmarks.unity.mapping import map_mhr70_to_unity
-from gymnastics.benchmarks.unity.schema import UnityBenchmark
+from fusion.benchmarks.unity.mapping import map_mhr70_to_unity
+from fusion.benchmarks.unity.schema import UnityBenchmark
 
 
 UNITY_ROOT = Path("/home/data/xchen/gymnastics/unity_benchmark")

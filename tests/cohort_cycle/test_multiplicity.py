@@ -1,6 +1,6 @@
 import numpy as np
 
-from gymnastics.analysis.cohort_cycle.multiplicity import (
+from fusion.analysis.cohort_cycle.multiplicity import (
     benjamini_hochberg,
     holm_adjust,
 )

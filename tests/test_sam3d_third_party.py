@@ -1,4 +1,4 @@
-from gymnastics.pose_estimation._third_party import ensure_sam3d_body_importable
+from pose_estimation._third_party import ensure_sam3d_body_importable
 
 
 def test_worktree_resolves_initialized_sam3d_checkout() -> None:

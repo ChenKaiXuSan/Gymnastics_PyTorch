@@ -3,12 +3,12 @@
 #
 #   qsub -v FOLD=fold_01,SEED=0 scripts/freeman_train_qsub_fold.sh
 #
-# FOLD (required): fold name under configs/fusion/folds/freeman (fold_01..fold_05).
+# FOLD (required): fold name under src/configs/shared/folds/freeman (fold_01..fold_05).
 # SEED (optional): training seed (default 0); becomes part of the run id.
-# CONFIG (optional): rotation-aware YAML (default configs/fusion/rotation_aware_freeman.yaml).
+# CONFIG (optional): rotation-aware YAML (default src/configs/archive/rotation_aware_freeman.yaml).
 # Prerequisite (login node, CPU):
-#   gymnastics benchmark freeman-train prepare-cache --config $CONFIG
-#   gymnastics benchmark freeman-train write-folds   --config $CONFIG
+#   python -m fusion benchmark-freeman-train prepare-cache --config $CONFIG
+#   python -m fusion benchmark-freeman-train write-folds   --config $CONFIG
 #
 #PBS -A SKIING
 #PBS -q gpu
@@ -24,7 +24,7 @@ cd "$REPO" || exit 1
 
 : "${FOLD:?FOLD (fold_01..fold_05) must be passed via qsub -v}"
 SEED="${SEED:-0}"
-CONFIG="${CONFIG:-configs/fusion/rotation_aware_freeman.yaml}"
+CONFIG="${CONFIG:-src/configs/archive/rotation_aware_freeman.yaml}"
 RUN_ID="freeman_${FOLD}_a6_e12_s${SEED}"
 
 export PYTHONPATH="$REPO/src"
@@ -50,9 +50,9 @@ config["training"]["seed"] = seed
 yaml.safe_dump(config, open(target, "w", encoding="utf-8"), sort_keys=False)
 EOF
 
-"$PYBIN" -m gymnastics fuse rotation-aware train \
+"$PYBIN" -m fusion rotation-aware train \
   --config "$RESOLVED" \
-  --fold "configs/fusion/folds/freeman/${FOLD}.json" \
+  --fold "src/configs/shared/folds/freeman/${FOLD}.json" \
   --run-id "$RUN_ID" \
   --ablation A6
 status=$?

@@ -1,0 +1,49 @@
+# Fields shared by every DataModule (merged into each dataset file).
+skeleton: ${model.skeleton}
+batch_size: 8
+num_workers: 0
+seed: ${seed}
+window:
+  num_cycles: ${num_cycles}
+  samples_per_cycle: ${samples_per_cycle}
+  # Stride between training windows in samples; null = samples_per_cycle // 2.
+  train_stride: null
+  # Stride between evaluation windows; null = the window length.
+  eval_stride: null
+# Resample every annotated cycle to samples_per_cycle samples.
+phase_normalize: true
+# Attach reference poses to validation / test samples.
+attach_reference: true
+# Keep references on training samples too (loss.recovery_target=reference).
+# Refused by the gymnastics adapter (its reference is derived from the inputs).
+train_with_reference: false
+corruption: ${corruption}
+# Replay a fixed corruption on validation windows for comparable losses.
+validate_with_corruption: true
+# Replay the fixed corruption on test windows (robustness evaluation).
+test_with_corruption: false
+# Leave-one-cycle-out cross-cycle target (gymnastics/fusion/cycle_aware/cycle_target.py).
+cycle_target:
+  enabled: true
+  # Cycles on each side used as candidates (null = every other cycle).
+  neighbors: 2
+  # Dispersion scale of the confidence C = 1 / (1 + (MAD / tau)^2), canonical units.
+  tau: 0.05
+  # Fewer valid candidates than this -> no target (C = 0).
+  min_candidates: 4
+  # "median" or "trimmed_mean".
+  aggregation: median
+# Explicit subject split: if any list is non-empty the whole split is used as
+# given (empty lists stay empty); all empty = adapter default.
+split:
+  train: []
+  val: []
+  test: []
+# Fold file with train/val/test subject lists (used when split is empty), e.g.
+# src/configs/fusion/folds/gymnastics/fold_01.json or
+# src/configs/shared/folds/freeman/fold_01.json. null = adapter default split.
+fold_json: null
+# Cap subjects per split for quick experiments (null = all).
+max_subjects_per_split: null
+# Directory for the converted-sample cache (null = convert on every run).
+cache_dir: null

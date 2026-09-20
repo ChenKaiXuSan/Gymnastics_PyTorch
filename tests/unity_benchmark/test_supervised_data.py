@@ -6,8 +6,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from gymnastics.benchmarks.unity.dataset import load_unity_benchmark
-from gymnastics.benchmarks.unity.supervised_data import (
+from fusion.benchmarks.unity.dataset import load_unity_benchmark
+from fusion.benchmarks.unity.supervised_data import (
     UNITY_SUPERVISED_FOLDS,
     UnitySupervisedWindowDataset,
     audit_fold_isolation,
@@ -18,7 +18,7 @@ from gymnastics.benchmarks.unity.supervised_data import (
 
 UNITY_ROOT = Path("/home/data/xchen/gymnastics/unity_benchmark")
 SAM3D_ROOT = Path("local/runs/unity_benchmark/sam3d")
-SKELETON = Path("configs/fusion/skeleton_mhr70.yaml")
+SKELETON = Path("src/configs/shared/skeleton_mhr70.yaml")
 
 
 def test_direction_folds_are_exact_and_static_is_evaluation_only() -> None:

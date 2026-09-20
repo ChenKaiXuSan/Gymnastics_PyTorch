@@ -4,19 +4,19 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from gymnastics.benchmarks.freeman.evaluation import (
+from fusion.benchmarks.freeman.evaluation import (
     SessionMetrics,
     aggregate_metrics,
     evaluate_session,
     paired_method_tests,
 )
-from gymnastics.benchmarks.freeman.mapping import FREEMAN_COCO17_NAMES
-from gymnastics.benchmarks.freeman.report import (
+from fusion.benchmarks.freeman.mapping import FREEMAN_COCO17_NAMES
+from fusion.benchmarks.freeman.report import (
     ReportContext,
     write_report,
 )
-from gymnastics.benchmarks.freeman.schema import MethodPrediction, ReferenceSequence
-from gymnastics.common.skeletons.mhr70 import MHR70_INDEX
+from fusion.benchmarks.freeman.schema import MethodPrediction, ReferenceSequence
+from common.skeletons.mhr70 import MHR70_INDEX
 
 
 def _reference(frames: int = 4) -> ReferenceSequence:

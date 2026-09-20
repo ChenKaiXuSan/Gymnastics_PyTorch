@@ -40,7 +40,10 @@ test = [
 ]
 
 [project.scripts]
-gymnastics = "gymnastics.cli:main"
+pose-estimation = "pose_estimation.cli:main"
+cycle-alignment = "cycle_alignment.cli:main"
+pseudo-gt = "pseudo_gt.cli:main"
+fusion = "fusion.cli:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

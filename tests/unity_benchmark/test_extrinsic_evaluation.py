@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from gymnastics.benchmarks.unity.extrinsic_evaluation import (
+from fusion.benchmarks.unity.extrinsic_evaluation import (
     aggregate_extrinsic_results,
     write_extrinsic_report,
 )

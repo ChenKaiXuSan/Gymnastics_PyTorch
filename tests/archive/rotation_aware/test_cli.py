@@ -10,11 +10,11 @@ import pytest
 import torch
 from torch.utils.data import DataLoader
 
-from gymnastics.common.skeletons.mhr70 import mhr_names
-from gymnastics.archive.rotation_aware import cli
-from gymnastics.keypoints.config import load_skeleton_spec
-from gymnastics.archive.rotation_aware.prefetch import ThroughputConfig
-from gymnastics.archive.rotation_aware.cli import (
+from common.skeletons.mhr70 import mhr_names
+from fusion.archive.rotation_aware import cli
+from fusion.keypoints.config import load_skeleton_spec
+from fusion.archive.rotation_aware.prefetch import ThroughputConfig
+from fusion.archive.rotation_aware.cli import (
     CROSS_ATTENTION_ABLATIONS,
     _cache_trial_paths,
     _cached_trials,
@@ -27,7 +27,7 @@ from gymnastics.archive.rotation_aware.cli import (
     model_kwargs_for_training,
     resolve_fold,
 )
-from gymnastics.archive.rotation_aware.losses import LossConfig
+from fusion.archive.rotation_aware.losses import LossConfig
 
 
 def test_training_schedule_resolves_batch64_method_epochs() -> None:
@@ -236,7 +236,7 @@ def test_training_schedule_rejects_invalid_ablation_or_epochs(
 
 
 def test_twist_ablation_loss_and_model_flags_are_correct() -> None:
-    from gymnastics.archive.rotation_aware.cli import loss_config_for_ablation, TWIST_ABLATIONS
+    from fusion.archive.rotation_aware.cli import loss_config_for_ablation, TWIST_ABLATIONS
 
     # A6 baseline untouched; A7 adds the ROM-peak anchor; A8 adds the twist model;
     # A9 adds the observed twist-rate anchor (改法3).
@@ -293,7 +293,7 @@ def test_model_metadata_records_checkpoint_reconstruction_fields() -> None:
 
 
 def test_cross_attention_production_config_declares_equal_budgets() -> None:
-    config = load_config("configs/fusion/rotation_aware_cross_attention.yaml")
+    config = load_config("src/configs/archive/rotation_aware_cross_attention.yaml")
 
     a10 = _training_config_for_ablation(config, "A10")
     assert a10["epochs"] == 100
@@ -309,9 +309,9 @@ def test_cross_attention_production_config_declares_equal_budgets() -> None:
 @pytest.mark.parametrize(
     "config_path",
     [
-        "configs/fusion/rotation_aware.yaml",
-        "configs/fusion/rotation_aware_batch64.yaml",
-        "configs/fusion/rotation_aware_cross_attention.yaml",
+        "src/configs/archive/rotation_aware.yaml",
+        "src/configs/archive/rotation_aware_batch64.yaml",
+        "src/configs/archive/rotation_aware_cross_attention.yaml",
     ],
 )
 def test_production_config_uses_paper_137_person_split(config_path: str) -> None:
@@ -358,7 +358,7 @@ def test_train_rejects_invalid_schedule_before_loading_cache(
             "sam3d_root": str(tmp_path / "sam3d"),
             "split_cycle_root": str(tmp_path / "split"),
             "output_root": str(tmp_path / "out"),
-            "skeleton": "configs/fusion/skeleton_mhr70.yaml",
+            "skeleton": "src/configs/shared/skeleton_mhr70.yaml",
             "fold_json": str(fold),
         },
         "training": {"epochs_by_ablation": {"A4": 200, "A5": 200}},
@@ -441,7 +441,7 @@ def test_prepare_smoke_uses_real_tiny_files_and_writes_manifest(tmp_path: Path) 
     config.write_text(
         "\n".join(
             [
-                f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n  output_root: {tmp_path / 'out'}\n  skeleton: configs/fusion/skeleton_mhr70.yaml\n  fold_json: {fold}",
+                f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n  output_root: {tmp_path / 'out'}\n  skeleton: src/configs/shared/skeleton_mhr70.yaml\n  fold_json: {fold}",
                 "training:\n  epochs: 1\n  batch_size: 1\n  hidden_channels: 8",
             ]
         )
@@ -485,7 +485,7 @@ def test_configured_training_device_is_forwarded(
     config = tmp_path / "config.yaml"
     config.write_text(
         f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n"
-        f"  output_root: {output}\n  skeleton: configs/fusion/skeleton_mhr70.yaml\n"
+        f"  output_root: {output}\n  skeleton: src/configs/shared/skeleton_mhr70.yaml\n"
         f"  fold_json: {fold}\ntraining:\n  epochs: 1\n  batch_size: 1\n"
         "  hidden_channels: 8\n  seed: 3\n  device: cuda:1\n"
         "performance:\n  prefetch_batches: 2\n  pin_memory: true\n"
@@ -554,7 +554,7 @@ def test_prepare_reports_empty_alignment_cycles_without_index_error(tmp_path: Pa
     output = tmp_path / "out"
     config = tmp_path / "config.yaml"
     config.write_text(
-        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n  output_root: {output}\n  skeleton: configs/fusion/skeleton_mhr70.yaml\n  fold_json: {fold}"
+        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n  output_root: {output}\n  skeleton: src/configs/shared/skeleton_mhr70.yaml\n  fold_json: {fold}"
     )
 
     assert main(["prepare", "--config", str(config), "--person", "1"]) == 1
@@ -590,7 +590,7 @@ def test_train_infer_evaluate_smoke_uses_canonical_cached_trials(
     config = tmp_path / "config.yaml"
     out = tmp_path / "out"
     config.write_text(
-        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n  output_root: {out}\n  skeleton: configs/fusion/skeleton_mhr70.yaml\n  fold_json: {fold}\ntraining:\n  epochs: 1\n  batch_size: 1\n  hidden_channels: 8\n  seed: 3"
+        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n  output_root: {out}\n  skeleton: src/configs/shared/skeleton_mhr70.yaml\n  fold_json: {fold}\ntraining:\n  epochs: 1\n  batch_size: 1\n  hidden_channels: 8\n  seed: 3"
     )
 
     assert main(["prepare", "--config", str(config), "--person", "1"]) == 0
@@ -660,7 +660,7 @@ def test_infer_rejects_cache_generation_republished_after_training(
     out = tmp_path / "out"
     config = tmp_path / "config.yaml"
     config.write_text(
-        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n  output_root: {out}\n  skeleton: configs/fusion/skeleton_mhr70.yaml\n  fold_json: {fold}\ntraining:\n  epochs: 1\n  batch_size: 1\n  hidden_channels: 8\n  seed: 3"
+        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n  output_root: {out}\n  skeleton: src/configs/shared/skeleton_mhr70.yaml\n  fold_json: {fold}\ntraining:\n  epochs: 1\n  batch_size: 1\n  hidden_channels: 8\n  seed: 3"
     )
 
     assert main(["prepare", "--config", str(config), "--person", "1"]) == 0
@@ -731,7 +731,7 @@ def test_prepare_filters_people_without_alignment_and_reports_them(
     out = tmp_path / "out"
     config = tmp_path / "config.yaml"
     config.write_text(
-        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n  output_root: {out}\n  skeleton: configs/fusion/skeleton_mhr70.yaml\n  fold_json: {fold}"
+        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n  output_root: {out}\n  skeleton: src/configs/shared/skeleton_mhr70.yaml\n  fold_json: {fold}"
     )
 
     assert main(["prepare", "--config", str(config)]) == 0
@@ -775,7 +775,7 @@ def test_train_person_subset_without_train_trials_fails_clearly(
             "sam3d_root": str(tmp_path / "sam3d"),
             "split_cycle_root": str(tmp_path / "split"),
             "output_root": str(tmp_path / "out"),
-            "skeleton": "configs/fusion/skeleton_mhr70.yaml",
+            "skeleton": "src/configs/shared/skeleton_mhr70.yaml",
             "fold_json": str(fold),
         }
     }
@@ -819,7 +819,7 @@ def test_prepare_explicit_failure_returns_nonzero_after_writing_manifest(
     out = tmp_path / "out"
     config = tmp_path / "config.yaml"
     config.write_text(
-        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {tmp_path / 'split'}\n  output_root: {out}\n  skeleton: configs/fusion/skeleton_mhr70.yaml\n  fold_json: {fold}"
+        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {tmp_path / 'split'}\n  output_root: {out}\n  skeleton: src/configs/shared/skeleton_mhr70.yaml\n  fold_json: {fold}"
     )
 
     assert main(["prepare", "--config", str(config), "--person", "1"]) == 1
@@ -855,7 +855,7 @@ def test_default_prepare_returns_nonzero_after_active_aligned_person_cache_failu
     out = tmp_path / "out"
     config = tmp_path / "config.yaml"
     config.write_text(
-        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n  output_root: {out}\n  skeleton: configs/fusion/skeleton_mhr70.yaml\n  fold_json: {fold}"
+        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n  output_root: {out}\n  skeleton: src/configs/shared/skeleton_mhr70.yaml\n  fold_json: {fold}"
     )
     monkeypatch.setattr(
         cli,
@@ -894,7 +894,7 @@ def test_default_prepare_reports_oserror_from_cache_write(tmp_path: Path, monkey
     out = tmp_path / "out"
     config = tmp_path / "config.yaml"
     config.write_text(
-        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n  output_root: {out}\n  skeleton: configs/fusion/skeleton_mhr70.yaml\n  fold_json: {fold}"
+        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n  output_root: {out}\n  skeleton: src/configs/shared/skeleton_mhr70.yaml\n  fold_json: {fold}"
     )
     monkeypatch.setattr(
         cli,
@@ -936,7 +936,7 @@ def test_default_prepare_keeps_aligned_people_outside_fold_membership(
     out = tmp_path / "out"
     config = tmp_path / "config.yaml"
     config.write_text(
-        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n  output_root: {out}\n  skeleton: configs/fusion/skeleton_mhr70.yaml\n  fold_json: {fold}"
+        f"paths:\n  sam3d_root: {sam3d}\n  split_cycle_root: {split}\n  output_root: {out}\n  skeleton: src/configs/shared/skeleton_mhr70.yaml\n  fold_json: {fold}"
     )
 
     assert main(["prepare", "--config", str(config)]) == 0
@@ -1216,7 +1216,7 @@ def test_evaluate_combines_a4_a5_a6_runs_with_deterministic_a0_a3(
         # old_fuse_root must be pinned inside tmp_path: it otherwise defaults to
         # the repository's real local/runs/fuse_experiments and this test then picks up
         # the nine deterministic methods stored there for person_1.
-        f"paths:\n  sam3d_root: {tmp_path / 'sam3d'}\n  split_cycle_root: {tmp_path / 'split'}\n  output_root: {out}\n  skeleton: configs/fusion/skeleton_mhr70.yaml\n  old_fuse_root: {tmp_path / 'old_fuse'}\n  fold_json: {tmp_path / 'fold.json'}"
+        f"paths:\n  sam3d_root: {tmp_path / 'sam3d'}\n  split_cycle_root: {tmp_path / 'split'}\n  output_root: {out}\n  skeleton: src/configs/shared/skeleton_mhr70.yaml\n  old_fuse_root: {tmp_path / 'old_fuse'}\n  fold_json: {tmp_path / 'fold.json'}"
     )
 
     assert (
@@ -1250,7 +1250,7 @@ def test_evaluate_combines_a4_a5_a6_runs_with_deterministic_a0_a3(
 
 
 def test_inference_rejects_checkpoint_with_different_skeleton_contract() -> None:
-    skeleton = load_skeleton_spec("configs/fusion/skeleton_mhr70.yaml")
+    skeleton = load_skeleton_spec("src/configs/shared/skeleton_mhr70.yaml")
 
     with pytest.raises(ValueError, match="skeleton"):
         cli._validate_checkpoint_skeleton({"skeleton": {}}, skeleton)

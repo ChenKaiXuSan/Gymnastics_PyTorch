@@ -5,11 +5,11 @@ from pathlib import Path
 
 import numpy as np
 
-from gymnastics.benchmarks.unity.dataset import (
+from fusion.benchmarks.unity.dataset import (
     group_evaluation_sequences,
     load_unity_benchmark,
 )
-from gymnastics.benchmarks.unity.mapping import (
+from fusion.benchmarks.unity.mapping import (
     EVALUATION_JOINT_NAMES,
     map_mhr70_to_unity,
 )

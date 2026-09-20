@@ -8,7 +8,7 @@ triangulated results.
 ## Camera Extrinsics
 
 Intrinsics come from chessboard calibration, but the extrinsics used to be taken
-from a synthetic layout in `configs/triangulation/sam3d_triangulation.yaml` (four cameras on a
+from a synthetic layout in `src/configs/pseudo_gt/sam3d_triangulation.yaml` (four cameras on a
 3.5 m circle, face/side assumed exactly 90 deg apart with a 4.95 m baseline)
 shared by every person. The rig was in fact re-positioned between sessions, so
 that single assumed pose fits nobody well: held-out reprojection error runs about
@@ -17,7 +17,7 @@ that single assumed pose fits nobody well: held-out reprojection error runs abou
 Estimate the real per-person extrinsics from the SAM3D correspondences first:
 
 ```bash
-conda run -n gymnastic gymnastics triangulate estimate-extrinsics
+conda run -n gymnastic python -m pseudo_gt estimate-extrinsics
 ```
 
 This writes `local/runs/analysis/extrinsics/estimated_extrinsics.json`, which
@@ -28,7 +28,7 @@ Compare the two sources on reprojection error, shape error against SAM3D's own
 monocular 3D, and bone-length stability:
 
 ```bash
-conda run -n gymnastic python -m gymnastics.analysis.reports.compare_extrinsics
+conda run -n gymnastic python -m fusion.analysis.reports.compare_extrinsics
 ```
 
 ## Metric Scale
@@ -69,19 +69,19 @@ Triangulate SAM3D-Body 2D keypoints using cycle-level face/side alignment
 records from `split_cycle`:
 
 ```bash
-conda run -n gymnastic gymnastics triangulate
+conda run -n gymnastic python -m pseudo_gt triangulate
 ```
 
 Quick smoke test on one person/cycle:
 
 ```bash
-conda run -n gymnastic gymnastics triangulate --person 1 --max-cycles 1 --max-frames 2
+conda run -n gymnastic python -m pseudo_gt triangulate --person 1 --max-cycles 1 --max-frames 2
 ```
 
 The legacy/support triangulation entry point is:
 
 ```bash
-conda run -n gymnastic gymnastics triangulate
+conda run -n gymnastic python -m pseudo_gt triangulate
 ```
 
 ## Inputs
@@ -92,10 +92,10 @@ The SAM3D split-cycle triangulation path uses:
 /home/data/xchen/gymnastics/sam3d_body_results/person/<id>/face/*.npz
 /home/data/xchen/gymnastics/sam3d_body_results/person/<id>/side/*.npz
 local/runs/split_cycle/person_<id>/alignment_record_<id>.json
-configs/triangulation/sam3d_triangulation.yaml
+src/configs/pseudo_gt/sam3d_triangulation.yaml
 ```
 
-The older support entry point uses `configs/triangulation/legacy.yaml`.
+The older support entry point uses `src/configs/pseudo_gt/legacy.yaml`.
 
 ## Outputs
 
@@ -133,7 +133,7 @@ Camera pose visualizations are stored under:
 Generate a consolidated quality report and CSV details:
 
 ```bash
-conda run -n gymnastic python -m gymnastics.analysis.reports.generate_results_report
+conda run -n gymnastic python -m fusion.analysis.reports.generate_results_report
 ```
 
 The report files are written to:
@@ -164,9 +164,9 @@ local/runs/analysis/triangulated_results/triangulated_person_summary.csv
 
 ## Related Consumers
 
-- `src/gymnastics/analysis/compare_fused_triangulated.py` compares face/side/fused SAM3D-Body
+- `src/fusion/analysis/compare_fused_triangulated.py` compares face/side/fused SAM3D-Body
   3D keypoints against the triangulated reference.
-- `src/gymnastics/baselines/experiment_matrix.py` can evaluate fusion variants against the
+- `src/fusion/baselines/experiment_matrix.py` can evaluate fusion variants against the
   triangulated dataset.
 
 ## Tests

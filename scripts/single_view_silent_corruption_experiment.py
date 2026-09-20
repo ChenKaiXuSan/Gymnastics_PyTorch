@@ -24,16 +24,16 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 os.environ.setdefault("GYMNASTICS_DATA_ROOT", "/work/1/HP260146/chenkaixu/gymnastics")
 
-from gymnastics.keypoints.config import load_skeleton_spec
-from gymnastics.archive.rotation_aware.corruptions import CorruptionConfig, apply_corruptions
-from gymnastics.keypoints.data import load_cached_trial, resolve_cache_manifest
-from gymnastics.archive.rotation_aware.evaluation import (
+from fusion.keypoints.config import load_skeleton_spec
+from fusion.archive.rotation_aware.corruptions import CorruptionConfig, apply_corruptions
+from fusion.keypoints.data import load_cached_trial, resolve_cache_manifest
+from fusion.archive.rotation_aware.evaluation import (
     MethodSequence, external_metrics_from_reference, load_triangulated_references,
 )
-from gymnastics.archive.rotation_aware.inference import canonicalize_trial, overlap_taper, _starts, _forward
-from gymnastics.archive.rotation_aware.model import RotationAwareFusionModel
-from gymnastics.archive.rotation_aware.cli import model_kwargs_for_training
-from gymnastics.archive.rotation_aware.training import load_checkpoint
+from fusion.archive.rotation_aware.inference import canonicalize_trial, overlap_taper, _starts, _forward
+from fusion.archive.rotation_aware.model import RotationAwareFusionModel
+from fusion.archive.rotation_aware.cli import model_kwargs_for_training
+from fusion.archive.rotation_aware.training import load_checkpoint
 
 RUNS = REPO / "local/runs/fuse_rotation_aware"
 TRI_ROOT = Path(os.environ["GYMNASTICS_DATA_ROOT"]) / "sam3d_triangulated/person"
@@ -102,8 +102,8 @@ def main():
     args = ap.parse_args()
     torch.set_num_threads(8)
     out_dir = Path(args.out); out_dir.mkdir(parents=True, exist_ok=True)
-    skeleton = load_skeleton_spec(REPO / "configs/fusion/skeleton_mhr70.yaml")
-    val_people = json.load(open(REPO / "configs/fusion/folds/paper_137_a6_split.json"))["val"]
+    skeleton = load_skeleton_spec(REPO / "src/configs/shared/skeleton_mhr70.yaml")
+    val_people = json.load(open(REPO / "src/configs/shared/folds/paper_137_a6_split.json"))["val"]
     if args.people: val_people = val_people[: args.people]
     models = {a: load_model(a, skeleton) for a in ("A4", "A5", "A6")}
     tiers = args.tiers.split(",")

@@ -1,0 +1,20 @@
+# Private two-camera gymnastics recordings (137 people, cycles annotated).
+defaults:
+  - _common
+name: gymnastics
+# Converted samples are cached here after the first run.
+cache_dir: local/runs/cycle_aware/sample_cache
+options:
+  # "cache": rotation-aware person cache; "raw": SAM3D root + split-cycle records.
+  source: cache
+  cache_root: local/runs/fuse_rotation_aware/cache
+  sam3d_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}/sam3d_body_results
+  split_cycle_root: local/runs/split_cycle
+  # Triangulated pseudo-reference (evaluation only).
+  triangulated_root: ${oc.env:GYMNASTICS_DATA_ROOT,/home/data/xchen/gymnastics}/sam3d_triangulated/person
+  # Fixed paper protocol: 96 / 27 / 14 people.
+  fold_json: src/configs/shared/folds/paper_137_a6_split.json
+  # Optional explicit person list (null = every person in the fold file).
+  persons: null
+  # Records must carry cycle middles (`python -m cycle_alignment cycles private`).
+  require_cycle_mids: true

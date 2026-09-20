@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import torch
 
-from gymnastics.benchmarks.unity.extrinsic_training import (
+from fusion.benchmarks.unity.extrinsic_training import (
     EXTRINSIC_METHODS,
     ExtrinsicRun,
     ExtrinsicSequence,
@@ -17,10 +17,10 @@ from gymnastics.benchmarks.unity.extrinsic_training import (
     train_extrinsic_run,
     validate_extrinsic_run,
 )
-from gymnastics.benchmarks.unity.supervised_data import (
+from fusion.benchmarks.unity.supervised_data import (
     UNITY_SUPERVISED_FOLDS,
 )
-from gymnastics.benchmarks.unity.supervised_loss import (
+from fusion.benchmarks.unity.supervised_loss import (
     torch_map_mhr70_to_unity16,
 )
 

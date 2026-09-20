@@ -6,24 +6,24 @@ from pathlib import Path
 import pytest
 import torch
 
-import gymnastics.archive.rotation_aware.model as rotation_model
-from gymnastics.keypoints.config import RoleSpec, SkeletonSpec, load_skeleton_spec
-from gymnastics.keypoints.features import (
+import fusion.archive.rotation_aware.model as rotation_model
+from fusion.keypoints.config import RoleSpec, SkeletonSpec, load_skeleton_spec
+from fusion.keypoints.features import (
     DisagreementFeatures,
     FeatureBundle,
     compute_disagreement_features,
     compute_quality_features,
     extract_pose_features,
 )
-from gymnastics.archive.rotation_aware.model import (
+from fusion.archive.rotation_aware.model import (
     RotationAwareFusionModel,
     SharedViewEncoder,
 )
-from gymnastics.keypoints.trunk import extract_trunk_features
+from fusion.keypoints.trunk import extract_trunk_features
 from tests.archive.rotation_aware.test_geometry import synthetic_mhr70_pose
 
 
-SPEC = load_skeleton_spec(Path("configs/fusion/skeleton_mhr70.yaml"))
+SPEC = load_skeleton_spec(Path("src/configs/shared/skeleton_mhr70.yaml"))
 
 
 def _feature_bundle(points: torch.Tensor, valid: torch.Tensor, spec: SkeletonSpec = SPEC) -> FeatureBundle:
@@ -145,8 +145,8 @@ def _rebuild_inputs(
 
 
 def test_apply_axial_twist_shifts_trunk_twist_by_commanded_angle_and_is_identity_at_zero() -> None:
-    from gymnastics.keypoints.geometry import apply_axial_twist
-    from gymnastics.keypoints.trunk import axial_rotation_angle_from_points, circular_diff
+    from fusion.keypoints.geometry import apply_axial_twist
+    from fusion.keypoints.trunk import axial_rotation_angle_from_points, circular_diff
 
     points, valid = synthetic_mhr70_pose(theta_deg=20.0, frames=4)
     angle0, valid0 = axial_rotation_angle_from_points(points, valid, SPEC)

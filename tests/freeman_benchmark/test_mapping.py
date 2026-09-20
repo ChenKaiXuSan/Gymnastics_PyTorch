@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import numpy as np
 
-from gymnastics.benchmarks.freeman.mapping import (
+from fusion.benchmarks.freeman.mapping import (
     FREEMAN_COCO17_NAMES,
     MAPPING_VERSION,
     map_mhr70_to_freeman,
 )
-from gymnastics.common.skeletons.mhr70 import MHR70_INDEX
+from common.skeletons.mhr70 import MHR70_INDEX
 
 
 def test_maps_exact_coco17_names_in_official_order() -> None:

@@ -43,18 +43,18 @@ disjointness between training and evaluation.
 ```bash
 export PYTHONPATH=src
 PY=/home/SKIING/chenkaixu/miniconda3/envs/sam_3d_body/bin/python
-$PY -m gymnastics benchmark freeman-train prepare-cache   # CPU, ~1 min
-$PY -m gymnastics benchmark freeman-train write-folds
-$PY -m gymnastics benchmark freeman-train plan --seed 0   # prints the five train commands
+$PY -m fusion benchmark-freeman-train prepare-cache   # CPU, ~1 min
+$PY -m fusion benchmark-freeman-train write-folds
+$PY -m fusion benchmark-freeman-train plan --seed 0   # prints the five train commands
 for f in fold_01 fold_02 fold_03 fold_04 fold_05; do
   qsub -v FOLD=$f,SEED=0 scripts/freeman_train_qsub_fold.sh
 done
-$PY -m gymnastics benchmark freeman-train evaluate --seed 0
-$PY -m gymnastics benchmark freeman-train compare  --seed 0
+$PY -m fusion benchmark-freeman-train evaluate --seed 0
+$PY -m fusion benchmark-freeman-train compare  --seed 0
 ```
 
-Config: `configs/fusion/rotation_aware_freeman.yaml`. Folds:
-`configs/fusion/folds/freeman/fold_0{1..5}.json`. Runs:
+Config: `src/configs/archive/rotation_aware_freeman.yaml`. Folds:
+`src/configs/shared/folds/freeman/fold_0{1..5}.json`. Runs:
 `local/runs/fuse_rotation_aware_freeman/runs/freeman_fold_0X_a6_e12_s0`.
 Evaluation and paired comparison: `local/runs/freeman_trained_fusion/`.
 

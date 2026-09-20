@@ -6,24 +6,24 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from gymnastics.benchmarks.unity.camera_features import CameraFeatureSequence
-from gymnastics.common.skeletons.mhr70 import mhr_names
-from gymnastics.keypoints.config import load_skeleton_spec
-from gymnastics.archive.rotation_aware.corruptions import CorruptionConfig
-from gymnastics.archive.rotation_aware.inference import canonicalize_trial
-from gymnastics.archive.rotation_aware.losses import LossConfig
-from gymnastics.archive.rotation_aware.model import RotationAwareFusionModel
-from gymnastics.archive.rotation_aware.real_camera_data import RealCameraTrial
-from gymnastics.archive.rotation_aware.real_camera_training import (
+from fusion.benchmarks.unity.camera_features import CameraFeatureSequence
+from common.skeletons.mhr70 import mhr_names
+from fusion.keypoints.config import load_skeleton_spec
+from fusion.archive.rotation_aware.corruptions import CorruptionConfig
+from fusion.archive.rotation_aware.inference import canonicalize_trial
+from fusion.archive.rotation_aware.losses import LossConfig
+from fusion.archive.rotation_aware.model import RotationAwareFusionModel
+from fusion.archive.rotation_aware.real_camera_data import RealCameraTrial
+from fusion.archive.rotation_aware.real_camera_training import (
     RealCameraTrainingConfig,
     expand_and_freeze_camera_model,
     infer_real_camera_cell,
     train_real_camera_cell,
 )
-from gymnastics.keypoints.schema import PosePairTrial
+from fusion.keypoints.schema import PosePairTrial
 
 
-SPEC_PATH = Path("configs/fusion/skeleton_mhr70.yaml")
+SPEC_PATH = Path("src/configs/shared/skeleton_mhr70.yaml")
 SPEC = load_skeleton_spec(SPEC_PATH)
 
 
@@ -115,11 +115,11 @@ def test_training_writes_isolation_provenance_and_preserves_backbone(
         return {"loss": 1.0}
 
     monkeypatch.setattr(
-        "gymnastics.archive.rotation_aware.real_camera_training.train_one_epoch",
+        "fusion.archive.rotation_aware.real_camera_training.train_one_epoch",
         fake_train,
     )
     monkeypatch.setattr(
-        "gymnastics.archive.rotation_aware.real_camera_training.validate",
+        "fusion.archive.rotation_aware.real_camera_training.validate",
         lambda *args, **kwargs: {"loss": 0.5, "score": 0.75},
     )
     run = train_real_camera_cell(

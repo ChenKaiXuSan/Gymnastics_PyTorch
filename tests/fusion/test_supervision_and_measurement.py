@@ -9,12 +9,12 @@ import numpy as np
 import pytest
 import torch
 
-from gymnastics.fusion.data.synthetic import SyntheticDataModule
-from gymnastics.fusion.lightning_module import CycleAwareFusionModule, EvaluationConfig
-from gymnastics.fusion.losses import LossConfig, compute_losses, half_symmetry_loss, reference_target
-from gymnastics.fusion.measurement import retention_ratios, trunk_twist
-from gymnastics.fusion.model import CycleAwareFusionModel
-from gymnastics.fusion.train import compose_config, run
+from fusion.data.synthetic import SyntheticDataModule
+from fusion.lightning_module import CycleAwareFusionModule, EvaluationConfig
+from fusion.losses import LossConfig, compute_losses, half_symmetry_loss, reference_target
+from fusion.measurement import retention_ratios, trunk_twist
+from fusion.model import CycleAwareFusionModel
+from fusion.train import compose_config, run
 
 TINY_MODEL = {"hidden_dim": 16, "num_heads": 2, "samples_per_cycle": 8, "spatial": {"layers": 1}, "short_motion": {"layers": 1}, "long_motion": {"layers": 1}}
 TINY_DATA = {"name": "synthetic", "batch_size": 4, "window": {"num_cycles": 2, "samples_per_cycle": 8}, "options": {"subjects": 4, "sequences_per_subject": 1, "frames": 48, "period": 12}}
@@ -130,7 +130,7 @@ def test_train_with_reference_and_gymnastics_refusal(tmp_path: Path):
     plain = SyntheticDataModule(TINY_DATA)
     plain.setup("fit")
     assert not next(iter(plain.train_dataloader()))["reference_valid"].any()
-    from gymnastics.fusion.data.gymnastics import GymnasticsDataModule
+    from fusion.data.gymnastics import GymnasticsDataModule
 
     with pytest.raises(ValueError, match="must not supervise"):
         GymnasticsDataModule({"name": "gymnastics", "train_with_reference": True, "options": {"persons": ["1"]}}, trial_loader=lambda p: [], reference_loader=lambda p, c: None).setup("fit")

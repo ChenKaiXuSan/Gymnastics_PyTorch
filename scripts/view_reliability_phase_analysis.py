@@ -18,7 +18,7 @@ import numpy as np
 
 REPO = Path("/work/1/HP260146/chenkaixu/Gymnastics_PyTorch")
 sys.path.insert(0, str(REPO / "src"))
-from gymnastics.common.skeletons.mhr70 import MHR70_INDEX  # noqa: E402
+from common.skeletons.mhr70 import MHR70_INDEX  # noqa: E402
 
 COCO17 = (
     "nose", "left-eye", "right-eye", "left-ear", "right-ear",

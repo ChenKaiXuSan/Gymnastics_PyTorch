@@ -1,7 +1,7 @@
 import numpy as np
 from omegaconf import OmegaConf
 
-from gymnastics.pose_estimation.main import maybe_rotate_frames, terminate_processes
+from pose_estimation.main import maybe_rotate_frames, terminate_processes
 
 
 def test_maybe_rotate_frames_defaults_to_original_frames():

@@ -3,9 +3,9 @@ from pathlib import Path
 
 import numpy as np
 
-from gymnastics.common.skeletons.mhr70 import mhr_names
-from gymnastics.keypoints.config import load_skeleton_spec
-from gymnastics.archive.rotation_aware.evaluation import (
+from common.skeletons.mhr70 import mhr_names
+from fusion.keypoints.config import load_skeleton_spec
+from fusion.archive.rotation_aware.evaluation import (
     ABLATION_REGISTRY,
     MethodSequence,
     _circular_rom,
@@ -19,7 +19,7 @@ from gymnastics.archive.rotation_aware.evaluation import (
 from tests.archive.rotation_aware.test_geometry import synthetic_mhr70_pose
 
 
-SPEC = load_skeleton_spec(Path("configs/fusion/skeleton_mhr70.yaml"))
+SPEC = load_skeleton_spec(Path("src/configs/shared/skeleton_mhr70.yaml"))
 
 
 def test_registry_names_cross_attention_ablations() -> None:
@@ -151,10 +151,10 @@ def test_missing_triangulated_cycle_is_not_prepopulated_as_nan_reference(
 
 
 def test_external_evaluation_imports_are_isolated() -> None:
-    source = Path("src/gymnastics/archive/rotation_aware/evaluation.py").read_text(encoding="utf-8")
+    source = Path("src/fusion/archive/rotation_aware/evaluation.py").read_text(encoding="utf-8")
     for path in ("inference.py", "training.py", "cli.py"):
         assert "triangulation" not in Path(
-            "src/gymnastics/archive/rotation_aware", path
+            "src/fusion/archive/rotation_aware", path
         ).read_text(
             encoding="utf-8"
         )

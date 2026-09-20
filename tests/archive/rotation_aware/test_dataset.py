@@ -4,20 +4,20 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from gymnastics.common.skeletons.mhr70 import mhr_names
-from gymnastics.archive.rotation_aware import dataset as dataset_module
-from gymnastics.archive.rotation_aware.dataset import (
+from common.skeletons.mhr70 import mhr_names
+from fusion.archive.rotation_aware import dataset as dataset_module
+from fusion.archive.rotation_aware.dataset import (
     PosePairWindowDataset,
     SplitManifest,
     WindowConfig,
     build_split_manifest,
     collate_pose_pair_windows,
 )
-from gymnastics.keypoints.config import load_skeleton_spec
-from gymnastics.keypoints.schema import PosePairTrial
+from fusion.keypoints.config import load_skeleton_spec
+from fusion.keypoints.schema import PosePairTrial
 
 
-SPEC = load_skeleton_spec(Path("configs/fusion/skeleton_mhr70.yaml"))
+SPEC = load_skeleton_spec(Path("src/configs/shared/skeleton_mhr70.yaml"))
 
 
 def _trial(person_id: str, frames: int) -> PosePairTrial:

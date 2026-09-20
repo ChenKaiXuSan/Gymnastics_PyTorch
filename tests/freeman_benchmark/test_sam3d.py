@@ -4,14 +4,14 @@ from pathlib import Path
 
 import numpy as np
 
-from gymnastics.benchmarks.freeman.dataset import load_subject_sessions
-from gymnastics.benchmarks.freeman.sam3d import (
+from fusion.benchmarks.freeman.dataset import load_subject_sessions
+from fusion.benchmarks.freeman.sam3d import (
     infer_subject_sessions,
     load_inference,
     validate_inference,
 )
-from gymnastics.benchmarks.freeman import sam3d
-from gymnastics.benchmarks.freeman.schema import SelectedPair
+from fusion.benchmarks.freeman import sam3d
+from fusion.benchmarks.freeman.schema import SelectedPair
 
 
 class FakeEstimator:

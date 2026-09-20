@@ -10,9 +10,9 @@ import numpy as np
 import pytest
 import torch
 
-from gymnastics.fusion.model import CycleAwareModelConfig
-from gymnastics.fusion.sample import DualViewSample
-from gymnastics.fusion.skeleton import CommonSkeleton, build_common_skeleton
+from fusion.model import CycleAwareModelConfig
+from fusion.sample import DualViewSample
+from fusion.skeleton import CommonSkeleton, build_common_skeleton
 
 
 def periodic_pose(skeleton: CommonSkeleton, frames: int, period: int, *, seed: int = 0, noise: float = 0.0) -> np.ndarray:
