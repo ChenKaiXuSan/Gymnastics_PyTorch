@@ -3,6 +3,10 @@ paths:
   dataset_root: ${oc.env:GYMNASTICS_PUBLIC_DATASETS_ROOT}/multiview_human/SportsPose
   output_root: local/runs/sportspose_benchmark
   sam3d_cache_root: local/runs/sportspose_benchmark/sam3d
+  # External per-video SAM3D cache (every camera and frame; produced outside
+  # this repository). When set, `cycles sportspose` and the DataModule read it
+  # instead of sam3d_cache_root and `infer` is not needed.
+  sam3d_derived_root: ${oc.env:GYMNASTICS_DERIVED_ROOT}/sam3d_sportspose
   # Selected face-like / side-like camera per subject and activity.
   views_path: local/runs/sportspose_benchmark/selected_views.json
   sam3d_config: src/configs/pose_estimation/sam3d_body.yaml

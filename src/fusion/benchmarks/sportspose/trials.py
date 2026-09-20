@@ -16,14 +16,37 @@ import numpy as np
 from common.skeletons.mhr70 import mhr_names
 from fusion.keypoints.schema import PosePairTrial
 
-from .dataset import load_reference
-from .sam3d import ViewPrediction, cache_path, load_prediction
+from .dataset import load_calibration, load_reference, load_timing
+from .sam3d import ViewPrediction, cache_path, load_derived_prediction, load_prediction
 from .schema import NATIVE_FPS, SelectedViews, SportsPoseClip
 
 
-def load_clip_predictions(cache_root: Path, clip: SportsPoseClip, views: SelectedViews) -> tuple[ViewPrediction, ViewPrediction]:
-    a = load_prediction(cache_path(cache_root, clip, views.view_a))
-    b = load_prediction(cache_path(cache_root, clip, views.view_b))
+def load_clip_predictions(
+    clip: SportsPoseClip,
+    views: SelectedViews,
+    *,
+    cache_root: Path | None = None,
+    derived_root: Path | None = None,
+    frame_stride: int = 3,
+) -> tuple[ViewPrediction, ViewPrediction]:
+    """The two selected views of one clip from either SAM3D source.
+
+    ``derived_root`` (the external per-video cache, every camera and frame)
+    takes precedence when given; the requested frames are then every
+    ``frame_stride``-th reference frame. Otherwise the benchmark cache below
+    ``cache_root`` is read as written by ``benchmark-sportspose infer``.
+    """
+    if derived_root is not None:
+        cameras = load_calibration(clip.joints_path.parents[1])
+        timing = load_timing(clip)
+        frame_ids = np.arange(0, clip.frames, max(1, int(frame_stride)), dtype=np.int64)
+        a = load_derived_prediction(derived_root, clip, cameras[views.view_a], frame_ids, timing["video_index"][cameras[views.view_a].index][frame_ids])
+        b = load_derived_prediction(derived_root, clip, cameras[views.view_b], frame_ids, timing["video_index"][cameras[views.view_b].index][frame_ids])
+    elif cache_root is not None:
+        a = load_prediction(cache_path(cache_root, clip, views.view_a))
+        b = load_prediction(cache_path(cache_root, clip, views.view_b))
+    else:
+        raise ValueError("either derived_root or cache_root is required")
     if not np.array_equal(a.frame_ids, b.frame_ids):
         raise ValueError(f"{clip.clip_id}: cached views cover different frames")
     return a, b

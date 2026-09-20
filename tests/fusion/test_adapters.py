@@ -244,6 +244,14 @@ def test_freeman_datamodule_session_selection(tmp_path: Path):
     assert ids == ["20220618_aaaa01_subj01"] and skipped == {"action": 1, "cycles": 1}
     module = FreeManDataModule({"name": "freeman", "attach_reference": False, "options": {"subjects": [1], "cycle_records_root": str(records_root), "action_table": str(table), "actions": ["dance"]}}, session_loader=session_loader)
     assert module.load_samples()[0].metadata["action"] == "hiphop"
+    # A fold may name a subject whose sessions were all filtered out: it is dropped, not an error.
+    fold = tmp_path / "fold.json"
+    fold.write_text(json.dumps({"name": "fold_01", "dataset": "freeman", "protocol": "subject_disjoint", "train": ["01"], "val": ["02"], "test": []}), encoding="utf-8")
+    loader_two = lambda subject: session_loader(subject) if subject == 1 else [(PosePairTrial(**{**_trial("02", 0, 0, 60, offset=0).__dict__, "trial_id": "20220618_bbbb01_subj02", "source_metadata": {}}), None)]  # noqa: E731
+    write_cycle_record(cycle_record_path(records_root, "02", "20220618_bbbb01_subj02"), dataset="freeman", subject_id="02", sequence_id="20220618_bbbb01_subj02", fps=FPS, frames=60, spans=sessions["20220618_bbbb01_subj01"], detection=settings, views=("c04", "c07"))
+    module = FreeManDataModule({"name": "freeman", "attach_reference": False, "fold_json": str(fold), "options": {"cycle_records_root": str(records_root), "action_table": str(table), "actions": ["dance"]}}, session_loader=loader_two)
+    module.setup()
+    assert module.filtered_subjects == {"02"} and module.split.train == ("01",) and module.split.val == ()
 
 
 def test_unity_datamodule_with_injected_loader(tmp_path: Path):

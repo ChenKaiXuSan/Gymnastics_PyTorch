@@ -15,6 +15,13 @@ Frames are decoded from the MJPEG video, rotated ``rot90_clockwise`` times
 clockwise (the release stores the sensor orientation) and processed one at a
 time; the largest detected person is kept. ``frame_stride`` thins the 90 fps
 reference timeline (default 3 -> 30 fps).
+
+A second source is the per-video cache of ``derived/normal_camera/sam3d_sportspose``
+(every camera, every frame, every detected person, written outside this
+repository): :func:`load_derived_prediction` converts one of those files
+into the same :class:`ViewPrediction` (rank-0 person, requested frames only),
+so the trial builder and the cycle records do not care which source produced
+the poses.
 """
 
 from __future__ import annotations
@@ -90,6 +97,55 @@ def load_prediction(path: Path) -> ViewPrediction:
         valid_2d=np.asarray(payload["valid_2d"], dtype=bool),
         failed_frames=tuple(int(f) for f in meta.get("failed_frames", ())),
     )
+
+
+def derived_path(derived_root: Path, clip: SportsPoseClip, camera_index: int) -> Path:
+    """``<derived_root>/<day>/<S>/<Video_dir>/CAM<k>.npz`` of the external per-video cache."""
+    return Path(derived_root) / clip.day / clip.subject / clip.video_dir.name / f"CAM{int(camera_index)}.npz"
+
+
+def load_derived_prediction(derived_root: Path, clip: SportsPoseClip, camera: SportsPoseCamera, frame_ids: np.ndarray, video_frames: np.ndarray) -> ViewPrediction:
+    """Rank-0 person of the external per-video cache at the requested frames.
+
+    Args:
+        derived_root: Root of ``sam3d_sportspose`` (see :func:`derived_path`).
+        clip: The clip.
+        camera: The camera (its index names the file).
+        frame_ids: Reference frame indices to keep.
+        video_frames: Video frame index of each reference frame (``timing.video_index``).
+
+    Raises:
+        FileNotFoundError: If the per-video file is missing.
+    """
+    path = derived_path(derived_root, clip, camera.index)
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    payload = np.load(path, allow_pickle=True)
+    rows_frames = np.asarray(payload["frame_ids"], dtype=np.int64)
+    ranks = np.asarray(payload["person_rank"], dtype=np.int64)
+    primary = ranks == 0
+    row_of = {int(f): i for i, f in zip(np.flatnonzero(primary), rows_frames[primary])}
+    n = len(frame_ids)
+    points_3d = np.zeros((n, 70, 3), dtype=np.float32)
+    points_2d = np.zeros((n, 70, 2), dtype=np.float32)
+    valid_3d = np.zeros((n, 70), dtype=bool)
+    valid_2d = np.zeros((n, 70), dtype=bool)
+    failed: list[int] = []
+    src3 = np.asarray(payload["points3d"], dtype=np.float32)
+    src2 = np.asarray(payload["points2d"], dtype=np.float32)
+    for slot, video_frame in enumerate(np.asarray(video_frames, dtype=np.int64)):
+        row = row_of.get(int(video_frame))
+        if row is None:
+            failed.append(int(frame_ids[slot]))
+            continue
+        xyz, xy = src3[row], src2[row]
+        ok3 = np.isfinite(xyz).all(axis=-1) & np.any(xyz != 0, axis=-1)
+        ok2 = np.isfinite(xy).all(axis=-1)
+        points_3d[slot] = np.where(ok3[:, None], xyz, 0.0)
+        points_2d[slot] = np.where(ok2[:, None], xy, 0.0)
+        valid_3d[slot] = ok3
+        valid_2d[slot] = ok2
+    return ViewPrediction(clip_id=clip.clip_id, view_id=camera.view_id, frame_ids=np.asarray(frame_ids, dtype=np.int64), video_frames=np.asarray(video_frames, dtype=np.int64), points_3d=points_3d, points_2d=points_2d, valid_3d=valid_3d, valid_2d=valid_2d, failed_frames=tuple(failed))
 
 
 def prediction_is_current(path: Path, identity: Mapping[str, Any], *, accepted_config_hashes: Sequence[str] = ()) -> bool:

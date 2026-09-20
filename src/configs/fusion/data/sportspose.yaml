@@ -6,6 +6,11 @@ name: sportspose
 cache_dir: local/runs/cycle_aware/sample_cache
 options:
   benchmark_root: local/runs/sportspose_benchmark
+  # External per-video SAM3D cache (every camera and frame); used when the
+  # directory exists, otherwise <benchmark_root>/sam3d from `benchmark-sportspose infer`.
+  sam3d_derived_root: ${oc.env:GYMNASTICS_DERIVED_ROOT}/sam3d_sportspose
+  # Keep every frame_stride-th 90 fps reference frame (3 -> 30 fps).
+  frame_stride: 3
   dataset_root: ${oc.env:GYMNASTICS_PUBLIC_DATASETS_ROOT}/multiview_human/SportsPose
   # S-ids to load (null = every subject; folds via data.fold_json).
   subjects: null

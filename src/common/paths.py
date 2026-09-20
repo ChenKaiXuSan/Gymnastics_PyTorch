@@ -59,3 +59,9 @@ os.environ.setdefault(PUBLIC_DATASETS_ROOT_ENV, str(PUBLIC_DATASETS_ROOT))
 FREEMAN_ROOT = PUBLIC_DATASETS_ROOT / "multiview_human" / "FreeMan"
 SPORTSPOSE_ROOT = PUBLIC_DATASETS_ROOT / "multiview_human" / "SportsPose"
 
+# Per-video SAM3D caches produced outside this repository's benchmark stages
+# (derived/normal_camera/sam3d_<dataset>/...), keyed by dataset name.
+DERIVED_ROOT_ENV = "GYMNASTICS_DERIVED_ROOT"
+DERIVED_ROOT = Path(os.environ.get(DERIVED_ROOT_ENV) or DATA_ROOT.parent / "derived" / "normal_camera")
+os.environ.setdefault(DERIVED_ROOT_ENV, str(DERIVED_ROOT))
+

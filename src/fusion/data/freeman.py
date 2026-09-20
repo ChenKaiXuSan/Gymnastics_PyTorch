@@ -180,8 +180,10 @@ class FreeManDataModule(DualViewDataModule):
         allowed_actions, action_table = self._action_filter()
         samples: list[DualViewSample] = []
         self.skipped_sessions: dict[str, int] = {"action": 0, "cycles": 0}
+        self.filtered_subjects = set()
         for subject in self._subjects():
             subject_id = f"{int(subject):02d}"
+            kept_before = len(samples)
             for trial, reference_path in self._session_loader(subject):
                 action = session_action(trial.trial_id, action_table) if action_table else None
                 if allowed_actions is not None and action not in allowed_actions:
@@ -210,6 +212,8 @@ class FreeManDataModule(DualViewDataModule):
                         metadata={"action": action, "cycle_record": record is not None, "cycle_detection": dict(record.detection) if record is not None else {}},
                     )
                 )
+            if len(samples) == kept_before:
+                self.filtered_subjects.add(subject_id)
         return samples
 
     def default_split(self, samples: Sequence[DualViewSample]) -> SplitSpec:

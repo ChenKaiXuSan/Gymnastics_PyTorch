@@ -175,6 +175,9 @@ class DualViewDataModule(pl.LightningDataModule, ABC):
         self.samples: list[DualViewSample] = []
         self.split: SplitSpec = SplitSpec()
         self._datasets: dict[str, CycleWindowDataset] = {}
+        # Subjects an adapter loaded but kept no sample of (session selection);
+        # a fold may still name them, they are then dropped instead of an error.
+        self.filtered_subjects: set[str] = set()
 
     @abstractmethod
     def load_samples(self) -> Sequence[DualViewSample]:
@@ -209,9 +212,14 @@ class DualViewDataModule(pl.LightningDataModule, ABC):
         if cap is not None:
             split = SplitSpec(train=split.train[:cap], val=split.val[:cap], test=split.test[:cap])
         known = {sample.subject_id for sample in samples}
-        unknown = sorted((set(split.train) | set(split.val) | set(split.test)) - known)
+        named = set(split.train) | set(split.val) | set(split.test)
+        unknown = sorted(named - known - self.filtered_subjects)
         if unknown:
             raise ValueError(f"split references unknown subjects: {unknown}")
+        filtered = sorted(named & self.filtered_subjects - known)
+        if filtered:
+            print(f"[data] {len(filtered)} fold subjects have no sample after session selection and are dropped: {filtered}")
+            split = SplitSpec(train=tuple(s for s in split.train if s in known), val=tuple(s for s in split.val if s in known), test=tuple(s for s in split.test if s in known))
         return split
 
     @property

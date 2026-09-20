@@ -12,6 +12,9 @@ Source dataset:
 Expected directory structure (``options.benchmark_root``):
     <root>/selected_views.json                              view A/B per subject and sequence
     <root>/sam3d/<day>/<S>/<activity>/<clip>/<view>.npz (+ .json)
+    or, when ``options.sam3d_derived_root`` points to an existing directory,
+    the external per-video cache ``<derived>/<day>/<S>/<Video_dir>/CAM<k>.npz``
+    (every camera and frame) thinned to every ``options.frame_stride``-th frame.
 
 Original skeleton:
     Inputs are MHR70 from SAM3D-Body. The reference is COCO17 and is placed
@@ -49,7 +52,8 @@ Split:
     (``src/configs/fusion/folds/sportspose``).
 
 Options (``data.options``):
-    benchmark_root, dataset_root, subjects (list of S-ids), activities, days,
+    benchmark_root, dataset_root, sam3d_derived_root, frame_stride,
+    subjects (list of S-ids), activities, days,
     cycle_records_root, require_cycle_records
 """
 
@@ -105,6 +109,10 @@ class SportsPoseDataModule(DualViewDataModule):
         wanted_activities = options.get("activities")
         wanted_days = options.get("days")
         attach = bool(self.config.attach_reference)
+        derived_root = _resolve(options["sam3d_derived_root"]) if options.get("sam3d_derived_root") else None
+        if derived_root is not None and not derived_root.is_dir():
+            derived_root = None
+        frame_stride = int(options.get("frame_stride", 3))
 
         def load() -> Sequence[tuple[PosePairTrial, np.ndarray | None]]:
             from fusion.benchmarks.sportspose.cli import read_selected_views
@@ -118,7 +126,7 @@ class SportsPoseDataModule(DualViewDataModule):
                 if wanted_subjects is not None and subject_key not in wanted_subjects:
                     continue
                 selected = views[(subject_key, sequence_key)]
-                predictions = [load_clip_predictions(benchmark_root / "sam3d", clip, selected) for clip in group]
+                predictions = [load_clip_predictions(clip, selected, cache_root=benchmark_root / "sam3d", derived_root=derived_root, frame_stride=frame_stride) for clip in group]
                 trial, _, reference = build_sequence_trial(group, predictions, selected, reference=attach)
                 result.append((trial, reference))
             return result

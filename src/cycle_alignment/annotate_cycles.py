@@ -361,8 +361,12 @@ def run_sportspose(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     paths = config["paths"]
     cache_root = _resolve(str(paths["sam3d_cache_root"]))
+    derived_root = _resolve(str(paths["sam3d_derived_root"])) if paths.get("sam3d_derived_root") else None
+    if derived_root is not None and not derived_root.is_dir():
+        derived_root = None
     views = read_selected_views(_resolve(str(paths["views_path"])))
     dataset = dict(config.get("dataset") or {})
+    frame_stride = int(dataset.get("frame_stride", 3))
     clips = discover_clips(_resolve(str(paths["dataset_root"])), days=dataset.get("days"), subjects=args.subjects or dataset.get("subjects"), activities=dataset.get("activities"))
     out_root = _resolve(args.out_root)
     settings = DetectionSettings(smooth_window=int(args.smooth_window), theta_ref=None, theta_ref_mode="trial_as_cycle")
@@ -373,7 +377,7 @@ def run_sportspose(args: argparse.Namespace) -> int:
             totals["skipped"] += 1
             continue
         try:
-            predictions = [load_clip_predictions(cache_root, clip, selected) for clip in group]
+            predictions = [load_clip_predictions(clip, selected, cache_root=cache_root, derived_root=derived_root, frame_stride=frame_stride) for clip in group]
         except FileNotFoundError:
             print(f"  ✗ {subject_key}/{sequence_key}: SAM3D cache incomplete, skipped")
             totals["skipped"] += 1
@@ -389,7 +393,7 @@ def run_sportspose(args: argparse.Namespace) -> int:
         totals["cycles"] += len(spans)
         print(f"  {subject_key}/{sequence_key}: {len(spans)} clips as cycles")
     (out_root / "summary.json").write_text(json.dumps({"settings": settings.to_dict(), **totals}, indent=2), encoding="utf-8")
-    print(f"[cycles/sportspose] done: {totals}")
+    print(f"[cycles/sportspose] source={'derived ' + str(derived_root) if derived_root else 'benchmark cache ' + str(cache_root)}; done: {totals}")
     return 0
 
 

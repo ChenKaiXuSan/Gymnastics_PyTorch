@@ -12,7 +12,7 @@ import pytest
 
 from fusion.benchmarks.sportspose.cli import read_selected_views
 from fusion.benchmarks.sportspose.dataset import camera_azimuths, discover_clips, group_clips, load_calibration, load_reference, load_timing, select_views
-from fusion.benchmarks.sportspose.sam3d import cache_path, infer_clips, load_prediction, upright
+from fusion.benchmarks.sportspose.sam3d import cache_path, derived_path, infer_clips, load_derived_prediction, load_prediction, upright
 from fusion.benchmarks.sportspose.schema import NUM_CAMERAS, SelectedViews
 from fusion.benchmarks.sportspose.trials import build_sequence_trial, load_clip_predictions
 
@@ -128,7 +128,7 @@ def test_infer_cache_and_sequence_trial(tmp_path: Path):
     assert not any(s.reused for s in infer_clips(clips[:1], {("S00", "indoors_tennis"): ("cam0", "cam2")}, {("indoors", "S00"): cameras}, cache_root=cache_root, config_path=config, device=0, frame_stride=3, estimator_factory=lambda *_: estimator))
 
     views = SelectedViews(subject_key="S00", sequence_key="indoors_tennis", view_a="cam0", view_b="cam2", azimuth_a_deg=0.0, azimuth_b_deg=90.0, separation_deg=90.0)
-    predictions = [load_clip_predictions(cache_root, clip, views) for clip in clips]
+    predictions = [load_clip_predictions(clip, views, cache_root=cache_root) for clip in clips]
     trial, bounds, reference = build_sequence_trial(clips, predictions, views, reference=True)
     assert bounds == ((0, 9), (9, 18)) and trial.face.shape == (18, 70, 3) and trial.fps == 30.0
     assert trial.person_id == "S00" and trial.trial_id == "indoors_tennis" and list(trial.source_metadata["clips"]) == ["tennis0021", "tennis0022"]
@@ -138,3 +138,30 @@ def test_infer_cache_and_sequence_trial(tmp_path: Path):
     path = tmp_path / "selected_views.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     assert read_selected_views(path)[("S00", "indoors_tennis")] == views
+
+
+def test_derived_per_video_cache_is_read_at_the_requested_frames(tmp_path: Path):
+    root = make_release(tmp_path / "SportsPose", subjects=("S00",), clips_per=1)
+    clip = discover_clips(root)[0]
+    cameras = load_calibration(root / "data" / "indoors" / "S00")
+    derived_root = tmp_path / "derived"
+    # Two persons on every frame; rank 0 is the one we keep. Frame 6 has no detection.
+    frames = [f for f in range(FRAMES) if f != 6]
+    rows = [(f, rank) for f in frames for rank in (0, 1)]
+    points = np.stack([np.full((70, 3), f + 100 * rank, dtype=np.float32) for f, rank in rows])
+    path = derived_path(derived_root, clip, cameras["cam0"].index)
+    path.parent.mkdir(parents=True)
+    np.savez(path, frame_ids=np.array([r[0] for r in rows]), person_rank=np.array([r[1] for r in rows]), points3d=points, points2d=points[:, :, :2], n_frames=FRAMES)
+    frame_ids = np.arange(0, FRAMES, 3)
+    prediction = load_derived_prediction(derived_root, clip, cameras["cam0"], frame_ids, frame_ids)
+    assert prediction.points_3d.shape == (9, 70, 3) and prediction.failed_frames == (6,)
+    assert np.allclose(prediction.points_3d[1], 3.0) and not prediction.valid_3d[2].any() and prediction.valid_3d[1].all()
+    with pytest.raises(FileNotFoundError):
+        load_derived_prediction(derived_root, clip, cameras["cam1"], frame_ids, frame_ids)
+    views = SelectedViews(subject_key="S00", sequence_key="indoors_tennis", view_a="cam0", view_b="cam1", azimuth_a_deg=0.0, azimuth_b_deg=45.0, separation_deg=45.0)
+    with pytest.raises(FileNotFoundError):
+        load_clip_predictions(clip, views, derived_root=derived_root)
+    np.savez(derived_path(derived_root, clip, cameras["cam1"].index), frame_ids=np.array([r[0] for r in rows]), person_rank=np.array([r[1] for r in rows]), points3d=points, points2d=points[:, :, :2], n_frames=FRAMES)
+    a, b = load_clip_predictions(clip, views, derived_root=derived_root, frame_stride=3)
+    assert a.frame_ids.tolist() == b.frame_ids.tolist() == list(range(0, FRAMES, 3))
+
