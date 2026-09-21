@@ -1,9 +1,12 @@
 """``python -m fusion external-published`` -- strict external baselines.
 
     videopose3d   --dataset gymnastics|freeman|sportspose [--mode procrustes_average|per_view]
-                  official VideoPose3D lifter on the SAM3D 2D keypoints of both views,
-                  evaluated through the model protocol (5 folds, phase windows,
-                  per-frame PA-MPJPE on the major joints the method predicts)
+                  the released Human3.6M VideoPose3D checkpoint on the SAM3D 2D
+                  keypoints of both views (zero-shot, appendix only)
+    videopose3d-trained  --dataset freeman|sportspose --stage prepare|train|evaluate|all
+                  VideoPose3D (243-frame release recipe, supervised) trained per fold
+                  on the training subjects' reference joints, both views as monocular
+                  samples; same records as MHFormer; see videopose3d_train.py
     metapose      --dataset ... --stage prepare|s1|train|evaluate|all [--eval-stage s2|s1|init]
                   official MetaPose on the same two views: stage-1 solver, then the
                   stage-2 network trained per fold with the authors' script on the
@@ -233,6 +236,44 @@ def _run_mdvpose(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_videopose3d_trained(args: argparse.Namespace) -> int:
+    from .evaluate import evaluate_folds, fold_files, write_summary
+    from .mhformer import fold_persons, prepare_dataset
+    from .transform import LiftedTrialTransform, view_source
+    from .videopose3d_train import CONFIG, VideoPose3DTrainedLifter, output_root, train
+
+    root = output_root(args.dataset)
+    extra = list(args.override or [])
+    source = view_source(args.dataset)
+    stages = ("prepare", "train", "evaluate") if args.stage == "all" else (args.stage,)
+    folds = fold_files(args.dataset, args.folds_dir)
+    if args.folds:
+        folds = [f for f in folds if f.stem in set(args.folds)]
+    if "prepare" in stages:
+        prepare_dataset(args.dataset, source, output_dir=root, extra_overrides=extra)  # same records as MHFormer
+    if "train" in stages:
+        for fold in folds:
+            out = root / fold.stem / "model.pt"
+            if out.is_file() and not args.force:
+                print(f"[videopose3d] {fold.stem}: {out} exists, skipping (use --force)")
+                continue
+            print(f"[videopose3d] training {args.dataset} {fold.stem} on {len(fold_persons(fold, 'train'))} subjects (validation subjects logged only)")
+            train(root / "inputs.npz", root / "index.json", fold_persons(fold, "train"), fold_persons(fold, "val"), out, device=args.device, epochs=args.epochs)
+    if "evaluate" in stages:
+        for mode in _list(args.mode):
+
+            def factory(fold, mode=mode):
+                lifter = VideoPose3DTrainedLifter(root / fold.stem / "model.pt", args.device)
+                return LiftedTrialTransform(lifter.lift, source, mode=mode, cache_dir=OUTPUT_ROOT / "lifted", method=f"videopose3d_trained_{args.dataset}_{fold.stem}")
+
+            payload = evaluate_folds(args.dataset, factory, folds_dir=args.folds_dir, extra_overrides=extra)
+            payload["method"] = {"name": "videopose3d_trained", "mode": mode, "training": "released 243-frame recipe (run.py -e 80 -arc 3,3,3,3,3), supervised on the fold's training subjects' reference joints (both views), final epoch", "epochs": args.epochs or CONFIG["epochs"]}
+            out = write_summary(root / f"summary_{mode}.json", payload)
+            s = payload["summary"]
+            print(f"[external/videopose3d_trained] {args.dataset} {mode}: PA-MPJPE {s['pa_mpjpe_mean'] * 1000:.1f} ± {s['pa_mpjpe_sd'] * 1000:.1f} mm over {s['folds']} folds, joints {len(s['joint_names'])} -> {out}")
+    return 0
+
+
 def _run_keypoints2d(args: argparse.Namespace) -> int:
     from concurrent.futures import ProcessPoolExecutor
 
@@ -265,6 +306,16 @@ def make_parser() -> argparse.ArgumentParser:
     vp.add_argument("--no-tta", action="store_true", help="disable the authors' flip test-time augmentation")
     vp.add_argument("--folds-dir", type=Path, default=None)
     vp.add_argument("--override", nargs="*", default=None, help="extra Hydra data overrides")
+    vt = sub.add_parser("videopose3d-trained", help="VideoPose3D trained per fold on the reference joints (supervised)")
+    vt.add_argument("--dataset", required=True, choices=("freeman", "sportspose"))
+    vt.add_argument("--stage", default="all", choices=("prepare", "train", "evaluate", "all"))
+    vt.add_argument("--mode", default="procrustes_average", help="comma- or plus-separated: procrustes_average, per_view")
+    vt.add_argument("--epochs", type=int, default=None, help="override the released 80 epochs")
+    vt.add_argument("--device", default="cuda")
+    vt.add_argument("--folds", nargs="*", default=None)
+    vt.add_argument("--folds-dir", type=Path, default=None)
+    vt.add_argument("--force", action="store_true")
+    vt.add_argument("--override", nargs="*", default=None)
     mp = sub.add_parser("metapose", help="official MetaPose: stage-1 solver + stage-2 network trained per fold")
     mp.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "sportspose"))
     mp.add_argument("--stage", default="all", choices=("prepare", "s1", "shards", "train", "s2", "evaluate", "all"), help="all = prepare, s1, shards, train, evaluate; s2 = released checkpoint (zero-shot)")
@@ -333,6 +384,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = make_parser().parse_args(list(argv) if argv is not None else None)
     if args.method == "videopose3d":
         return _run_videopose3d(args)
+    if args.method == "videopose3d-trained":
+        return _run_videopose3d_trained(args)
     if args.method == "metapose":
         return _run_metapose(args)
     if args.method == "canonpose":
