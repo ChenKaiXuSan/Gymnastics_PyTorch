@@ -4,7 +4,7 @@
 #   qsub -v METHOD=canonpose,DATASET=freeman,FOLDS="fold_01" pegasus/external_trained_qsub.sh
 #   qsub -v METHOD=canonpose,DATASET=gymnastics,STAGE=all pegasus/external_trained_qsub.sh
 #
-# METHOD   canonpose | metapose        (required)
+# METHOD   canonpose | metapose | mhformer   (required)
 # DATASET  gymnastics | freeman | sportspose   (required)
 # STAGE    all (default) | prepare | train | evaluate   (canonpose)
 #          all | prepare | s1 | train | evaluate          (metapose)

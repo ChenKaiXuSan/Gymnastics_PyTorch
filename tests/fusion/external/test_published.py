@@ -173,3 +173,60 @@ def test_evaluate_fold_runs_the_transform_through_the_freeman_datamodule(tmp_pat
     assert "left-knee" in result["joint_names"] and "nose" in result["joint_names"]
     noisy = evaluate_module.evaluate_fold("freeman", fold, None, extra_overrides=extra)
     assert noisy["pa_mpjpe"] > 0.05
+
+
+def test_named_to_h36m17_matches_coco_mapping_and_fill_interpolates():
+    from fusion.external.published.mapping import COCO17_NAMES, fill_missing_joints, named_to_h36m17
+
+    rng = np.random.default_rng(1)
+    coco = rng.normal(size=(5, 17, 3)).astype(np.float32)
+    expected, expected_valid = coco17_to_h36m17_2d(coco)
+    # The same joints under their MHR70 names in a different order, plus an unrelated joint.
+    names = tuple(reversed(COCO17_NAMES)) + ("left-heel",)
+    points = np.concatenate([coco[:, ::-1], np.zeros((5, 1, 3), np.float32)], axis=1)
+    got, got_valid = named_to_h36m17(points, None, names)
+    np.testing.assert_allclose(got, expected, atol=1e-6)
+    assert (got_valid == expected_valid).all()
+    # Without eyes/ears (major joints) every H36M joint is still defined.
+    major = tuple(n for n in COCO17_NAMES if "eye" not in n and "ear" not in n)
+    got, got_valid = named_to_h36m17(coco[:, [COCO17_NAMES.index(n) for n in major]], None, major)
+    assert got_valid.all() and np.allclose(got, expected)
+    # Missing joints are linearly interpolated in time, edges held.
+    seq = np.stack([np.full((2, 2), t, np.float32) for t in range(6)])
+    valid = np.ones((6, 2), bool)
+    valid[2:4, 0] = False
+    valid[0, 1] = False
+    filled = fill_missing_joints(seq, valid)
+    assert np.allclose(filled[2:4, 0, 0], [2.0, 3.0]) and np.allclose(filled[0, 1], 1.0)
+
+
+def test_canonpose_vectorised_camera_loss_matches_the_released_loop():
+    import torch
+
+    from fusion.external.published.canonpose import camera_consistency_loss, loss_weighted_rep_no_scale, within_subject_permutation
+
+    torch.manual_seed(0)
+    b, n_cam = 12, 2
+    subjects = torch.tensor([0, 1, 0, 2, 1, 0, 3, 1, 2, 0, 4, 1])
+    inp = torch.randn(b, n_cam, 32)
+    conf = (torch.rand(b, n_cam, 16) > 0.2).float()
+    rot = torch.linalg.qr(torch.randn(b, n_cam, 3, 3))[0]
+    rot_poses = torch.randn(b, n_cam, 48)
+    generator = torch.Generator().manual_seed(3)
+    perm, multiple = within_subject_permutation(subjects, generator)
+    assert (subjects[perm] == subjects).all() and sorted(perm.tolist()) == list(range(b))
+    assert multiple.tolist() == [s in (0, 1, 2) for s in subjects.tolist()]
+    for c_cnt in range(n_cam):
+        coi = np.delete(np.arange(n_cam), c_cnt)
+        # The released loop with the same within-subject permutation.
+        relative = rot[:, coi].matmul(rot[:, [c_cnt]].permute(0, 1, 3, 2))
+        expected = 0.0
+        for subject in subjects.unique():
+            mask = subjects == subject
+            if int(mask.sum()) > 1:
+                local = perm[mask]
+                local_index = torch.tensor([torch.nonzero(mask).flatten().tolist().index(int(i)) for i in local])
+                shuffled = relative[mask][local_index].matmul(rot_poses[mask].reshape(-1, n_cam, 3, 16)[:, c_cnt : c_cnt + 1].repeat(1, n_cam - 1, 1, 1)).reshape(-1, n_cam - 1, 48)
+                expected = expected + loss_weighted_rep_no_scale(inp[mask][:, coi].reshape(-1, 32), shuffled.reshape(-1, 48), conf[mask][:, coi].reshape(-1, 16))
+        got = camera_consistency_loss(inp, conf, rot, rot_poses, subjects, c_cnt, coi, perm, multiple)
+        assert torch.isclose(got, torch.as_tensor(expected), rtol=1e-5, atol=1e-6)

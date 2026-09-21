@@ -26,7 +26,7 @@ from fusion.keypoints.schema import PosePairTrial
 
 from .fuse import procrustes_average
 from .keypoints2d import DEFAULT_CACHE_ROOT, View2D, freeman_view, gymnastics_view, sportspose_view
-from .mapping import h36m17_to_mhr70, mhr70_to_coco17_2d
+from .mapping import fill_missing_joints, h36m17_to_mhr70, mhr70_to_coco17_2d
 
 Lifter = Callable[[np.ndarray, int, int], np.ndarray]
 """``(coco17 [T, 17, 2], width, height) -> h36m17 [T, 17, 3]``."""
@@ -35,6 +35,11 @@ Lifter = Callable[[np.ndarray, int, int], np.ndarray]
 class ViewSource(Protocol):
     def views(self, trial: PosePairTrial) -> tuple[View2D, View2D]:
         """2D keypoints of view A and view B covering the trial's frames."""
+
+    def rotations(self, trial: PosePairTrial) -> tuple[np.ndarray, np.ndarray]:
+        """World-to-camera rotation matrices of view A and view B (supervised
+        methods express their targets in the camera frame); raises for
+        datasets without calibration."""
 
 
 class GymnasticsViewSource:
@@ -45,6 +50,9 @@ class GymnasticsViewSource:
 
     def views(self, trial: PosePairTrial) -> tuple[View2D, View2D]:
         return gymnastics_view(trial.person_id, "face", cache_root=self.cache_root, sam3d_root=self.sam3d_root), gymnastics_view(trial.person_id, "side", cache_root=self.cache_root, sam3d_root=self.sam3d_root)
+
+    def rotations(self, trial: PosePairTrial) -> tuple[np.ndarray, np.ndarray]:
+        raise ValueError("the private recordings have no independent 3D reference: supervised methods cannot be trained on them")
 
 
 class FreeManViewSource:
@@ -65,6 +73,18 @@ class FreeManViewSource:
     def views(self, trial: PosePairTrial) -> tuple[View2D, View2D]:
         subject, view_a, view_b = self._pair(trial.trial_id, int(trial.source_metadata.get("subject_id", trial.person_id)))
         return freeman_view(self.benchmark_root, subject, trial.trial_id, view_a), freeman_view(self.benchmark_root, subject, trial.trial_id, view_b)
+
+    def rotations(self, trial: PosePairTrial) -> tuple[np.ndarray, np.ndarray]:
+        import cv2
+
+        from fusion.benchmarks.freeman.dataset import _load_cameras
+        from fusion.benchmarks.freeman.training import load_manifest_sessions
+
+        subject, view_a, view_b = self._pair(trial.trial_id, int(trial.source_metadata.get("subject_id", trial.person_id)))
+        session = next(s for s in load_manifest_sessions(self.benchmark_root, subject) if s.session_id == trial.trial_id)
+        # The release keeps cameras/, keypoints2d/ and keypoints3d/ side by side.
+        cameras = _load_cameras(Path(session.keypoints3d_path).parents[1] / "cameras" / f"{trial.trial_id}.json")
+        return tuple(cv2.Rodrigues(np.asarray(cameras[v].rotation, dtype=np.float64))[0] for v in (view_a, view_b))  # type: ignore[return-value]
 
 
 class SportsPoseViewSource:
@@ -98,6 +118,14 @@ class SportsPoseViewSource:
                 offset += n
             result.append(View2D(frame_ids=np.concatenate(frames), points=np.concatenate(points), valid=np.concatenate(valid), width=size[0], height=size[1], name=f"sportspose/{meta['day']}/{trial.person_id}/{meta['activity']}/{view_id}"))
         return result[0], result[1]
+
+    def rotations(self, trial: PosePairTrial) -> tuple[np.ndarray, np.ndarray]:
+        from fusion.benchmarks.sportspose.dataset import discover_clips, load_calibration
+
+        meta = trial.source_metadata
+        clip = next(iter(discover_clips(self.dataset_root, days=[meta["day"]], subjects=[trial.person_id], activities=[meta["activity"]])))
+        cameras = load_calibration(clip.joints_path.parents[1])
+        return tuple(np.asarray(cameras[v].rotation, dtype=np.float64) for v in (meta["view_a"], meta["view_b"]))  # type: ignore[return-value]
 
 
 def view_source(dataset: str, **options) -> ViewSource:
@@ -140,7 +168,7 @@ class LiftedTrialTransform:
             if "h36m" in payload:
                 return payload["h36m"], payload["frame_valid"]
         coco, coco_valid = mhr70_to_coco17_2d(view.points, view.valid)
-        lifted = self.lifter(coco, view.width, view.height)
+        lifted = self.lifter(fill_missing_joints(coco, coco_valid), view.width, view.height)
         # A frame whose 2D input was missing has no meaningful lift.
         frame_valid = coco_valid.all(axis=1)
         if path is not None:

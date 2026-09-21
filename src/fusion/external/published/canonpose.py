@@ -174,6 +174,56 @@ def loss_weighted_rep_no_scale(p2d, p3d, confs):
     return ((p2d_scaled - p3d_scaled).abs().reshape(-1, 2, 16).sum(axis=1) * confs).sum() / (p2d_scaled.shape[0] * p2d_scaled.shape[1])
 
 
+def _weighted_rep_rows(p2d, p3d, confs):
+    """Per-row numerator of :func:`loss_weighted_rep_no_scale` (its mean divides by ``rows * 32``)."""
+    import torch
+
+    scale_p2d = torch.sqrt(p2d[:, 0:32].square().sum(axis=1, keepdim=True) / 32)
+    p2d_scaled = p2d[:, 0:32] / scale_p2d
+    scale_p3d = torch.sqrt(p3d[:, 0:32].square().sum(axis=1, keepdim=True) / 32)
+    p3d_scaled = p3d[:, 0:32] / scale_p3d
+    return ((p2d_scaled - p3d_scaled).abs().reshape(-1, 2, 16).sum(axis=1) * confs).sum(axis=1)
+
+
+def within_subject_permutation(subjects, generator=None):
+    """A random permutation of the batch that stays inside each subject's frames.
+
+    ``train.py`` draws one ``rng.choice`` per subject in a Python loop; this
+    is the same distribution in one sorted pass. Returns ``(perm, multiple)``
+    where ``multiple`` marks frames whose subject occurs more than once (the
+    loop skips subjects with a single frame).
+    """
+    import torch
+
+    n = subjects.shape[0]
+    random_order = torch.randperm(n, generator=generator, device=subjects.device)
+    grouped_random = random_order[torch.argsort(subjects[random_order], stable=True)]
+    grouped_plain = torch.argsort(subjects, stable=True)
+    perm = torch.empty_like(grouped_plain)
+    perm[grouped_plain] = grouped_random
+    counts = (subjects[:, None] == subjects[None, :]).sum(dim=1)
+    return perm, counts > 1
+
+
+def camera_consistency_loss(inp_poses_rs, confidences_rs, pred_rot_rs, rot_poses_rs, sample_subjects, c_cnt, coi, perm, multiple):
+    """Equation 7 for camera ``c_cnt``: the relative rotations of another frame of the same subject re-project this frame's rotated pose.
+
+    Summed per subject and averaged within it exactly like the released loop
+    (``sum_s mean_rows_in_s``), so the value matches ``train.py`` for the
+    same permutation.
+    """
+    n_cam = inp_poses_rs.shape[1]
+    keep = multiple
+    if not bool(keep.any()):
+        return inp_poses_rs.sum() * 0.0
+    relative = pred_rot_rs[:, coi].matmul(pred_rot_rs[:, [c_cnt]].permute(0, 1, 3, 2))  # [B, C-1, 3, 3]
+    shuffled = relative[perm].matmul(rot_poses_rs.reshape(-1, n_cam, 3, 16)[:, c_cnt : c_cnt + 1].repeat(1, n_cam - 1, 1, 1)).reshape(-1, n_cam - 1, 48)
+    rows = _weighted_rep_rows(inp_poses_rs[:, coi].reshape(-1, 32), shuffled.reshape(-1, 48), confidences_rs[:, coi].reshape(-1, 16)).reshape(-1, n_cam - 1)
+    counts = (sample_subjects[:, None] == sample_subjects[None, :]).sum(dim=1).to(rows.dtype)
+    per_frame = rows.sum(dim=1) / (counts * (n_cam - 1) * 32)
+    return per_frame[keep].sum()
+
+
 def train(inputs: Path, index: Path, train_persons: Sequence[str], output: Path, *, device: str = "cuda", epochs: int | None = None, seed: int = 0, log_every: int = 200) -> Path:
     """Train the lifter on the frames of ``train_persons`` with the released loop and defaults."""
     import torch
@@ -194,7 +244,8 @@ def train(inputs: Path, index: Path, train_persons: Sequence[str], output: Path,
     conf = data["conf"][rows]  # [N, C, 16]
     keep = (conf.sum(axis=2) >= 8).all(axis=1)  # frames with a usable pose in every view
     p2d, conf = p2d[keep], conf[keep]
-    subject_ids = np.array([hash(s) % (1 << 31) for s in np.array(subjects)[keep]])
+    subject_index = {s: i for i, s in enumerate(sorted(wanted))}
+    subject_ids = np.array([subject_index[s] for s in np.array(subjects)[keep]], dtype=np.int64)
     n_cam = p2d.shape[1]
     dev = torch.device(device if torch.cuda.is_available() or device == "cpu" else "cpu")
     Lifter = _load_lifter_class()
@@ -209,10 +260,13 @@ def train(inputs: Path, index: Path, train_persons: Sequence[str], output: Path,
     n = p2d_t.shape[0]
     steps = math.ceil(n / batch_size)
     history = []
+    generator = torch.Generator(device=dev)
+    generator.manual_seed(seed)
     t0 = time.time()
+    print(f"[canonpose] {n} frames x {n_cam} views from {len(wanted)} subjects, {steps} steps/epoch, {n_epochs} epochs, device {dev}")
     for epoch in range(n_epochs):
         order = torch.from_numpy(rng.permutation(n)).to(dev)
-        sums = {"loss": 0.0, "rep": 0.0, "view": 0.0, "camera": 0.0}
+        sums = {k: torch.zeros((), device=dev) for k in ("loss", "rep", "view", "camera")}
         for step in range(steps):
             batch = order[step * batch_size : (step + 1) * batch_size]
             inp_poses = p2d_t[batch].reshape(-1, 32)  # frame-major, camera-minor like train.py
@@ -233,28 +287,19 @@ def train(inputs: Path, index: Path, train_persons: Sequence[str], output: Path,
                 coi = np.delete(np.arange(n_cam), c_cnt)
                 projected = pred_rot_rs[:, coi].matmul(pred_poses_rs.reshape(-1, n_cam, 3, 16)[:, c_cnt : c_cnt + 1].repeat(1, n_cam - 1, 1, 1)).reshape(-1, n_cam - 1, 48)
                 loss_view = loss_view + loss_weighted_rep_no_scale(inp_poses_rs[:, coi].reshape(-1, 32), projected.reshape(-1, 48), confidences_rs[:, coi].reshape(-1, 16))
-                relative_rotations = pred_rot_rs[:, coi].matmul(pred_rot_rs[:, [c_cnt]].permute(0, 1, 3, 2))
-                for subject in sample_subjects.unique():
-                    mask = sample_subjects == subject
-                    count = int(mask.sum())
-                    if count > 1:
-                        perm = torch.from_numpy(rng.choice(count, size=count, replace=False)).to(dev)
-                        samp_rel = relative_rotations[mask]
-                        samp_rot_poses = rot_poses_rs[mask]
-                        samp_inp = inp_poses_rs[mask][:, coi].reshape(-1, 32)
-                        samp_conf = confidences_rs[mask][:, coi].reshape(-1, 16)
-                        shuffled = samp_rel[perm].matmul(samp_rot_poses.reshape(-1, n_cam, 3, 16)[:, c_cnt : c_cnt + 1].repeat(1, n_cam - 1, 1, 1)).reshape(-1, n_cam - 1, 48)
-                        loss_camera = loss_camera + loss_weighted_rep_no_scale(samp_inp, shuffled.reshape(-1, 48), samp_conf)
+                # One within-subject permutation per camera, as train.py draws one per subject and camera.
+                perm, multiple = within_subject_permutation(sample_subjects, generator)
+                loss_camera = loss_camera + camera_consistency_loss(inp_poses_rs, confidences_rs, pred_rot_rs, rot_poses_rs, sample_subjects, c_cnt, coi, perm, multiple)
             loss = CONFIG["weight_rep"] * loss_rep + CONFIG["weight_view"] * loss_view + CONFIG["weight_camera"] * loss_camera
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            sums["loss"] += float(loss)
-            sums["rep"] += float(loss_rep)
-            sums["view"] += float(loss_view)
-            sums["camera"] += float(loss_camera) if torch.is_tensor(loss_camera) else float(loss_camera)
+            sums["loss"] += loss.detach()
+            sums["rep"] += loss_rep.detach()
+            sums["view"] += loss_view.detach()
+            sums["camera"] += loss_camera.detach()
         scheduler.step()
-        record = {"epoch": epoch, **{k: v / steps for k, v in sums.items()}, "seconds": time.time() - t0}
+        record = {"epoch": epoch, **{k: float(v) / steps for k, v in sums.items()}, "seconds": time.time() - t0}
         history.append(record)
         if epoch % max(1, n_epochs // 10) == 0 or epoch == n_epochs - 1:
             print(f"[canonpose] epoch {epoch + 1}/{n_epochs} loss {record['loss']:.4f} rep {record['rep']:.4f} view {record['view']:.4f} cam {record['camera']:.4f} ({record['seconds']:.0f} s)")

@@ -7,3 +7,6 @@
 [submodule "src/fusion/external/third_party/CanonPose"]
 	path = src/fusion/external/third_party/CanonPose
 	url = https://github.com/bastianwandt/CanonPose.git
+[submodule "src/fusion/external/third_party/MHFormer"]
+	path = src/fusion/external/third_party/MHFormer
+	url = https://github.com/Vegetebird/MHFormer.git

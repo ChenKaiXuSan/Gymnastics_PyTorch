@@ -70,8 +70,8 @@ def h36m17_to_mhr70(points: np.ndarray, valid: np.ndarray | None = None) -> tupl
     return target, target_valid
 
 
-def coco17_to_h36m17_2d(points: np.ndarray, valid: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
-    """``[T, 17, 2]`` COCO17 image keypoints -> ``[T, 17, 2]`` Human3.6M-17 layout.
+def coco17_to_h36m17(points: np.ndarray, valid: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """``[T, 17, D]`` COCO17 keypoints (image or 3D) -> ``[T, 17, D]`` Human3.6M-17 layout.
 
     Limb joints map directly; pelvis = mid-hips, thorax = mid-shoulders,
     spine = midpoint of pelvis and thorax, neck/nose = nose, head = nose
@@ -79,8 +79,10 @@ def coco17_to_h36m17_2d(points: np.ndarray, valid: np.ndarray | None = None) -> 
     face). Validity requires every COCO joint a derived joint depends on.
     """
     source = np.asarray(points, dtype=np.float32)
+    if source.ndim != 3 or source.shape[1] != 17:
+        raise ValueError("expected [T, 17, D] COCO17 keypoints")
     ok = np.isfinite(source).all(axis=-1) if valid is None else np.asarray(valid, dtype=bool) & np.isfinite(source).all(axis=-1)
-    out = np.zeros((source.shape[0], 17, 2), dtype=np.float32)
+    out = np.zeros((source.shape[0], 17, source.shape[-1]), dtype=np.float32)
     out_valid = np.zeros((source.shape[0], 17), dtype=bool)
     direct = {1: 12, 2: 14, 3: 16, 4: 11, 5: 13, 6: 15, 11: 5, 12: 7, 13: 9, 14: 6, 15: 8, 16: 10, 9: 0}
     for h36m_index, coco_index in direct.items():
@@ -95,3 +97,46 @@ def coco17_to_h36m17_2d(points: np.ndarray, valid: np.ndarray | None = None) -> 
     out[~out_valid] = 0.0
     return out, out_valid
 
+
+coco17_to_h36m17_2d = coco17_to_h36m17
+
+
+def named_to_h36m17(points: np.ndarray, valid: np.ndarray | None, joint_names: tuple[str, ...]) -> tuple[np.ndarray, np.ndarray]:
+    """``[T, J, D]`` joints with MHR70 names -> Human3.6M-17 layout (via the COCO17 subset).
+
+    Joint sets without eyes/ears (e.g. the 20 major joints) are accepted:
+    those COCO slots stay invalid and no H36M joint depends on them.
+    """
+    source = np.asarray(points, dtype=np.float32)
+    if source.ndim != 3 or source.shape[1] != len(joint_names):
+        raise ValueError("points must be [T, len(joint_names), D]")
+    ok = np.ones(source.shape[:2], dtype=bool) if valid is None else np.asarray(valid, dtype=bool)
+    lookup = {name: i for i, name in enumerate(joint_names)}
+    coco = np.zeros((source.shape[0], 17, source.shape[-1]), dtype=np.float32)
+    coco_valid = np.zeros((source.shape[0], 17), dtype=bool)
+    for coco_index, name in enumerate(COCO17_NAMES):
+        if name in lookup:
+            coco[:, coco_index] = source[:, lookup[name]]
+            coco_valid[:, coco_index] = ok[:, lookup[name]]
+    return coco17_to_h36m17(coco, coco_valid)
+
+
+def fill_missing_joints(points: np.ndarray, valid: np.ndarray) -> np.ndarray:
+    """Linear interpolation in time of invalid joints (edges held); a joint never valid stays 0.
+
+    Detector-based lifters have no notion of a missing joint, so their input is
+    completed this way before lifting; the frames stay marked invalid downstream.
+    """
+    source = np.asarray(points, dtype=np.float32).copy()
+    ok = np.asarray(valid, dtype=bool)
+    frames = np.arange(source.shape[0])
+    for j in range(source.shape[1]):
+        good = ok[:, j]
+        if good.all():
+            continue
+        if not good.any():
+            source[:, j] = 0.0
+            continue
+        for d in range(source.shape[-1]):
+            source[~good, j, d] = np.interp(frames[~good], frames[good], source[good, j, d])
+    return source
