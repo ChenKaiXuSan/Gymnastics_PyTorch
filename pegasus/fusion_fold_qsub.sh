@@ -23,7 +23,8 @@
 #PBS -A HP260146
 #PBS -q gen_S
 #PBS -l gpunum_job=1
-#PBS -l elapstim_req=12:00:00
+# One fold takes ~1 h; a short request backfills into scheduling gaps.
+#PBS -l elapstim_req=03:00:00
 #PBS -b 1
 #PBS -N ca_fold
 #PBS -j o
