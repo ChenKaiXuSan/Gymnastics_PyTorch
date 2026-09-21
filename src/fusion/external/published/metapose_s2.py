@@ -113,6 +113,17 @@ def write_opt_records(directory: Path, third_party: Path, *, out: Path, rows: np
     origins = np.stack([bboxes[..., 2], bboxes[..., 0]], axis=-1)
     pose2d_bbox = ((inputs["pose2d"] - origins[:, :, None, :]) / sizes[:, :, None, None]).astype(np.float64)
     heat_bbox = s1["heatmaps_bbox"].astype(np.float64)
+    # A joint without a detection has no 2D point (the prepare stage stores 0, i.e. the image origin) and an
+    # almost flat heatmap (variance (size/2)^2 instead of (0.02 size)^2). The release's 2D target / mean-heatmap
+    # input has no notion of a missing joint, so those joints are imputed with the stage-1 solution's own
+    # weak-perspective re-projection; the (uninformative) heatmap is kept as it is.
+    var_detected = (0.02 * sizes / sizes) ** 2  # bbox units: (0.02)^2
+    missing = heat_bbox[:, :, :, 0, 3] > 10.0 * var_detected[:, :, None]  # [N, C, 17]
+    reprojected = (np.einsum("njd,nkdo->nkjo", filled["pose_opt"], filled["rot_opt"]) * filled["scale_opt"][:, :, None, None] + filled["shift_opt"][:, :, None, :])[..., :2].astype(np.float64)
+    pose2d_bbox = np.where(missing[..., None], reprojected, pose2d_bbox)
+    imputed = int(missing.any(axis=(1, 2)).sum())
+    if imputed:
+        print(f"[metapose-s2] {out.name}: 2D of missing joints imputed from the stage-1 re-projection on {imputed} of {n} frames", flush=True)
     epi = inputs["epi"].astype(np.float32)
     boxes_i32 = inputs["bboxes"].astype(np.int32)
 
