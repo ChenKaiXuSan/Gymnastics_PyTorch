@@ -171,41 +171,12 @@ def run_stage2_released(directory: Path) -> Path:
     return directory / "s2.npz"
 
 
-def fold_rows(directory: Path, fold_json: Path, *, seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
-    """Frame rows of the fold's training subjects and of its test subjects.
-
-    Training rows keep only frames with a stage-1 estimate and are shuffled
-    with a fixed seed: ``train_metapose`` validates on the first
-    ``valid_first_n`` (64) records of its training split, which must be a
-    random sample of the training frames rather than one trial's first
-    frames. Test rows stay in index order so the predictions can be placed
-    back on their trials.
-    """
-    index = json.loads((directory / "index.json").read_text(encoding="utf-8"))
-    fold = json.loads(Path(fold_json).read_text(encoding="utf-8"))
-    usable = np.asarray(np.load(directory / "s1.npz")["usable"], dtype=bool)
-
-    def rows(persons: set[str]) -> np.ndarray:
-        spans = [np.arange(t["start"], t["stop"]) for t in index["trials"] if str(t["person"]) in persons]
-        return np.concatenate(spans).astype(np.int64) if spans else np.zeros(0, dtype=np.int64)
-
-    train = rows({str(s) for s in fold["train"]})
-    train = np.random.default_rng(seed).permutation(train[usable[train]])
-    test = rows({str(s) for s in fold["test"]})
-    if len(train) == 0 or len(test) == 0:
-        raise ValueError(f"{fold_json.name}: {len(train)} training / {len(test)} test frames in {directory}")
-    return train, test
-
-
 def run_stage2_trained(directory: Path, fold_json: Path, *, epochs_per_stage: int, patience: int, max_stages: int, seed: int = 0) -> Path:
-    """Train stage 2 on the fold's training frames, predict its test frames -> ``s2_<fold>.npz``."""
-    train, test = fold_rows(directory, fold_json, seed=seed)
-    rows_file = directory / f"rows_{fold_json.stem}.npz"
-    np.savez(rows_file, train_rows=train, test_rows=test)
-    print(f"[metapose] {fold_json.stem}: training stage 2 on {len(train)} frames, predicting {len(test)}")
+    """Train stage 2 on the fold's training subjects, predict its test subjects -> ``s2_<fold>.npz``
+    (``metapose_s2.py`` writes per-subject record shards once and recombines them per fold)."""
     script = Path(__file__).with_name("metapose_s2.py")
     subprocess.run([str(metapose_python()), str(script), "--mode", "train", "--directory", str(directory), "--release-root", str(RELEASE_ROOT), "--third-party", str(THIRD_PARTY),
-                    "--fold", fold_json.stem, "--rows", str(rows_file), "--epochs-per-stage", str(epochs_per_stage), "--patience", str(patience), "--max-stages", str(max_stages)], check=True, env=_tf_env())
+                    "--fold", fold_json.stem, "--fold-json", str(fold_json), "--epochs-per-stage", str(epochs_per_stage), "--patience", str(patience), "--max-stages", str(max_stages), "--seed", str(seed)], check=True, env=_tf_env())
     return directory / f"s2_{fold_json.stem}.npz"
 
 

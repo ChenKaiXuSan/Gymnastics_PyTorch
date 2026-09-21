@@ -6,15 +6,22 @@ estimate and the optimum) and either
 
 * ``--mode released``: runs the released 2-camera Human3.6M checkpoint
   (``--epochs_per_stage=0 --load_weights_from ckpt/h36m/cam2``) on every frame, or
-* ``--mode train``: trains stage 2 with the authors' script on the fold's
-  training frames (``--train-rows``) and predicts the fold's test frames
-  (``--test-rows``). The training is label-free: the ``fwd`` loss regresses
-  the 2D detections and the ``soln`` losses the stage-1 optimum; the record's
-  ``pose3d`` field, which the script uses only for the early-stopping /
-  checkpoint metric ``val_pred_pmpjpe``, holds the stage-1 optimum, so model
-  selection is label-free too. Epochs per stage, patience and the number of
-  stages are capped by the caller (the released Human3.6M schedule is
-  3000 epochs x up to 10 stages).
+* ``--mode shards``: writes the records once per subject (``shards/<person>/
+  {train,test}``; ``train`` holds the frames with a stage-1 estimate, ``test``
+  every frame in index order), in parallel processes -- the tfds serialiser
+  is slow, and folds only recombine subjects;
+* ``--mode train``: assembles the fold's ``opt_<fold>/{train,test}`` by
+  concatenating subject shards (TFRecord files concatenate byte-wise; a
+  64-record head of random training frames comes first because the script
+  validates on the first ``valid_first_n`` records of its training split),
+  trains stage 2 with the authors' script on the training subjects and
+  predicts the test subjects. The training is label-free: the ``fwd`` loss
+  regresses the 2D detections and the ``soln`` losses the stage-1 optimum;
+  the record's ``pose3d`` field, which the script uses only for the
+  early-stopping / checkpoint metric ``val_pred_pmpjpe``, holds the stage-1
+  optimum, so model selection is label-free too. Epochs per stage, patience
+  and the number of stages are capped by the caller (the released Human3.6M
+  schedule is 300 epochs x up to 10 stages, patience 50).
 
 Predicted 3D poses (H36M-17, bbox units of camera 0) are exported to
 ``s2.npz`` / ``s2_<fold>.npz`` together with the rows they belong to.
@@ -23,13 +30,42 @@ Predicted 3D poses (H36M-17, bbox units of camera 0) are exported to
 from __future__ import annotations
 
 import argparse
+import json
+import multiprocessing
 import os
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
+
+VALID_FIRST_N = 64  # train_metapose --valid_first_n default
+_DATA: dict[str, dict[str, np.ndarray]] = {}
+
+
+def load_data(directory: Path) -> dict[str, dict[str, np.ndarray]]:
+    """``inputs.npz`` and ``s1.npz`` materialised (NpzFile members decompress on every access), cached per process."""
+    key = str(directory)
+    if key not in _DATA:
+        _DATA[key] = {"inputs": {k: v for k, v in np.load(directory / "inputs.npz").items()}, "s1": {k: v for k, v in np.load(directory / "s1.npz").items()}}
+    return _DATA[key]
+
+
+def person_blocks(directory: Path) -> list[tuple[str, int, int]]:
+    """``(person, start, stop)`` of every subject's contiguous row block, in index order."""
+    index = json.loads((directory / "index.json").read_text(encoding="utf-8"))
+    blocks: list[tuple[str, int, int]] = []
+    for trial in index["trials"]:
+        person = str(trial["person"])
+        if blocks and blocks[-1][0] == person and blocks[-1][2] == trial["start"]:
+            blocks[-1] = (person, blocks[-1][1], trial["stop"])
+        elif any(b[0] == person for b in blocks):
+            raise ValueError(f"rows of person {person} are not contiguous in {directory / 'index.json'}")
+        else:
+            blocks.append((person, trial["start"], trial["stop"]))
+    return blocks
 
 
 def write_opt_records(directory: Path, third_party: Path, *, out: Path, rows: np.ndarray | None = None) -> Path:
@@ -40,9 +76,8 @@ def write_opt_records(directory: Path, third_party: Path, *, out: Path, rows: np
     import tensorflow_datasets as tfds
     from metapose import data_utils  # type: ignore
 
-    # Materialise the arrays: NpzFile members decompress on every access.
-    inputs = {k: v for k, v in np.load(directory / "inputs.npz").items()}
-    s1 = {k: v for k, v in np.load(directory / "s1.npz").items()}
+    data = load_data(directory)
+    inputs, s1 = dict(data["inputs"]), dict(data["s1"])
     if rows is not None:
         rows = np.asarray(rows, dtype=np.int64)
         total = len(inputs["pose2d"])
@@ -136,11 +171,80 @@ def run_released(directory: Path, release_root: Path, third_party: Path) -> Path
     return directory / "s2.npz"
 
 
-def run_trained(directory: Path, third_party: Path, *, fold: str, train_rows: np.ndarray, test_rows: np.ndarray, epochs_per_stage: int, patience: int, max_stages: int, learning_rate: float = 1e-4) -> Path:
-    """Train stage 2 on ``train_rows`` with the authors' script and predict ``test_rows``."""
+# ----------------------------------------------------------------------------- subject shards
+def _write_shard(args: tuple[str, str, str, np.ndarray]) -> tuple[str, int]:
+    directory, third_party, out, rows = args
+    write_opt_records(Path(directory), Path(third_party), out=Path(out), rows=rows)
+    return out, int(len(rows))
+
+
+def write_shards(directory: Path, third_party: Path, *, workers: int = 8) -> Path:
+    """``shards/<person>/train`` (usable frames) and ``shards/<person>/test`` (all frames, index order) for every subject."""
+    usable = np.asarray(np.load(directory / "s1.npz")["usable"], dtype=bool)
+    shards = directory / "shards"
+    if shards.exists():
+        shutil.rmtree(shards)
+    tasks, manifest = [], {}
+    for person, start, stop in person_blocks(directory):
+        rows = np.arange(start, stop, dtype=np.int64)
+        manifest[person] = {"start": start, "stop": stop, "train_rows": int(usable[rows].sum()), "test_rows": int(len(rows))}
+        tasks.append((str(directory), str(third_party), str(shards / person / "test"), rows))
+        tasks.append((str(directory), str(third_party), str(shards / person / "train"), rows[usable[rows]]))
+    # The writer is serial per shard; subjects are written in parallel processes (spawned: TensorFlow does not fork well).
+    with ProcessPoolExecutor(max_workers=max(1, workers), mp_context=multiprocessing.get_context("spawn")) as pool:
+        for out, count in pool.map(_write_shard, tasks):
+            print(f"[metapose-s2] shard {Path(out).relative_to(shards)}: {count} records", flush=True)
+    (shards / "manifest.json").write_text(json.dumps({"persons": manifest, "valid_first_n": VALID_FIRST_N}, indent=1), encoding="utf-8")
+    return shards
+
+
+def _concatenate(parts: list[Path], out: Path) -> None:
+    """A TFRecord file is a plain sequence of framed records: byte-wise concatenation is a valid file."""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("wb") as handle:
+        for part in parts:
+            with part.open("rb") as source:
+                shutil.copyfileobj(source, handle, 16 * 1024 * 1024)
+
+
+def assemble_fold(directory: Path, third_party: Path, *, fold: str, train_persons: list[str], test_persons: list[str], seed: int) -> tuple[Path, np.ndarray, np.ndarray]:
+    """``opt_<fold>/{train,test}`` from the subject shards; returns the directory and the (train, test) rows."""
+    shards = directory / "shards"
+    manifest = json.loads((shards / "manifest.json").read_text(encoding="utf-8"))["persons"]
+    usable = np.asarray(np.load(directory / "s1.npz")["usable"], dtype=bool)
+    blocks = {person: (int(v["start"]), int(v["stop"])) for person, v in manifest.items()}
+    missing = [p for p in train_persons + test_persons if p not in blocks]
+    if missing:
+        raise ValueError(f"{fold}: no shards for subjects {missing}")
+    rng = np.random.default_rng(seed)
+    train_persons = [p for p in train_persons if manifest[p]["train_rows"] > 0]
+    order = [train_persons[i] for i in rng.permutation(len(train_persons))]
+    train_rows = np.concatenate([np.arange(*blocks[p]) for p in order])
+    train_rows = train_rows[usable[train_rows]]
+    test_persons = sorted(test_persons, key=lambda p: blocks[p][0])
+    test_rows = np.concatenate([np.arange(*blocks[p]) for p in test_persons])
+    if len(train_rows) == 0 or len(test_rows) == 0:
+        raise ValueError(f"{fold}: {len(train_rows)} training / {len(test_rows)} test frames")
     dataset_dir = directory / f"opt_{fold}"
-    write_opt_records(directory, third_party, out=dataset_dir / "train", rows=train_rows)
-    write_opt_records(directory, third_party, out=dataset_dir / "test", rows=test_rows)
+    if dataset_dir.exists():
+        shutil.rmtree(dataset_dir)
+    # Validation head: the script validates on the first VALID_FIRST_N records of its training split.
+    head_rows = rng.choice(train_rows, size=min(VALID_FIRST_N, len(train_rows)), replace=False)
+    head = write_opt_records(directory, third_party, out=dataset_dir / "train_head", rows=head_rows)
+    _concatenate([head / "dataset.tfrec"] + [shards / p / "train" / "dataset.tfrec" for p in order], dataset_dir / "train" / "dataset.tfrec")
+    _concatenate([shards / p / "test" / "dataset.tfrec" for p in test_persons], dataset_dir / "test" / "dataset.tfrec")
+    for split in ("train", "test"):
+        for item in head.iterdir():
+            if item.name != "dataset.tfrec":
+                shutil.copy(item, dataset_dir / split / item.name)
+    shutil.rmtree(head)
+    print(f"[metapose-s2] {fold}: {len(train_rows)} training frames from {len(order)} subjects (+{len(head_rows)} validation head), {len(test_rows)} test frames from {len(test_persons)} subjects", flush=True)
+    return dataset_dir, train_rows, test_rows
+
+
+def run_trained(directory: Path, third_party: Path, *, fold: str, train_persons: list[str], test_persons: list[str], epochs_per_stage: int, patience: int, max_stages: int, learning_rate: float = 1e-4, seed: int = 0) -> Path:
+    """Train stage 2 on the training subjects with the authors' script and predict the test subjects."""
+    dataset_dir, _, test_rows = assemble_fold(directory, third_party, fold=fold, train_persons=train_persons, test_persons=test_persons, seed=seed)
     log_dir, preds = directory / f"s2_{fold}_tb", directory / f"s2_{fold}_preds"
     for path in (log_dir, preds):
         if path.exists():
@@ -165,21 +269,28 @@ def main(argv=None) -> int:
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--release-root", type=Path, required=True)
     parser.add_argument("--third-party", type=Path, required=True)
-    parser.add_argument("--mode", choices=("released", "train"), default="train")
+    parser.add_argument("--mode", choices=("released", "shards", "train"), default="train")
     parser.add_argument("--fold", default=None, help="fold name (train mode)")
-    parser.add_argument("--rows", type=Path, default=None, help="npz with train_rows / test_rows (train mode)")
+    parser.add_argument("--fold-json", type=Path, default=None, help="fold file with train / test subject lists (train mode)")
+    parser.add_argument("--workers", type=int, default=8, help="shard writer processes")
     parser.add_argument("--epochs-per-stage", type=int, default=30)
     parser.add_argument("--patience", type=int, default=5)
     parser.add_argument("--max-stages", type=int, default=3)
+    parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args(argv)
     directory, release_root, third_party = (Path(a).resolve() for a in (args.directory, args.release_root, args.third_party))
     if args.mode == "released":
         run_released(directory, release_root, third_party)
+    elif args.mode == "shards":
+        write_shards(directory, third_party, workers=args.workers)
     else:
-        if not args.fold or not args.rows:
-            raise SystemExit("--fold and --rows are required in train mode")
-        rows = np.load(args.rows)
-        run_trained(directory, third_party, fold=args.fold, train_rows=rows["train_rows"], test_rows=rows["test_rows"], epochs_per_stage=args.epochs_per_stage, patience=args.patience, max_stages=args.max_stages)
+        if not args.fold or not args.fold_json:
+            raise SystemExit("--fold and --fold-json are required in train mode")
+        if not (directory / "shards" / "manifest.json").is_file():
+            write_shards(directory, third_party, workers=args.workers)
+        fold = json.loads(Path(args.fold_json).read_text(encoding="utf-8"))
+        run_trained(directory, third_party, fold=args.fold, train_persons=[str(p) for p in fold["train"]], test_persons=[str(p) for p in fold["test"]],
+                    epochs_per_stage=args.epochs_per_stage, patience=args.patience, max_stages=args.max_stages, seed=args.seed)
     return 0
 
 

@@ -18,6 +18,10 @@
                   fold on the training subjects' reference joints, both views as
                   monocular samples; no row for the private data (no independent
                   3D reference); see mhformer.py
+    mdvpose       --dataset freeman|sportspose --stage prepare|train|evaluate|all
+                  MDVPose (MotionBERT fine-tuned with multi-view consistency,
+                  supervised) trained per fold from the MotionBERT H36M checkpoint;
+                  FreeMan / SportsPose only; see mdvpose.py
     keypoints2d   --dataset gymnastics [--persons ...]   build the private 2D cache
                   (decodes every per-frame SAM3D file once; run on the cluster)
 
@@ -181,6 +185,44 @@ def _run_mhformer(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_mdvpose(args: argparse.Namespace) -> int:
+    from .evaluate import evaluate_folds, fold_files, write_summary
+    from .mdvpose import CONFIG, MDVPoseLifter, output_root, train
+    from .mhformer import fold_persons, prepare_dataset
+    from .transform import LiftedTrialTransform, view_source
+
+    root = output_root(args.dataset)
+    extra = list(args.override or [])
+    source = view_source(args.dataset)
+    stages = ("prepare", "train", "evaluate") if args.stage == "all" else (args.stage,)
+    folds = fold_files(args.dataset, args.folds_dir)
+    if args.folds:
+        folds = [f for f in folds if f.stem in set(args.folds)]
+    if "prepare" in stages:
+        prepare_dataset(args.dataset, source, output_dir=root, extra_overrides=extra)  # same records as MHFormer
+    if "train" in stages:
+        for fold in folds:
+            out = root / fold.stem / "model.pt"
+            if out.is_file() and not args.force:
+                print(f"[mdvpose] {fold.stem}: {out} exists, skipping (use --force)")
+                continue
+            print(f"[mdvpose] training {args.dataset} {fold.stem} on {len(fold_persons(fold, 'train'))} subjects, selecting on {len(fold_persons(fold, 'val'))}")
+            train(root / "inputs.npz", root / "index.json", fold_persons(fold, "train"), fold_persons(fold, "val"), out, device=args.device, epochs=args.epochs)
+    if "evaluate" in stages:
+        for mode in args.mode.split(","):
+
+            def factory(fold, mode=mode):
+                lifter = MDVPoseLifter(root / fold.stem / "model.pt", args.device)
+                return LiftedTrialTransform(lifter.lift, source, mode=mode, cache_dir=OUTPUT_ROOT / "lifted", method=f"mdvpose_{args.dataset}_{fold.stem}")
+
+            payload = evaluate_folds(args.dataset, factory, folds_dir=args.folds_dir, extra_overrides=extra)
+            payload["method"] = {"name": "mdvpose", "mode": mode, "training": "released multi-view fine-tuning recipe from the MotionBERT H36M checkpoint, supervised on the fold's training subjects' reference joints (both views)", "epochs": args.epochs or CONFIG["epochs"], "selection": "best validation-subject MPJPE"}
+            out = write_summary(root / f"summary_{mode}.json", payload)
+            s = payload["summary"]
+            print(f"[external/mdvpose] {args.dataset} {mode}: PA-MPJPE {s['pa_mpjpe_mean'] * 1000:.1f} ± {s['pa_mpjpe_sd'] * 1000:.1f} mm over {s['folds']} folds, joints {len(s['joint_names'])} -> {out}")
+    return 0
+
+
 def _run_keypoints2d(args: argparse.Namespace) -> int:
     from concurrent.futures import ProcessPoolExecutor
 
@@ -253,6 +295,16 @@ def make_parser() -> argparse.ArgumentParser:
     mh.add_argument("--folds-dir", type=Path, default=None)
     mh.add_argument("--force", action="store_true")
     mh.add_argument("--override", nargs="*", default=None)
+    md = sub.add_parser("mdvpose", help="MDVPose (MotionBERT multi-view fine-tuning) trained per fold (supervised)")
+    md.add_argument("--dataset", required=True, choices=("freeman", "sportspose"))
+    md.add_argument("--stage", default="all", choices=("prepare", "train", "evaluate", "all"))
+    md.add_argument("--mode", default="procrustes_average", help="comma-separated: procrustes_average, per_view")
+    md.add_argument("--epochs", type=int, default=None, help="override the released 60 epochs")
+    md.add_argument("--device", default="cuda")
+    md.add_argument("--folds", nargs="*", default=None)
+    md.add_argument("--folds-dir", type=Path, default=None)
+    md.add_argument("--force", action="store_true")
+    md.add_argument("--override", nargs="*", default=None)
     kp = sub.add_parser("keypoints2d", help="build the private per-view 2D keypoint cache")
     kp.add_argument("--dataset", default="gymnastics")
     kp.add_argument("--persons", nargs="*", default=None)
@@ -270,6 +322,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_canonpose(args)
     if args.method == "mhformer":
         return _run_mhformer(args)
+    if args.method == "mdvpose":
+        return _run_mdvpose(args)
     return _run_keypoints2d(args)
 
 

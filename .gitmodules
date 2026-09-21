@@ -10,3 +10,6 @@
 [submodule "src/fusion/external/third_party/MHFormer"]
 	path = src/fusion/external/third_party/MHFormer
 	url = https://github.com/Vegetebird/MHFormer.git
+[submodule "src/fusion/external/third_party/MDVPose"]
+	path = src/fusion/external/third_party/MDVPose
+	url = https://github.com/iGame-Lab/MDVPose.git
