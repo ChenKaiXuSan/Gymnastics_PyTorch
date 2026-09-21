@@ -9,7 +9,8 @@ has:
                  taken from the stored image).  Reading every file also decodes
                  the full frame, so the result is cached once per person and
                  view below ``local/runs/external_published/keypoints2d``.
-    freeman      ``prediction.npz`` of the benchmark cache (``points2d``, 1920x1080).
+    freeman      ``prediction.npz`` of the benchmark cache (``points2d``); the
+                 release videos are portrait 1080x1920.
     sportspose   the external per-video cache (rank-0 person, upright frame).
 
 Every loader returns :class:`View2D` with the keypoints indexed by video frame.
@@ -108,6 +109,9 @@ def gymnastics_view(person_id: str, view: str, *, cache_root: Path = DEFAULT_CAC
 
 
 # ----------------------------------------------------------------------------- freeman
+FREEMAN_FRAME_SIZE = (1080, 1920)  # (width, height): every FreeMan video is portrait
+
+
 def freeman_view(benchmark_root: Path, subject_id: int, session_id: str, view_id: str) -> View2D:
     """2D keypoints of one selected FreeMan view from the benchmark cache."""
     from fusion.benchmarks.freeman.sam3d import load_inference
@@ -117,7 +121,7 @@ def freeman_view(benchmark_root: Path, subject_id: int, session_id: str, view_id
     points = np.asarray(prediction.points2d, dtype=np.float32)
     valid = np.asarray(prediction.valid2d, dtype=bool)
     frame_ids = np.asarray(prediction.frame_ids, dtype=np.int64)
-    return View2D(frame_ids=frame_ids, points=points, valid=valid, width=1920, height=1080, name=f"freeman/{int(subject_id):02d}/{session_id}/{view_id}")
+    return View2D(frame_ids=frame_ids, points=points, valid=valid, width=FREEMAN_FRAME_SIZE[0], height=FREEMAN_FRAME_SIZE[1], name=f"freeman/{int(subject_id):02d}/{session_id}/{view_id}")
 
 
 # ----------------------------------------------------------------------------- sportspose

@@ -190,7 +190,6 @@ class FreeManDataModule(DualViewDataModule):
             subject_id = f"{int(subject):02d}"
             kept_before = len(samples)
             for trial, reference_path in self._session_loader(subject):
-                trial = self._transform(trial)
                 action = session_action(trial.trial_id, action_table) if action_table else None
                 if allowed_actions is not None and action not in allowed_actions:
                     self.skipped_sessions["action"] += 1
@@ -199,6 +198,9 @@ class FreeManDataModule(DualViewDataModule):
                 if not self._keep_record(bounds):
                     self.skipped_sessions["cycles"] += 1
                     continue
+                # Session selection first: the transform (external methods) is
+                # only paid for sessions that are kept; it preserves the frames.
+                trial = self._transform(trial)
                 reference = reference_valid = None
                 if self.config.attach_reference:
                     loaded = self._load_reference(reference_path, trial.face.shape[0])

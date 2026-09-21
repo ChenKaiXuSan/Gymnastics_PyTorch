@@ -10,7 +10,7 @@ import pytest
 from common.skeletons.mhr70 import MHR70_INDEX, mhr_names
 from fusion.external.published.fuse import procrustes_average, umeyama
 from fusion.external.published.keypoints2d import View2D, load_view, save_view
-from fusion.external.published.mapping import COCO17_FROM_MHR70, H36M17_TO_MHR70, h36m17_to_mhr70, mhr70_to_coco17_2d
+from fusion.external.published.mapping import COCO17_FROM_MHR70, H36M17_TO_MHR70, coco17_to_h36m17_2d, h36m17_to_mhr70, mhr70_to_coco17_2d
 from fusion.external.published.transform import LiftedTrialTransform
 from fusion.external.published.videopose3d import normalize_screen_coordinates
 from fusion.keypoints.schema import PosePairTrial
@@ -32,8 +32,10 @@ def test_joint_mappings_are_consistent():
     h36m = np.random.default_rng(1).normal(size=(3, 17, 3)).astype(np.float32)
     pose, pose_valid = h36m17_to_mhr70(h36m)
     assert pose.shape == (3, 70, 3) and pose_valid.sum() == 3 * len(H36M17_TO_MHR70)
-    assert np.allclose(pose[:, MHR70_INDEX["right-knee"]], h36m[:, 2]) and np.allclose(pose[:, MHR70_INDEX["neck"]], h36m[:, 9])
-    assert not pose_valid[:, MHR70_INDEX["nose"]].any()  # no H36M counterpart
+    assert np.allclose(pose[:, MHR70_INDEX["right-knee"]], h36m[:, 2]) and np.allclose(pose[:, MHR70_INDEX["neck"]], h36m[:, 8]) and np.allclose(pose[:, MHR70_INDEX["nose"]], h36m[:, 9])
+    assert not pose_valid[:, MHR70_INDEX["left-eye"]].any()  # no H36M counterpart
+    h2d, h2d_valid = coco17_to_h36m17_2d(coco, ok)
+    assert np.allclose(h2d[:, 0], 0.5 * (coco[:, 11] + coco[:, 12])) and np.allclose(h2d[0, 13], coco[0, 9]) and not h2d_valid[1, 13] and h2d_valid[0].all()
     assert np.allclose(normalize_screen_coordinates(np.array([[[0.0, 0.0], [1920.0, 1080.0]]]), 1920, 1080), [[[-1.0, -0.5625], [1.0, 0.5625]]])
 
 
@@ -99,7 +101,7 @@ def test_lifted_trial_transform_samples_each_view_on_its_own_frames(tmp_path: Pa
     assert out.face.shape == trial.face.shape and out.face_map is trial.face_map or np.array_equal(out.face_map, trial.face_map)
     # Frame 10 of view A -> lifted depth 10e-3; frame 12 of view B (offset 2) -> 12e-3.
     assert abs(out.face[0, MHR70_INDEX["right-hip"], 2] - 0.010) < 1e-6 and abs(out.side[0, MHR70_INDEX["right-hip"], 2] - 0.012) < 1e-6
-    assert out.valid_face[:, MHR70_INDEX["right-hip"]].all() and not out.valid_face[:, MHR70_INDEX["nose"]].any()
+    assert out.valid_face[:, MHR70_INDEX["right-hip"]].all() and not out.valid_face[:, MHR70_INDEX["left-eye"]].any()
     assert out.source_metadata["external_method"] == "fake" and out.source_metadata["external_mode"] == "per_view"
     # Whole videos are lifted once and cached: a second trial of the same person reuses them.
     cached = list((tmp_path / "fake").glob("*.npz"))
