@@ -1,15 +1,16 @@
 """Launcher for the vendored ``metapose.train_metapose`` with two runtime patches (TF env).
 
-* ``inference_time_optimization.procrustes`` runs ``tf.linalg.svd`` on the
-  device of its inputs; inside the vectorised ``pmpjpe`` metric cuSOLVER's
-  ``gesvd`` aborts the whole training step with ``info = 2`` when a 3x3
-  cross-covariance is (near-)singular, e.g. for a collapsed early prediction,
-  whereas the CPU kernel simply returns a solution. The metric is monitoring
-  only (checkpoint selection), so the SVD is pinned to the CPU.
 * The script keeps the best weights of a stage at the literal path
   ``/tmp/best-model`` (``ModelCheckpoint`` and ``WriteStageMetrics``), which
   concurrent runs on one node would overwrite; ``$METAPOSE_BEST_MODEL``
   replaces it.
+
+* Opt-in (``METAPOSE_PATCH_SVD=1``): ``inference_time_optimization.procrustes``
+  with its ``tf.linalg.svd`` pinned to the CPU -- cuSOLVER's ``gesvd`` aborts
+  the training step with ``info = 2`` on a non-finite / singular 3x3
+  cross-covariance inside the vectorised ``pmpjpe`` metric. Off by default:
+  the metric is monitoring only and a non-finite input means the run is
+  broken anyway.
 
 The vendored files stay unmodified; everything else is the authors' script
 and flags.
@@ -44,7 +45,7 @@ def procrustes_cpu_svd(a, b):
     return rotation, a_m, b_m
 
 
-if os.environ.get("METAPOSE_PATCH_SVD", "1") != "0":
+if os.environ.get("METAPOSE_PATCH_SVD", "0") == "1":  # opt-in: pin the metric SVD to the CPU
     inf_opt.procrustes = procrustes_cpu_svd
 
 
