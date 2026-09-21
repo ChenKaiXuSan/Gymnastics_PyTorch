@@ -33,26 +33,32 @@ def procrustes_align(prediction: Tensor, reference: Tensor, valid: Tensor) -> Te
         ``[N, J, 3]`` aligned prediction (frames with fewer than three valid
         joints are returned centred but otherwise unchanged).
     """
-    weight = valid.to(prediction.dtype)[..., None]
-    count = weight.sum(dim=1, keepdim=True).clamp_min(1.0)
-    mean_p = (prediction * weight).sum(dim=1, keepdim=True) / count
-    mean_r = (reference * weight).sum(dim=1, keepdim=True) / count
-    centred_p = (prediction - mean_p) * weight
-    centred_r = (reference - mean_r) * weight
-    covariance = centred_p.transpose(1, 2) @ centred_r  # [N, 3, 3]
-    u, singular, vt = torch.linalg.svd(covariance)
-    # Reflection guard: force a proper rotation.
-    sign = torch.sign(torch.linalg.det(u @ vt))
-    correction = torch.ones_like(singular)
-    correction[:, -1] = sign
-    rotation = (u * correction[:, None, :]) @ vt
-    variance_p = centred_p.square().sum(dim=(1, 2))
-    scale = (singular * correction).sum(dim=1) / variance_p.clamp_min(1e-8)
-    enough = (valid.sum(dim=1) >= 3)
-    scale = torch.where(enough, scale, torch.ones_like(scale))
-    rotation = torch.where(enough[:, None, None], rotation, torch.eye(3, dtype=rotation.dtype, device=rotation.device)[None])
-    aligned = scale[:, None, None] * ((prediction - mean_p) @ rotation) + mean_r
-    return aligned
+    # The SVD is not autocast-safe and the matmuls would otherwise be cast to
+    # bfloat16 under mixed precision: align in fp32 with autocast disabled.
+    with torch.autocast(device_type=prediction.device.type, enabled=False):
+        prediction = prediction.float()
+        reference = reference.float()
+        weight = valid.to(prediction.dtype)[..., None]
+        count = weight.sum(dim=1, keepdim=True).clamp_min(1.0)
+        mean_p = (prediction * weight).sum(dim=1, keepdim=True) / count
+        mean_r = (reference * weight).sum(dim=1, keepdim=True) / count
+        centred_p = (prediction - mean_p) * weight
+        centred_r = (reference - mean_r) * weight
+        covariance = centred_p.transpose(1, 2) @ centred_r  # [N, 3, 3]
+        u, singular, vt = torch.linalg.svd(covariance)
+        # Reflection guard: force a proper rotation.
+        sign = torch.sign(torch.linalg.det(u @ vt))
+        correction = torch.ones_like(singular)
+        correction[:, -1] = sign
+        rotation = (u * correction[:, None, :]) @ vt
+        variance_p = centred_p.square().sum(dim=(1, 2))
+        scale = (singular * correction).sum(dim=1) / variance_p.clamp_min(1e-8)
+        enough = (valid.sum(dim=1) >= 3)
+        scale = torch.where(enough, scale, torch.ones_like(scale))
+        rotation = torch.where(enough[:, None, None], rotation, torch.eye(3, dtype=rotation.dtype, device=rotation.device)[None])
+        aligned = scale[:, None, None] * ((prediction - mean_p) @ rotation) + mean_r
+        return aligned
+
 
 
 def per_joint_error(prediction: Tensor, reference: Tensor, valid: Tensor, *, align: str = "procrustes") -> tuple[Tensor, Tensor]:

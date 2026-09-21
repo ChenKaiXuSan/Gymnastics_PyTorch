@@ -3,7 +3,9 @@ max_steps: -1
 max_epochs: 50
 accelerator: auto
 devices: 1
-precision: 32
+# bf16-mixed runs the transformer forward/backward in bfloat16 with fp32
+# master weights; Procrustes metrics are computed in fp32 regardless.
+precision: bf16-mixed
 fast_dev_run: false
 gradient_clip_val: 1.0
 log_every_n_steps: 10
@@ -15,3 +17,5 @@ deterministic: false
 num_sanity_val_steps: 1
 # Intra-op CPU threads for torch (null = torch default, i.e. all cores).
 num_threads: null
+# torch.set_float32_matmul_precision on CUDA: high = TF32 tensor cores for fp32 matmuls.
+matmul_precision: high

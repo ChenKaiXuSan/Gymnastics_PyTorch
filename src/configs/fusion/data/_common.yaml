@@ -1,7 +1,7 @@
 # Fields shared by every DataModule (merged into each dataset file).
 skeleton: ${model.skeleton}
 batch_size: 8
-num_workers: 0
+num_workers: 8
 seed: ${seed}
 window:
   num_cycles: ${num_cycles}

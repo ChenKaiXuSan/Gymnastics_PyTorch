@@ -132,13 +132,18 @@ def run(cfg: DictConfig) -> dict[str, Any]:
         training metrics and the test metrics (if run).
     """
     pl.seed_everything(int(cfg.seed), workers=True)
+    import torch
+
     num_threads = cfg.trainer.get("num_threads")
     if num_threads:
         # On large shared CPU boxes the default (one thread per core) plus
         # DataLoader workers oversubscribes the machine; cap it explicitly.
-        import torch
-
         torch.set_num_threads(int(num_threads))
+    matmul_precision = cfg.trainer.get("matmul_precision")
+    if matmul_precision and torch.cuda.is_available():
+        # "high" lets fp32 matmuls use TF32 tensor cores (H100/A100); the
+        # model's fp32 paths (Procrustes metrics, losses) keep fp32 accumulation.
+        torch.set_float32_matmul_precision(str(matmul_precision))
     run_dir = Path(str(cfg.output_root))
     run_dir = (run_dir if run_dir.is_absolute() else PROJECT_ROOT / run_dir) / str(cfg.run_name)
     run_dir.mkdir(parents=True, exist_ok=True)
