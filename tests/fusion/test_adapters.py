@@ -252,6 +252,14 @@ def test_freeman_datamodule_session_selection(tmp_path: Path):
     module = FreeManDataModule({"name": "freeman", "attach_reference": False, "fold_json": str(fold), "options": {"cycle_records_root": str(records_root), "action_table": str(table), "actions": ["dance"]}}, session_loader=loader_two)
     module.setup()
     assert module.filtered_subjects == {"02"} and module.split.train == ("01",) and module.split.val == ()
+    # Same tolerance when the samples come from the cache (load_samples not called).
+    cached = FreeManDataModule({"name": "freeman", "attach_reference": False, "fold_json": str(fold), "cache_dir": str(tmp_path / "cache"), "options": {"cycle_records_root": str(records_root), "action_table": str(table), "actions": ["dance"]}}, session_loader=loader_two)
+    cached.setup()
+    cached = FreeManDataModule({"name": "freeman", "attach_reference": False, "fold_json": str(fold), "cache_dir": str(tmp_path / "cache"), "options": {"cycle_records_root": str(records_root), "action_table": str(table), "actions": ["dance"]}}, session_loader=lambda subject: (_ for _ in ()).throw(AssertionError("cache not used")))
+    cached.setup()
+    assert cached.split.train == ("01",) and cached.split.val == ()
+    with pytest.raises(ValueError):
+        FreeManDataModule({"name": "freeman", "attach_reference": False, "fold_json": str(fold), "options": {"subjects": [1], "cycle_records_root": str(records_root)}}, session_loader=session_loader).setup()
 
 
 def test_unity_datamodule_with_injected_loader(tmp_path: Path):

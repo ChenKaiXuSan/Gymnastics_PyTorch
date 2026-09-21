@@ -175,8 +175,7 @@ class DualViewDataModule(pl.LightningDataModule, ABC):
         self.samples: list[DualViewSample] = []
         self.split: SplitSpec = SplitSpec()
         self._datasets: dict[str, CycleWindowDataset] = {}
-        # Subjects an adapter loaded but kept no sample of (session selection);
-        # a fold may still name them, they are then dropped instead of an error.
+        # Subjects an adapter loaded but kept no sample of (session selection).
         self.filtered_subjects: set[str] = set()
 
     @abstractmethod
@@ -213,14 +212,20 @@ class DualViewDataModule(pl.LightningDataModule, ABC):
             split = SplitSpec(train=split.train[:cap], val=split.val[:cap], test=split.test[:cap])
         known = {sample.subject_id for sample in samples}
         named = set(split.train) | set(split.val) | set(split.test)
-        unknown = sorted(named - known - self.filtered_subjects)
-        if unknown:
-            raise ValueError(f"split references unknown subjects: {unknown}")
-        filtered = sorted(named & self.filtered_subjects - known)
-        if filtered:
-            print(f"[data] {len(filtered)} fold subjects have no sample after session selection and are dropped: {filtered}")
+        missing = sorted(named - known)
+        if missing and not self.selects_sessions:
+            raise ValueError(f"split references unknown subjects: {missing}")
+        if missing:
+            # Session selection may leave a fold subject without any sample
+            # (also when the samples come from the cache): drop it, keep the rest.
+            print(f"[data] {len(missing)} fold subjects have no sample after session selection and are dropped: {missing}")
             split = SplitSpec(train=tuple(s for s in split.train if s in known), val=tuple(s for s in split.val if s in known), test=tuple(s for s in split.test if s in known))
         return split
+
+    @property
+    def selects_sessions(self) -> bool:
+        """Whether this adapter's options drop whole sessions (override); enables the tolerance above."""
+        return False
 
     @property
     def reference_allowed_in_training(self) -> bool:

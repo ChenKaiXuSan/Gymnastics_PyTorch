@@ -151,6 +151,11 @@ class FreeManDataModule(DualViewDataModule):
             return None
         return coco17_to_mhr70(points)
 
+    @property
+    def selects_sessions(self) -> bool:
+        options = self.config.options
+        return bool(options.get("actions")) or int(options.get("min_cycles", 0) or 0) > 0 or options.get("max_period_cv") is not None
+
     def _action_filter(self) -> tuple[frozenset[str] | None, dict[str, str]]:
         """Allowed action labels and the session->label table (``options.actions``)."""
         from fusion.benchmarks.freeman.actions import DEFAULT_ACTION_TABLE, expand_actions, load_action_table
