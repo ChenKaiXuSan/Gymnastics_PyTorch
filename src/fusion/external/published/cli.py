@@ -4,6 +4,12 @@
                   official VideoPose3D lifter on the SAM3D 2D keypoints of both views,
                   evaluated through the model protocol (5 folds, phase windows,
                   per-frame PA-MPJPE on the major joints the method predicts)
+    metapose      --dataset ... --stage prepare|s1|s2|evaluate|all [--eval-stage s2|s1|init]
+                  official MetaPose (stage-1 solver, released 2-camera stage-2
+                  network) on the same two views; see metapose_pipeline.py for the data flow
+    canonpose     --dataset ... --stage prepare|train|evaluate|all   CanonPose trained
+                  per fold with its released recipe on the training subjects' two-view
+                  2D keypoints (self-supervised); see canonpose.py
     keypoints2d   --dataset gymnastics [--persons ...]   build the private 2D cache
                   (decodes every per-frame SAM3D file once; run on the cluster)
 
@@ -30,7 +36,7 @@ def _run_videopose3d(args: argparse.Namespace) -> int:
     cache_dir = OUTPUT_ROOT / "lifted"
     source = view_source(args.dataset)
 
-    def factory():
+    def factory(fold):
         return LiftedTrialTransform(lifter.lift, source, mode=args.mode, cache_dir=cache_dir, method="videopose3d")
 
     extra = list(args.override or [])
@@ -48,6 +54,64 @@ def _cache_gymnastics_view(item: tuple[str, str]) -> dict:
     person, view = item
     v = gymnastics_view(person, view, cache_root=DEFAULT_CACHE_ROOT)
     return {"person": person, "view": view, "frames": int(len(v.frame_ids)), "size": [v.width, v.height]}
+
+
+def _run_metapose(args: argparse.Namespace) -> int:
+    from .evaluate import evaluate_folds, write_summary
+    from .metapose_pipeline import MetaPoseTrialTransform, prepare_dataset, run_stage1, run_stage2
+    from .transform import view_source
+    from .videopose3d import VideoPose3DLifter
+
+    directory = OUTPUT_ROOT / "metapose" / args.dataset
+    extra = list(args.override or [])
+    stages = ("prepare", "s1", "s2", "evaluate") if args.stage == "all" else (args.stage,)
+    if "prepare" in stages:
+        lifter = VideoPose3DLifter(args.checkpoint, args.device, test_time_augmentation=not args.no_tta)
+        prepare_dataset(args.dataset, lifter.lift, view_source(args.dataset), output_dir=directory, lifted_cache=OUTPUT_ROOT / "lifted", extra_overrides=extra)
+    if "s1" in stages:
+        run_stage1(directory, steps=args.s1_steps, batch=args.s1_batch)
+    if "s2" in stages:
+        run_stage2(directory)
+    if "evaluate" in stages:
+        for stage in (args.eval_stage.split(",") if args.eval_stage else ["s2"]):
+            payload = evaluate_folds(args.dataset, lambda fold, stage=stage: MetaPoseTrialTransform(directory, stage), folds_dir=args.folds_dir, extra_overrides=extra)
+            payload["method"] = {"name": "metapose", "stage": stage, "checkpoint": "ckpt/h36m/cam2", "init": "videopose3d", "heatmaps": "single gaussian at the SAM3D keypoint (sigma 2 % of the box)"}
+            out = write_summary(OUTPUT_ROOT / "metapose" / args.dataset / f"summary_{stage}.json", payload)
+            s = payload["summary"]
+            print(f"[external/metapose] {args.dataset} {stage}: PA-MPJPE {s['pa_mpjpe_mean'] * 1000:.1f} ± {s['pa_mpjpe_sd'] * 1000:.1f} mm over {s['folds']} folds, joints {len(s['joint_names'])} -> {out}")
+    return 0
+
+
+def _run_canonpose(args: argparse.Namespace) -> int:
+    from .canonpose import CanonPoseTrialTransform, fold_train_persons, output_root, prepare_dataset, train
+    from .evaluate import evaluate_folds, fold_files, write_summary
+    from .transform import view_source
+
+    root = output_root(args.dataset)
+    extra = list(args.override or [])
+    source = view_source(args.dataset)
+    stages = ("prepare", "train", "evaluate") if args.stage == "all" else (args.stage,)
+    folds = fold_files(args.dataset, args.folds_dir)
+    if args.folds:
+        folds = [f for f in folds if f.stem in set(args.folds)]
+    if "prepare" in stages:
+        prepare_dataset(args.dataset, source, output_dir=root, extra_overrides=extra)
+    if "train" in stages:
+        for fold in folds:
+            out = root / fold.stem / "lifter.pt"
+            if out.is_file() and not args.force:
+                print(f"[canonpose] {fold.stem}: {out} exists, skipping (use --force)")
+                continue
+            print(f"[canonpose] training {args.dataset} {fold.stem} on {len(fold_train_persons(fold))} subjects")
+            train(root / "inputs.npz", root / "index.json", fold_train_persons(fold), out, device=args.device, epochs=args.epochs, seed=args.seed)
+    if "evaluate" in stages:
+        for mode in args.mode.split(","):
+            payload = evaluate_folds(args.dataset, lambda fold, mode=mode: CanonPoseTrialTransform(root / fold.stem / "lifter.pt", source, mode=mode, device=args.device), folds_dir=args.folds_dir, extra_overrides=extra)
+            payload["method"] = {"name": "canonpose", "mode": mode, "training": "released recipe, self-supervised on the fold's training subjects", "epochs": args.epochs or "released default"}
+            out = write_summary(root / f"summary_{mode}.json", payload)
+            s = payload["summary"]
+            print(f"[external/canonpose] {args.dataset} {mode}: PA-MPJPE {s['pa_mpjpe_mean'] * 1000:.1f} ± {s['pa_mpjpe_sd'] * 1000:.1f} mm over {s['folds']} folds, joints {len(s['joint_names'])} -> {out}")
+    return 0
 
 
 def _run_keypoints2d(args: argparse.Namespace) -> int:
@@ -82,6 +146,28 @@ def make_parser() -> argparse.ArgumentParser:
     vp.add_argument("--no-tta", action="store_true", help="disable the authors' flip test-time augmentation")
     vp.add_argument("--folds-dir", type=Path, default=None)
     vp.add_argument("--override", nargs="*", default=None, help="extra Hydra data overrides")
+    mp = sub.add_parser("metapose", help="official MetaPose stage 1 + released stage-2 network")
+    mp.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "sportspose"))
+    mp.add_argument("--stage", default="all", choices=("prepare", "s1", "s2", "evaluate", "all"))
+    mp.add_argument("--eval-stage", default="s2", help="comma-separated: s2, s1 (iterative refinement only), init (monocular initialisation)")
+    mp.add_argument("--checkpoint", type=Path, default=None, help="VideoPose3D checkpoint used for the monocular initialisation")
+    mp.add_argument("--device", default="cuda")
+    mp.add_argument("--no-tta", action="store_true")
+    mp.add_argument("--s1-steps", type=int, default=100)
+    mp.add_argument("--s1-batch", type=int, default=4096)
+    mp.add_argument("--folds-dir", type=Path, default=None)
+    mp.add_argument("--override", nargs="*", default=None, help="extra Hydra data overrides (applied to prepare and evaluate)")
+    cp = sub.add_parser("canonpose", help="CanonPose trained per fold with its released recipe")
+    cp.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "sportspose"))
+    cp.add_argument("--stage", default="all", choices=("prepare", "train", "evaluate", "all"))
+    cp.add_argument("--mode", default="canonical_average", help="comma-separated: canonical_average, procrustes_average, per_view")
+    cp.add_argument("--epochs", type=int, default=None, help="override the released 100 epochs")
+    cp.add_argument("--seed", type=int, default=0)
+    cp.add_argument("--device", default="cuda")
+    cp.add_argument("--folds", nargs="*", default=None, help="restrict training to these fold names")
+    cp.add_argument("--folds-dir", type=Path, default=None)
+    cp.add_argument("--force", action="store_true")
+    cp.add_argument("--override", nargs="*", default=None)
     kp = sub.add_parser("keypoints2d", help="build the private per-view 2D keypoint cache")
     kp.add_argument("--dataset", default="gymnastics")
     kp.add_argument("--persons", nargs="*", default=None)
@@ -93,6 +179,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = make_parser().parse_args(list(argv) if argv is not None else None)
     if args.method == "videopose3d":
         return _run_videopose3d(args)
+    if args.method == "metapose":
+        return _run_metapose(args)
+    if args.method == "canonpose":
+        return _run_canonpose(args)
     return _run_keypoints2d(args)
 
 

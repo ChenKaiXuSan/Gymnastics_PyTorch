@@ -80,12 +80,18 @@ def evaluate_fold(dataset: str, fold_json: Path, transform: Callable[[PosePairTr
     }
 
 
-def evaluate_folds(dataset: str, transform_factory: Callable[[], Callable[[PosePairTrial], PosePairTrial] | None], *, folds_dir: Path | None = None, extra_overrides: Sequence[str] = ()) -> dict[str, Any]:
-    """All folds of ``dataset``; ``transform_factory`` builds the transform once per fold."""
+def fold_files(dataset: str, folds_dir: Path | None = None) -> list[Path]:
     folds = sorted((folds_dir or PROJECT_ROOT / FOLD_DIRS[dataset]).glob("fold_*.json"))
     if not folds:
         raise FileNotFoundError(f"no fold files for {dataset}")
-    results = [evaluate_fold(dataset, fold, transform_factory(), extra_overrides=extra_overrides) for fold in folds]
+    return folds
+
+
+def evaluate_folds(dataset: str, transform_factory: Callable[[Path], Callable[[PosePairTrial], PosePairTrial] | None], *, folds_dir: Path | None = None, extra_overrides: Sequence[str] = ()) -> dict[str, Any]:
+    """All folds of ``dataset``; ``transform_factory(fold_json)`` builds the transform of each fold
+    (trained methods load that fold's checkpoint, released methods ignore the argument)."""
+    folds = fold_files(dataset, folds_dir)
+    results = [evaluate_fold(dataset, fold, transform_factory(fold), extra_overrides=extra_overrides) for fold in folds]
     values = [r["pa_mpjpe"] for r in results]
     return {
         "dataset": dataset,

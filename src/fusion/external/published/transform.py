@@ -132,20 +132,33 @@ class LiftedTrialTransform:
         key = hashlib.sha1(json.dumps({"name": view.name, "frames": [int(view.frame_ids[0]), int(view.frame_ids[-1]), int(len(view.frame_ids))]}, sort_keys=True).encode()).hexdigest()[:16]
         return Path(self.cache_dir) / self.method / (view.name.replace("/", "__") + f"_{key}.npz")
 
+    def lift_view_h36m(self, view: View2D) -> tuple[np.ndarray, np.ndarray]:
+        """Lift a whole video in the lifter's own layout: ``(h36m [N, 17, 3], frame_valid [N])``."""
+        path = self._cache_path(view)
+        if path is not None and path.is_file():
+            payload = np.load(path)
+            if "h36m" in payload:
+                return payload["h36m"], payload["frame_valid"]
+        coco, coco_valid = mhr70_to_coco17_2d(view.points, view.valid)
+        lifted = self.lifter(coco, view.width, view.height)
+        # A frame whose 2D input was missing has no meaningful lift.
+        frame_valid = coco_valid.all(axis=1)
+        if path is not None:
+            pose, pose_valid = h36m17_to_mhr70(lifted)
+            pose_valid &= frame_valid[:, None]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            np.savez_compressed(path, pose=pose, valid=pose_valid, frame_ids=view.frame_ids, h36m=lifted.astype(np.float32), frame_valid=frame_valid)
+        return lifted.astype(np.float32), frame_valid
+
     def lift_view(self, view: View2D) -> tuple[np.ndarray, np.ndarray]:
         """Lift a whole video: ``(pose [N, 70, 3], valid [N, 70])`` on ``view.frame_ids``."""
         path = self._cache_path(view)
         if path is not None and path.is_file():
             payload = np.load(path)
             return payload["pose"], payload["valid"]
-        coco, coco_valid = mhr70_to_coco17_2d(view.points, view.valid)
-        lifted = self.lifter(coco, view.width, view.height)
+        lifted, frame_valid = self.lift_view_h36m(view)
         pose, pose_valid = h36m17_to_mhr70(lifted)
-        # A frame whose 2D input was missing has no meaningful lift.
-        pose_valid &= coco_valid.all(axis=1)[:, None]
-        if path is not None:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            np.savez_compressed(path, pose=pose, valid=pose_valid, frame_ids=view.frame_ids)
+        pose_valid &= frame_valid[:, None]
         return pose, pose_valid
 
     def lifted_views(self, trial: PosePairTrial) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:

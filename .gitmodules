@@ -4,3 +4,6 @@
 [submodule "src/fusion/external/third_party/VideoPose3D"]
 	path = src/fusion/external/third_party/VideoPose3D
 	url = https://github.com/facebookresearch/VideoPose3D.git
+[submodule "src/fusion/external/third_party/CanonPose"]
+	path = src/fusion/external/third_party/CanonPose
+	url = https://github.com/bastianwandt/CanonPose.git
