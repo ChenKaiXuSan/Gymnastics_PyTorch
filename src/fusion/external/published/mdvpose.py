@@ -21,8 +21,10 @@ What is the authors' and what is ours:
   the losses are re-implemented from ``lib/model/loss.py`` with the same
   formulas (frame validity masks replace their ``cam > 100`` padding marker),
   the multi-view term with their ``procrustes`` helper;
-* one batch = the two views of the same 243-frame clip (the release batches
-  the cameras of one clip);
+* one batch item = the two views of the same 243-frame clip (the release
+  batches the cameras of one clip, six for Ski-Pose); ``pairs_per_batch`` 3
+  keeps the released batch size of six clips, and the multi-view term is
+  computed inside each pair;
 * input: SAM3D 2D keypoints in the H36M-17 layout normalised like
   MotionBERT/VideoPose3D, confidence = SAM3D validity (the release feeds
   detector confidences); target = the reference joints rotated into each
@@ -64,6 +66,7 @@ CONFIG: dict[str, Any] = {
     "maxlen": 243, "dim_feat": 512, "mlp_ratio": 2, "depth": 5, "dim_rep": 512, "num_heads": 8, "att_fuse": True,
     "clip_len": 243, "data_stride": 81, "num_joints": 17,
     "lambda_3d_velocity": 20.0, "lambda_scale": 0.5, "lambda_mv": 0.002, "flip": True, "seed": 0, "workers": 4,
+    "pairs_per_batch": 3,  # 6 clips per batch, the released batch_size
 }
 
 
@@ -135,26 +138,35 @@ def loss_velocity(predicted, target, frame_valid):
     return masked_norm_mean((predicted[:, 1:] - predicted[:, :-1]) - (target[:, 1:] - target[:, :-1]), frame_valid[:, 1:])
 
 
-def loss_multi_view(predicted, frame_valid, procrustes) -> Any:
-    """``loss_multi_view``: every other view's frame Procrustes-aligned (R, s detached) onto the first valid view's."""
+def loss_multi_view(predicted, frame_valid, procrustes, pair_size: int = 2) -> Any:
+    """``loss_multi_view`` inside every clip pair: each other view's frame Procrustes-aligned
+    (R, s detached, the release's helper) onto the first valid view's; mean over all frame terms."""
     import torch
 
     terms = []
     n, t = predicted.shape[:2]
     valid = frame_valid.cpu().numpy()
     detached = predicted.detach().cpu().numpy()
-    for f in range(t):
-        views = [v for v in range(n) if valid[v, f]]
-        if len(views) < 2:
-            continue
-        base = views[0]
-        for other in views[1:]:
-            rotation, scale = procrustes(detached[base, f], detached[other, f])
-            aligned = torch.matmul(predicted[other, f], torch.tensor(rotation, dtype=predicted.dtype, device=predicted.device).T) * scale
-            terms.append(torch.sum(torch.abs(aligned - predicted[base, f])))
-    if not terms:
+    rotations, scales, pairs = [], [], []
+    for first in range(0, n, pair_size):
+        members = list(range(first, min(first + pair_size, n)))
+        for f in range(t):
+            views = [v for v in members if valid[v, f]]
+            for other in views[1:]:
+                rotation, scale = procrustes(detached[views[0], f], detached[other, f])
+                rotations.append(rotation)
+                scales.append(scale)
+                pairs.append((views[0], other, f))
+    if not pairs:
         return predicted.sum() * 0.0
-    return torch.mean(torch.stack(terms))
+    base_index = torch.tensor([p[0] for p in pairs], device=predicted.device)
+    other_index = torch.tensor([p[1] for p in pairs], device=predicted.device)
+    frame_index = torch.tensor([p[2] for p in pairs], device=predicted.device)
+    rotation = torch.tensor(np.stack(rotations), dtype=predicted.dtype, device=predicted.device)  # [M, 3, 3]
+    scale = torch.tensor(np.asarray(scales), dtype=predicted.dtype, device=predicted.device)  # [M]
+    aligned = torch.matmul(predicted[other_index, frame_index], rotation.transpose(1, 2)) * scale[:, None, None]
+    terms = torch.abs(aligned - predicted[base_index, frame_index]).sum(dim=(1, 2))
+    return terms.mean()
 
 
 def flip_data(data):
@@ -276,16 +288,19 @@ def train(inputs: Path, index: Path, train_persons: Sequence[str], val_persons: 
     val_set = ClipPairDataset(inputs, index, val_persons, clip_len=cfg["clip_len"], stride=cfg["clip_len"], flip=False)
     if not len(train_set) or not len(val_set):
         raise ValueError(f"{len(train_set)} training / {len(val_set)} validation clips")
-    # One batch item = one clip pair; the release does not shuffle (a batch is the cameras of one clip), the
-    # clip order over the epoch is shuffled here because every batch is one pair anyway.
-    loader = torch.utils.data.DataLoader(train_set, batch_size=None, shuffle=True, num_workers=cfg["workers"], pin_memory=True)
+    # A batch is ``pairs_per_batch`` clip pairs (the release: the six cameras of one clip, no shuffling);
+    # the pair order is shuffled per epoch.
+    def collate(items):
+        return tuple(torch.cat([item[k] for item in items]) for k in range(3))
+
+    loader = torch.utils.data.DataLoader(train_set, batch_size=cfg["pairs_per_batch"], shuffle=True, num_workers=cfg["workers"], pin_memory=True, collate_fn=collate, drop_last=False)
     model = load_pretrained(build_model(cfg), pretrained).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["learning_rate"], weight_decay=cfg["weight_decay"])
     procrustes = _procrustes()
     lr = cfg["learning_rate"]
     best, best_epoch = math.inf, -1
     output.parent.mkdir(parents=True, exist_ok=True)
-    print(f"[mdvpose] {len(train_set)} training clip pairs, {len(val_set)} validation clip pairs, {cfg['epochs']} epochs, device {device}")
+    print(f"[mdvpose] {len(train_set)} training clip pairs ({cfg['pairs_per_batch']} per batch), {len(val_set)} validation clip pairs, {cfg['epochs']} epochs, device {device}")
     for epoch in range(cfg["epochs"]):
         model.train()
         started, sums, steps = time.time(), {"3d_pos": 0.0, "3d_scale": 0.0, "3d_velocity": 0.0, "multi_view": 0.0, "total": 0.0}, 0
@@ -296,7 +311,7 @@ def train(inputs: Path, index: Path, train_persons: Sequence[str], val_persons: 
             l_pos = loss_mpjpe(predicted, target, ok)
             l_scale = n_mpjpe(predicted, target, ok)
             l_vel = loss_velocity(predicted, target, ok)
-            l_mv = loss_multi_view(predicted, ok, procrustes)
+            l_mv = loss_multi_view(predicted, ok, procrustes, pair_size=2)
             loss = l_pos + cfg["lambda_scale"] * l_scale + cfg["lambda_3d_velocity"] * l_vel + cfg["lambda_mv"] * l_mv
             optimizer.zero_grad()
             loss.backward()

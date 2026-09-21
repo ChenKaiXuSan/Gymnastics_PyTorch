@@ -70,13 +70,13 @@ def _cache_gymnastics_view(item: tuple[str, str]) -> dict:
 
 def _run_metapose(args: argparse.Namespace) -> int:
     from .evaluate import evaluate_folds, fold_files, write_summary
-    from .metapose_pipeline import MetaPoseTrialTransform, prepare_dataset, run_stage1, run_stage2_released, run_stage2_trained
+    from .metapose_pipeline import MetaPoseTrialTransform, prepare_dataset, run_shards, run_stage1, run_stage2_released, run_stage2_trained
     from .transform import view_source
     from .videopose3d import VideoPose3DLifter
 
     directory = OUTPUT_ROOT / "metapose" / args.dataset
     extra = list(args.override or [])
-    stages = ("prepare", "s1", "train", "evaluate") if args.stage == "all" else (args.stage,)
+    stages = ("prepare", "s1", "shards", "train", "evaluate") if args.stage == "all" else (args.stage,)
     folds = fold_files(args.dataset, args.folds_dir)
     if args.folds:
         folds = [f for f in folds if f.stem in set(args.folds)]
@@ -85,6 +85,8 @@ def _run_metapose(args: argparse.Namespace) -> int:
         prepare_dataset(args.dataset, lifter.lift, view_source(args.dataset), output_dir=directory, lifted_cache=OUTPUT_ROOT / "lifted", extra_overrides=extra)
     if "s1" in stages:
         run_stage1(directory, steps=args.s1_steps, batch=args.s1_batch)
+    if "shards" in stages:
+        run_shards(directory, workers=args.workers)
     if "train" in stages:
         for fold in folds:
             out = directory / f"s2_{fold.stem}.npz"
@@ -207,7 +209,7 @@ def _run_mdvpose(args: argparse.Namespace) -> int:
                 print(f"[mdvpose] {fold.stem}: {out} exists, skipping (use --force)")
                 continue
             print(f"[mdvpose] training {args.dataset} {fold.stem} on {len(fold_persons(fold, 'train'))} subjects, selecting on {len(fold_persons(fold, 'val'))}")
-            train(root / "inputs.npz", root / "index.json", fold_persons(fold, "train"), fold_persons(fold, "val"), out, device=args.device, epochs=args.epochs)
+            train(root / "inputs.npz", root / "index.json", fold_persons(fold, "train"), fold_persons(fold, "val"), out, device=args.device, epochs=args.epochs, config={"pairs_per_batch": args.pairs_per_batch})
     if "evaluate" in stages:
         for mode in args.mode.split(","):
 
@@ -257,7 +259,8 @@ def make_parser() -> argparse.ArgumentParser:
     vp.add_argument("--override", nargs="*", default=None, help="extra Hydra data overrides")
     mp = sub.add_parser("metapose", help="official MetaPose: stage-1 solver + stage-2 network trained per fold")
     mp.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "sportspose"))
-    mp.add_argument("--stage", default="all", choices=("prepare", "s1", "train", "s2", "evaluate", "all"), help="all = prepare, s1, train, evaluate; s2 = released checkpoint (zero-shot)")
+    mp.add_argument("--stage", default="all", choices=("prepare", "s1", "shards", "train", "s2", "evaluate", "all"), help="all = prepare, s1, shards, train, evaluate; s2 = released checkpoint (zero-shot)")
+    mp.add_argument("--workers", type=int, default=8, help="record shard writer processes")
     mp.add_argument("--eval-stage", default="s2", help="comma-separated: s2, s1 (iterative refinement only), init (monocular initialisation)")
     mp.add_argument("--released", action="store_true", help="evaluate the released checkpoint's s2.npz instead of the per-fold trained networks")
     mp.add_argument("--epochs-per-stage", type=int, default=30, help="cap of the authors' 300-epoch stages")
@@ -300,6 +303,7 @@ def make_parser() -> argparse.ArgumentParser:
     md.add_argument("--stage", default="all", choices=("prepare", "train", "evaluate", "all"))
     md.add_argument("--mode", default="procrustes_average", help="comma-separated: procrustes_average, per_view")
     md.add_argument("--epochs", type=int, default=None, help="override the released 60 epochs")
+    md.add_argument("--pairs-per-batch", type=int, default=3, help="clip pairs per batch (3 = the released batch of six clips)")
     md.add_argument("--device", default="cuda")
     md.add_argument("--folds", nargs="*", default=None)
     md.add_argument("--folds-dir", type=Path, default=None)

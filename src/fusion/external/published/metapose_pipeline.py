@@ -171,6 +171,13 @@ def run_stage2_released(directory: Path) -> Path:
     return directory / "s2.npz"
 
 
+def run_shards(directory: Path, *, workers: int = 8) -> Path:
+    """Per-subject record shards (``shards/<person>/{train,test}``) for the per-fold training runs."""
+    script = Path(__file__).with_name("metapose_s2.py")
+    subprocess.run([str(metapose_python()), str(script), "--mode", "shards", "--directory", str(directory), "--release-root", str(RELEASE_ROOT), "--third-party", str(THIRD_PARTY), "--workers", str(workers)], check=True, env=_tf_env())
+    return directory / "shards"
+
+
 def run_stage2_trained(directory: Path, fold_json: Path, *, epochs_per_stage: int, patience: int, max_stages: int, seed: int = 0) -> Path:
     """Train stage 2 on the fold's training subjects, predict its test subjects -> ``s2_<fold>.npz``
     (``metapose_s2.py`` writes per-subject record shards once and recombines them per fold)."""
