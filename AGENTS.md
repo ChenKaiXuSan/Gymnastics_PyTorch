@@ -98,7 +98,8 @@ configuration tree `configs/`:
 | ③ pseudo ground truth | `src/pseudo_gt/` | Chessboard intrinsics (`calibration.py`), per-person extrinsics (`estimate_extrinsics.py`), triangulation of SAM3D 2D keypoints into the evaluation reference (`sam3d_from_split_cycle.py`). Evaluation-only; training never imports it. | `python -m pseudo_gt calibrate`, `python -m pseudo_gt triangulate` |
 | ④ fusion network | `src/fusion/` | **The proposed model**: cycle-aware dual-view fusion (data modules, model, losses, Lightning training, Hydra configs in `src/configs/fusion`). See `docs/cycle_aware_fusion.md`. | `python -m fusion train` |
 | support | `src/fusion/keypoints/` | Shared 3D-keypoint representation used by ③, ④, the baselines and the benchmarks: `PosePairTrial`, `SkeletonSpec`, canonical body frame, trunk/quality features, person cache. No model code. | – |
-| support | `src/fusion/baselines/` | Deterministic comparison matrix and classical baselines every model is compared against. | `python -m fusion deterministic` |
+| support | `src/fusion/baselines/` | Deterministic comparison matrix and classical baselines every model is compared against (incl. the calibration-free depth-aware rule `avg_body_depthaware`). | `python -m fusion deterministic` |
+| support | `src/fusion/external/` | External learned baselines (VideoPose3D-style TCN, SmoothNet, MetaPose-style MLP, MUC-style weights) on the model's input/output contract, trained with the same folds, windows and losses; never zero-shot. | `python -m fusion train model=external_<name>` |
 | support | `src/fusion/benchmarks/` | FreeMan, Unity and SportsPose public benchmarks (adapters, view selection, SAM3D caches, zero-shot and trained evaluation). | `python -m fusion benchmark-{freeman,freeman-train,unity,sportspose}` |
 | support | `src/fusion/analysis/` | Metrics, reports, cohort/repeated-cycle statistics, paper result tables. | `python -m fusion analyze`, `python -m fusion cohort-cycle` |
 | support | `src/common/` | Project paths, config helpers, MHR70 metadata, the shared CLI dispatcher. Library only, no entry point. | – |
@@ -109,7 +110,23 @@ configuration tree `configs/`:
 
 ## Current Fuse Direction
 
-The current preferred fusion method is:
+The current preferred deterministic fusion method is:
+
+```text
+avg_body_depthaware      (2026-09-21; calibration-free depth-aware body average, alpha 0.8)
+```
+
+It replaces `avg_body_current` (the plain body-frame average, kept as the
+control): each view's precision is discounted along its own camera optical
+axis, obtained from the view's own canonicalisation rotation. Selected on the
+FreeMan 8-camera reference (alpha 0.75–0.875 flat), never on the private
+triangulated reference, which is built from the same image-plane coordinates
+and rewards this rule far beyond its true gain (see
+`docs/cycle_aware_fusion.md` §1.5). The learned model (`python -m fusion train`,
+architecture v1.1) uses the same rule as its base pose. Everything below
+describes the `avg_body_current` pipeline the rule shares.
+
+The previous preferred fusion method was:
 
 ```text
 avg_body_current
@@ -180,13 +197,13 @@ Fuse should use the split-cycle alignment offset from:
 local/runs/split_cycle/person_<id>/alignment_record_<id>.json
 ```
 
-The current recommended fuse method is:
+The recommended fuse method is `avg_body_depthaware` (see "Current Fuse
+Direction"); the previous recommendation, `avg_body_current`, remains the
+control row. All numbers below are the archived matrix protocol (70 joints,
+one similarity alignment per cycle); current reporting uses the model protocol
+of `docs/cycle_aware_fusion.md` §1.5.
 
-```text
-avg_body_current
-```
-
-This method maps both views into a pelvis-centred, rotation-normalised body frame,
+`avg_body_current` maps both views into a pelvis-centred, rotation-normalised body frame,
 averages them there, and maps the result back into the face view's world frame.
 
 It was selected on the regenerated triangulated pseudo-ground-truth (mean person

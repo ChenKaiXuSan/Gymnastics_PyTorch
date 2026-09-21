@@ -1,5 +1,17 @@
 # Results Summary
 
+> **Protocol note (2026-09-21).** Everything on this page and in the dated
+> reports before 2026-09-21 uses the **archived evaluation protocol**: 70 MHR70
+> joints (40 of them finger points), one similarity alignment per cycle, the
+> fixed 96/27/14 paper split. It is kept only to reproduce the Sports
+> Engineering manuscript. All current reporting uses the **model protocol**
+> described in [cycle_aware_fusion.md §1.5](cycle_aware_fusion.md): 5-fold
+> subject-disjoint test people (137 private / 40 FreeMan), phase-normalised
+> windows, per-frame Procrustes PA-MPJPE on the 20 `mhr70_major` joints, with
+> every deterministic method pushed through the same windows
+> (`local/runs/fuse_depthaware/unified_*_model_protocol*.json`). Numbers from
+> the two protocols must not be mixed in one table.
+
 This page is the tracked entry point for the project's results. The learned
 rows below (A0--A9) belong to the **archived rotation-aware model**
 (`src/fusion/archive/rotation_aware`, frozen 2026-09-19); they are kept because

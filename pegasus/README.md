@@ -31,6 +31,10 @@ Protocol: 5-fold subject-disjoint cross-validation, single seed (0), 50 epochs.
 | `fusion_fold_qsub.sh` | one fold (`DATA`, `FOLD`, `SWEEP`, ...); the submitter passes `-A/-q` (HP260146/`gen_S` by default, `ACCOUNT=SKIING` -> `gpu`) |
 | `fusion_fold_qsub_hp.sh` | equivalent copy pinned to HP260146 / `gen_S` |
 
+Every fold job trains with `data.num_workers=8` (`NUM_WORKERS` in the job
+scripts defaults to 8 since 2026-09-21; do not submit with 0), bf16-mixed and
+TF32 matmuls, i.e. the config defaults.
+
 Requests are 3 h (`elapstim_req`): a fold takes about an hour and a short
 request backfills into scheduling gaps. The only hard cap is the project
 budget in GPU-hours: `qsub` reserves `elapstim_req x gpunum` at submission

@@ -14,6 +14,8 @@
 #   EXPERIMENT optional Hydra experiment preset (no_film, no_cross_view, ...)
 #   SEED       seed (default 0)
 #   EPOCHS     epochs (default 50)
+#   NUM_WORKERS DataLoader workers (default 8; the project decision of 2026-09-21 is
+#              to always train with 8 workers, never 0)
 #   OVERRIDES  extra Hydra overrides separated by "::" (qsub -v values cannot
 #              contain spaces or shell characters), e.g.
 #              "test_only=true::checkpoint=path/last.ckpt"
@@ -62,7 +64,7 @@ echo "[ca_fold] host=$(hostname) data=$DATA fold=$FOLD sweep=$SWEEP seed=$SEED e
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || echo "[ca_fold] nvidia-smi unavailable"
 
 ARGS=("data=$DATA" "data.fold_json=$FOLD_JSON" "run_name=$SWEEP/$FOLD" "seed=$SEED"
-      "trainer.max_epochs=$EPOCHS" "trainer.enable_progress_bar=false" "data.num_workers=${NUM_WORKERS:-0}")
+      "trainer.max_epochs=$EPOCHS" "trainer.enable_progress_bar=false" "data.num_workers=${NUM_WORKERS:-8}")
 [ -n "$EXPERIMENT" ] && ARGS+=("experiment=$EXPERIMENT")
 if [ -n "$OVERRIDES" ]; then
   # "::"-separated list -> one argument per override (spaces are also accepted).
