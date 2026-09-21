@@ -22,6 +22,7 @@
                   MDVPose (MotionBERT fine-tuned with multi-view consistency,
                   supervised) trained per fold from the MotionBERT H36M checkpoint;
                   FreeMan / SportsPose only; see mdvpose.py
+    report        [--markdown out.md] [--csv out.csv]   table of every summary_*.json
     keypoints2d   --dataset gymnastics [--persons ...]   build the private 2D cache
                   (decodes every per-frame SAM3D file once; run on the cluster)
 
@@ -317,6 +318,10 @@ def make_parser() -> argparse.ArgumentParser:
     md.add_argument("--folds-dir", type=Path, default=None)
     md.add_argument("--force", action="store_true")
     md.add_argument("--override", nargs="*", default=None)
+    rp = sub.add_parser("report", help="collect every summary_*.json into one table")
+    rp.add_argument("--markdown", type=Path, default=None)
+    rp.add_argument("--csv", type=Path, default=None)
+    rp.add_argument("--root", type=Path, default=OUTPUT_ROOT)
     kp = sub.add_parser("keypoints2d", help="build the private per-view 2D keypoint cache")
     kp.add_argument("--dataset", default="gymnastics")
     kp.add_argument("--persons", nargs="*", default=None)
@@ -336,6 +341,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_mhformer(args)
     if args.method == "mdvpose":
         return _run_mdvpose(args)
+    if args.method == "report":
+        from .report import main as report_main
+
+        return report_main([a for pair in (("--root", str(args.root)), ("--markdown", str(args.markdown)) if args.markdown else (), ("--csv", str(args.csv)) if args.csv else ()) for a in pair])
     return _run_keypoints2d(args)
 
 
