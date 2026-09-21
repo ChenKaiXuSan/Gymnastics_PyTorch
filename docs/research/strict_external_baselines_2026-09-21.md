@@ -44,10 +44,10 @@ Gaussian per joint where it expects heatmaps (MetaPose).
 |---|---|---|---|---|
 | 1 | **CanonPose** (Wandt et al., CVPR 2021) | self-supervised (reprojection + view-consistency + camera-consistency, no 3D labels, no calibration) | trained per fold on the training subjects' two-view 2D keypoints with the released `train.py` defaults (Adam 1e-4, batch 32, 100 epochs, milestones 30/60/90, γ 0.1, weight decay 1e-5, loss weights 1 / 1 / 0.1); the loop is reproduced verbatim as a function (`canonpose.py`); two-view result = average of the canonical poses of both views (`canonical_average`; `per_view` also reported) | skeleton-morphing network of Sec. 4.2 skipped (needs 2D GT); confidences = validity |
 | 2 | **MetaPose** (Usman et al., CVPR 2022) | label-free (stage 1 = weak-perspective bundle adjustment with a GMM heatmap likelihood; stage 2 = network trained with the reprojection loss `fwd` and the `soln` losses to the stage-1 optimum) | stage 1 with the released objective/functions in a batched port validated against the official solver (`metapose_s1.py`); stage 2 trained per fold with the authors' `train_metapose.py` on the training subjects' frames, test subjects predicted (`metapose_s2.py --mode train`); the record field `pose3d`, which the script uses only for the early-stopping / checkpoint metric `val_pred_pmpjpe`, holds the stage-1 optimum, so model selection is label-free too | monocular initialisation from the official VideoPose3D lifter instead of EpipolarPose (any monocular lifter fills that role); heatmap GMM = one Gaussian at the SAM3D keypoint (σ = 2 % of the box); schedule capped (default 30 epochs × 4 stages, patience 5; released 300 × up to 10, patience 50) – recorded in the summary; 2 cameras |
-| 3 | **MHFormer** (Li et al., CVPR 2022) | supervised (3D labels) | trained with its recipe on the reference joints of the training subjects; **FreeMan and SportsPose only** (the private data has no independent 3D reference) | — (pending) |
-| 4 | **Two Views Are Better than One** (MotionBERT-based, `mpjpe_weight: 1.0`) | supervised | same as 3, FreeMan / SportsPose rows only | — (pending; flagged to the user) |
-| A | VideoPose3D (Pavllo et al., CVPR 2019) | supervised on Human3.6M | released `pretrained_h36m_detectron_coco.bin`, per view, both views Procrustes-averaged | zero-shot → **appendix only**: FreeMan-repetitive 86.3 ± 6.3 mm (13 joints) |
-| B | MetaPose released `ckpt/h36m/cam2` | — | `--stage s2 --released` | zero-shot → appendix only |
+| 3 | **MHFormer** (Li et al., CVPR 2022) | supervised (3D MPJPE) | released 81-frame configuration (`main.py`: Adam amsgrad 1e-3, x0.95 per epoch and x0.5 every 5 epochs, 19 epochs, batch 256, flip augmentation and flip TTA, centre frame, all window frames supervised); trained per fold on the training subjects' two views as monocular samples with the reference joints rotated into each camera (`mhformer.py`); **FreeMan and SportsPose only** (the private data has no independent 3D reference) | SAM3D 2D instead of CPN detections (missing joints interpolated in time, frames without reference masked); selection on the fold's validation subjects (release: test set); 81 instead of 351 frames (4x cheaper, also a released configuration) |
+| 4 | **MDVPose** (Ma et al.; "multiple dynamic views via single-view pretraining with Procrustes alignment", the MotionBERT multi-view fine-tuning the user asked for as "two views") | supervised (MPJPE + 0.5 scale-normalised MPJPE + 20 velocity) + 0.002 Procrustes multi-view consistency | DSTformer from the MotionBERT H36M checkpoint (`walterzhu/MotionBERT` on Hugging Face, `local/checkpoints/motionbert`), released multi-view config (AdamW 3e-4, wd 0.01, x0.97 per epoch, 243-frame clips stride 81, flip aug/TTA), one batch = three clip pairs = the released batch of six clips, the consistency term inside each pair (`mdvpose.py`); FreeMan / SportsPose only | 30 epochs instead of 60 (9.7 GPU-h per fold otherwise); flip drawn per clip pair (the released loader flips cameras independently, contradicting its own multi-view term); selection on validation subjects; frame validity masks replace the release's padding marker |
+| A | VideoPose3D (Pavllo et al., CVPR 2019) | supervised on Human3.6M | released `pretrained_h36m_detectron_coco.bin`, per view, both views Procrustes-averaged | zero-shot -> **appendix only**: FreeMan-repetitive 86.3 +- 6.3 mm (13 joints) |
+| B | MetaPose released `ckpt/h36m/cam2` | -- | `--stage s2 --released` | zero-shot -> appendix only |
 
 MUC (Lee et al.) was dropped: the release needs a OneDrive checkpoint and
 an SMPL-X account, and its SMPL-X-space fusion does not map onto keypoint
@@ -69,14 +69,62 @@ inputs without rewriting the method.
   CanonPose: `STAGE=prepare`, `STAGE=train,FOLDS=...`, `STAGE=evaluate`.
   NQSV spools the job log until the job ends.
 
-## Status (2026-09-21)
+## Findings while running them
 
-* Framework, mappings, evaluator: done, tested (`tests/fusion/external/test_published.py`).
-* CanonPose: FreeMan and gymnastics inputs prepared (gymnastics: 928
-  trials, 147,297 frames); 3-epoch timing run on FreeMan fold_01 submitted
-  (job 15512); full 5-fold campaigns follow once the epoch time is known.
-* MetaPose: subject-01 FreeMan pipeline validated end to end with the
-  released checkpoint; per-fold training path validated on CPU (smoke run);
-  FreeMan full `prepare::s1` job 15511 running; per-fold training next.
-* MHFormer, Two Views: not started (supervised; FreeMan / SportsPose rows only).
+* **CanonPose converges to the mirrored world.** The self-supervised
+  objective is invariant to a global reflection (mirrored pose with mirrored
+  cameras re-projects identically under weak perspective). All five
+  gymnastics folds trained fine (reprojection residual 4 % of the input
+  scale, the two views' canonical poses agree to 31 mm) yet scored
+  147-155 mm PA-MPJPE against the reference because the pose is mirrored
+  (40 mm with the mirror undone). The release leaves the choice to its
+  Human3.6M convention; here the one bit per trained model is set from the
+  method's own input modality -- whether the canonical pose or its mirror
+  agrees better with SAM3D's per-view 3D on the first 20 trials -- never
+  from the reference (`CanonPoseTrialTransform`, logged as "reflection
+  resolved").
+* CanonPose released loop: 265 s/epoch on a FreeMan fold (374k frames,
+  batch 32, one Python loop per subject and camera); the camera-consistency
+  term vectorised with one within-subject permutation per camera and the
+  released sum-of-subject-means normalisation (unit-tested against the loop)
+  -> 97 s/epoch, 2.7 h per 100-epoch fold on an H100.
+* MetaPose: the tfds record serialiser needs ~1 h per fold; records are now
+  written once per subject in parallel (`--stage shards`) and folds
+  recombine subjects by TFRecord concatenation with a 64-record random
+  validation head (`train_metapose` validates on the first 64 records of
+  its training split). The script keeps stage checkpoints at the literal
+  `/tmp/best-model`; `metapose_launch.py` gives every run a private path
+  (concurrent jobs on one node would overwrite each other). One FreeMan
+  stage-1 optimum of 710k is degenerate (scale 40, collapsed pose) and is
+  excluded from training. Gymnastics stage 0: 27 s/epoch, early-stopped
+  after 16 epochs at val PMPJPE 0.032 bbox units.
+* MHFormer-81 on a FreeMan fold: 1.5 M windows per epoch (both views,
+  flips), 888 s/epoch -> 4.7 h per fold. MDVPose: 580 s/epoch with three
+  clip pairs per batch (887 s with one) -> 30 epochs = 4.8 h per fold.
+
+## Results (model protocol: 5 folds, phase windows, per-frame PA-MPJPE, mm)
+
+| Method | Gymnastics (private) | FreeMan-repetitive | SportsPose |
+|---|---:|---:|---:|
+| CanonPose, trained per fold, `canonical_average` (13 joints) | **30.0 +- 0.9** | running (jobs 15526-15530) | waits for the SAM3D cache |
+| MetaPose, stage 2 trained per fold (13 joints) | running (job 15725 evaluates) | fold_01 running (15746) | -- |
+| MHFormer-81, trained per fold, `procrustes_average` (13 joints) | -- (no reference) | running (15558-15562) | -- |
+| MDVPose, trained per fold, `procrustes_average` (13 joints) | -- (no reference) | running (15665-15669, 30 epochs) | -- |
+| VideoPose3D H36M checkpoint, zero-shot (appendix) | -- | 86.3 +- 6.3 | -- |
+
+Reference rows for the same protocol come from `python -m fusion analyze`
+(the model: 18.4 mm on the private data, 20 joints); external rows are
+scored on the 13 major joints their skeleton covers, so the comparison
+table must re-aggregate the model on those joints.
+
+## Status (2026-09-21, evening)
+
+* Framework, mappings, evaluator, all four adapters: done, tested
+  (`tests/fusion/external/test_published.py`).
+* CanonPose: gymnastics done (5 folds, 37 min each); FreeMan folds running.
+* MetaPose: gymnastics folds trained (8-15 min each), evaluation running;
+  FreeMan fold_01 running (the first attempt crashed inside cuSOLVER's
+  `gesvd` in the `pmpjpe` metric 18 min into epoch 1 -- cause not yet
+  established; the launcher's opt-in CPU-SVD patch exists for that case).
+* MHFormer, MDVPose: FreeMan 5-fold campaigns running.
 * SportsPose column waits for the user's `sam3d_sp` inference jobs.
