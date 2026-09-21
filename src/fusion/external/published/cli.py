@@ -4,9 +4,12 @@
                   official VideoPose3D lifter on the SAM3D 2D keypoints of both views,
                   evaluated through the model protocol (5 folds, phase windows,
                   per-frame PA-MPJPE on the major joints the method predicts)
-    metapose      --dataset ... --stage prepare|s1|s2|evaluate|all [--eval-stage s2|s1|init]
-                  official MetaPose (stage-1 solver, released 2-camera stage-2
-                  network) on the same two views; see metapose_pipeline.py for the data flow
+    metapose      --dataset ... --stage prepare|s1|train|evaluate|all [--eval-stage s2|s1|init]
+                  official MetaPose on the same two views: stage-1 solver, then the
+                  stage-2 network trained per fold with the authors' script on the
+                  training subjects (label-free); --stage s2 / --released instead runs
+                  the released Human3.6M checkpoint (zero-shot, appendix only); see
+                  metapose_pipeline.py for the data flow
     canonpose     --dataset ... --stage prepare|train|evaluate|all   CanonPose trained
                   per fold with its released recipe on the training subjects' two-view
                   2D keypoints (self-supervised); see canonpose.py
@@ -57,28 +60,49 @@ def _cache_gymnastics_view(item: tuple[str, str]) -> dict:
 
 
 def _run_metapose(args: argparse.Namespace) -> int:
-    from .evaluate import evaluate_folds, write_summary
-    from .metapose_pipeline import MetaPoseTrialTransform, prepare_dataset, run_stage1, run_stage2
+    from .evaluate import evaluate_folds, fold_files, write_summary
+    from .metapose_pipeline import MetaPoseTrialTransform, prepare_dataset, run_stage1, run_stage2_released, run_stage2_trained
     from .transform import view_source
     from .videopose3d import VideoPose3DLifter
 
     directory = OUTPUT_ROOT / "metapose" / args.dataset
     extra = list(args.override or [])
-    stages = ("prepare", "s1", "s2", "evaluate") if args.stage == "all" else (args.stage,)
+    stages = ("prepare", "s1", "train", "evaluate") if args.stage == "all" else (args.stage,)
+    folds = fold_files(args.dataset, args.folds_dir)
+    if args.folds:
+        folds = [f for f in folds if f.stem in set(args.folds)]
     if "prepare" in stages:
         lifter = VideoPose3DLifter(args.checkpoint, args.device, test_time_augmentation=not args.no_tta)
         prepare_dataset(args.dataset, lifter.lift, view_source(args.dataset), output_dir=directory, lifted_cache=OUTPUT_ROOT / "lifted", extra_overrides=extra)
     if "s1" in stages:
         run_stage1(directory, steps=args.s1_steps, batch=args.s1_batch)
+    if "train" in stages:
+        for fold in folds:
+            out = directory / f"s2_{fold.stem}.npz"
+            if out.is_file() and not args.force:
+                print(f"[metapose] {fold.stem}: {out} exists, skipping (use --force)")
+                continue
+            run_stage2_trained(directory, fold, epochs_per_stage=args.epochs_per_stage, patience=args.patience, max_stages=args.max_stages, seed=args.seed)
     if "s2" in stages:
-        run_stage2(directory)
+        run_stage2_released(directory)
     if "evaluate" in stages:
+        released = bool(args.released)
+        schedule = {"epochs_per_stage": args.epochs_per_stage, "early_stopping_patience": args.patience, "max_n_stages": args.max_stages, "released_schedule": "300 epochs x 10 stages, patience 50"}
         for stage in (args.eval_stage.split(",") if args.eval_stage else ["s2"]):
-            payload = evaluate_folds(args.dataset, lambda fold, stage=stage: MetaPoseTrialTransform(directory, stage), folds_dir=args.folds_dir, extra_overrides=extra)
-            payload["method"] = {"name": "metapose", "stage": stage, "checkpoint": "ckpt/h36m/cam2", "init": "videopose3d", "heatmaps": "single gaussian at the SAM3D keypoint (sigma 2 % of the box)"}
-            out = write_summary(OUTPUT_ROOT / "metapose" / args.dataset / f"summary_{stage}.json", payload)
+            if stage == "s2" and not released:
+                factory = lambda fold: MetaPoseTrialTransform(directory, "s2", fold=fold.stem)  # noqa: E731
+                method = {"name": "metapose", "stage": "s2", "training": "authors' train_metapose per fold on the training subjects (fwd + soln losses, label-free; selection on the stage-1 optimum)", **schedule}
+                name = "s2"
+            else:
+                factory = lambda fold, stage=stage: MetaPoseTrialTransform(directory, stage)  # noqa: E731
+                method = {"name": "metapose", "stage": stage, "checkpoint": "ckpt/h36m/cam2 (released, zero-shot)" if stage == "s2" else "none (optimisation only)"}
+                name = "s2_released" if stage == "s2" else stage
+            method.update({"init": "videopose3d", "heatmaps": "single gaussian at the SAM3D keypoint (sigma 2 % of the box)"})
+            payload = evaluate_folds(args.dataset, factory, folds_dir=args.folds_dir, extra_overrides=extra)
+            payload["method"] = method
+            out = write_summary(directory / f"summary_{name}.json", payload)
             s = payload["summary"]
-            print(f"[external/metapose] {args.dataset} {stage}: PA-MPJPE {s['pa_mpjpe_mean'] * 1000:.1f} ± {s['pa_mpjpe_sd'] * 1000:.1f} mm over {s['folds']} folds, joints {len(s['joint_names'])} -> {out}")
+            print(f"[external/metapose] {args.dataset} {name}: PA-MPJPE {s['pa_mpjpe_mean'] * 1000:.1f} ± {s['pa_mpjpe_sd'] * 1000:.1f} mm over {s['folds']} folds, joints {len(s['joint_names'])} -> {out}")
     return 0
 
 
@@ -146,10 +170,17 @@ def make_parser() -> argparse.ArgumentParser:
     vp.add_argument("--no-tta", action="store_true", help="disable the authors' flip test-time augmentation")
     vp.add_argument("--folds-dir", type=Path, default=None)
     vp.add_argument("--override", nargs="*", default=None, help="extra Hydra data overrides")
-    mp = sub.add_parser("metapose", help="official MetaPose stage 1 + released stage-2 network")
+    mp = sub.add_parser("metapose", help="official MetaPose: stage-1 solver + stage-2 network trained per fold")
     mp.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "sportspose"))
-    mp.add_argument("--stage", default="all", choices=("prepare", "s1", "s2", "evaluate", "all"))
+    mp.add_argument("--stage", default="all", choices=("prepare", "s1", "train", "s2", "evaluate", "all"), help="all = prepare, s1, train, evaluate; s2 = released checkpoint (zero-shot)")
     mp.add_argument("--eval-stage", default="s2", help="comma-separated: s2, s1 (iterative refinement only), init (monocular initialisation)")
+    mp.add_argument("--released", action="store_true", help="evaluate the released checkpoint's s2.npz instead of the per-fold trained networks")
+    mp.add_argument("--epochs-per-stage", type=int, default=30, help="cap of the authors' 300-epoch stages")
+    mp.add_argument("--patience", type=int, default=5, help="early-stopping patience (released: 50)")
+    mp.add_argument("--max-stages", type=int, default=3, help="refinement stages (released: up to 10)")
+    mp.add_argument("--seed", type=int, default=0)
+    mp.add_argument("--folds", nargs="*", default=None, help="restrict training to these fold names")
+    mp.add_argument("--force", action="store_true")
     mp.add_argument("--checkpoint", type=Path, default=None, help="VideoPose3D checkpoint used for the monocular initialisation")
     mp.add_argument("--device", default="cuda")
     mp.add_argument("--no-tta", action="store_true")

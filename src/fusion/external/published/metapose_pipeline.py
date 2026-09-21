@@ -13,10 +13,17 @@ Pipeline (the authors' data flow, ``docs/research`` records the deviations):
     s1        (metapose env) stage-1 probabilistic bundle adjustment
               (:mod:`metapose_s1`, batched port validated against the official
               solver) -> ``s1.npz``
-    s2        (metapose env) the released stage-2 network ``ckpt/h36m/cam2``
-              (2-camera Human3.6M checkpoint) run with the official
-              ``train_metapose`` inference path on the stage-1 records
-              -> ``s2.npz``
+    train     (metapose env) per fold: the stage-2 network trained with the
+              authors' ``train_metapose`` on the fold's training subjects
+              (label-free losses: reprojection ``fwd`` + ``soln`` losses to the
+              stage-1 optimum; model selection on the stage-1 optimum too),
+              then applied to the fold's test subjects -> ``s2_<fold>.npz``.
+              The Human3.6M schedule (300 epochs x up to 10 stages, patience
+              50) is capped (``--epochs-per-stage``, ``--patience``,
+              ``--max-stages``); the cap is recorded in the summary.
+    s2        (metapose env) alternative to ``train``: the released 2-camera
+              Human3.6M checkpoint ``ckpt/h36m/cam2`` on every frame (zero-shot,
+              appendix only) -> ``s2.npz``
     evaluate  (this env)  the stage's 3D pose (H36M-17, bbox units of camera 0,
               scale-free) replaces both views on the trial's frames and is
               scored through the model protocol.
@@ -51,11 +58,22 @@ N_MIX = 4
 
 
 def metapose_python() -> Path:
-    """Interpreter of the ``metapose`` conda env (sibling of the running env unless overridden)."""
+    """Interpreter of the MetaPose TF env: ``$GYMNASTICS_METAPOSE_PYTHON``, else the
+    sibling env ``metapose_gpu`` (TF 2.15 + CUDA) when present, else ``metapose`` (TF 2.8 CPU)."""
     configured = os.environ.get(METAPOSE_PYTHON_ENV)
     if configured:
         return Path(configured)
-    return Path(sys.executable).resolve().parents[2] / "metapose" / "bin" / "python"
+    envs = Path(sys.executable).resolve().parents[2]
+    for name in ("metapose_gpu", "metapose"):
+        candidate = envs / name / "bin" / "python"
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(f"no metapose conda env next to {envs}; set {METAPOSE_PYTHON_ENV}")
+
+
+def _tf_env() -> dict[str, str]:
+    # PYTHONNOUSERSITE: the user-site packages of the main env must not leak into the TF env.
+    return {**os.environ, "PYTHONPATH": str(PROJECT_ROOT / "src"), "PYTHONNOUSERSITE": "1"}
 
 
 # ----------------------------------------------------------------------------- record construction
@@ -142,35 +160,86 @@ class RecordingTransform:
 # ----------------------------------------------------------------------------- stages in the TF env
 def run_stage1(directory: Path, *, steps: int = 100, batch: int = 4096) -> Path:
     script = Path(__file__).with_name("metapose_s1.py")
-    env = {**os.environ, "PYTHONPATH": str(PROJECT_ROOT / "src"), "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", "")}
-    subprocess.run([str(metapose_python()), str(script), "run", "--inputs", str(directory / "inputs.npz"), "--output", str(directory / "s1.npz"), "--steps", str(steps), "--batch", str(batch)], check=True, env=env)
+    subprocess.run([str(metapose_python()), str(script), "run", "--inputs", str(directory / "inputs.npz"), "--output", str(directory / "s1.npz"), "--steps", str(steps), "--batch", str(batch)], check=True, env=_tf_env())
     return directory / "s1.npz"
 
 
-def run_stage2(directory: Path) -> Path:
+def run_stage2_released(directory: Path) -> Path:
+    """Released ``ckpt/h36m/cam2`` on every frame -> ``s2.npz`` (zero-shot; appendix only)."""
     script = Path(__file__).with_name("metapose_s2.py")
-    env = {**os.environ, "PYTHONPATH": str(PROJECT_ROOT / "src"), "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", "")}
-    subprocess.run([str(metapose_python()), str(script), "--directory", str(directory), "--release-root", str(RELEASE_ROOT), "--third-party", str(THIRD_PARTY)], check=True, env=env)
+    subprocess.run([str(metapose_python()), str(script), "--mode", "released", "--directory", str(directory), "--release-root", str(RELEASE_ROOT), "--third-party", str(THIRD_PARTY)], check=True, env=_tf_env())
     return directory / "s2.npz"
+
+
+def fold_rows(directory: Path, fold_json: Path, *, seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
+    """Frame rows of the fold's training subjects and of its test subjects.
+
+    Training rows keep only frames with a stage-1 estimate and are shuffled
+    with a fixed seed: ``train_metapose`` validates on the first
+    ``valid_first_n`` (64) records of its training split, which must be a
+    random sample of the training frames rather than one trial's first
+    frames. Test rows stay in index order so the predictions can be placed
+    back on their trials.
+    """
+    index = json.loads((directory / "index.json").read_text(encoding="utf-8"))
+    fold = json.loads(Path(fold_json).read_text(encoding="utf-8"))
+    usable = np.asarray(np.load(directory / "s1.npz")["usable"], dtype=bool)
+
+    def rows(persons: set[str]) -> np.ndarray:
+        spans = [np.arange(t["start"], t["stop"]) for t in index["trials"] if str(t["person"]) in persons]
+        return np.concatenate(spans).astype(np.int64) if spans else np.zeros(0, dtype=np.int64)
+
+    train = rows({str(s) for s in fold["train"]})
+    train = np.random.default_rng(seed).permutation(train[usable[train]])
+    test = rows({str(s) for s in fold["test"]})
+    if len(train) == 0 or len(test) == 0:
+        raise ValueError(f"{fold_json.name}: {len(train)} training / {len(test)} test frames in {directory}")
+    return train, test
+
+
+def run_stage2_trained(directory: Path, fold_json: Path, *, epochs_per_stage: int, patience: int, max_stages: int, seed: int = 0) -> Path:
+    """Train stage 2 on the fold's training frames, predict its test frames -> ``s2_<fold>.npz``."""
+    train, test = fold_rows(directory, fold_json, seed=seed)
+    rows_file = directory / f"rows_{fold_json.stem}.npz"
+    np.savez(rows_file, train_rows=train, test_rows=test)
+    print(f"[metapose] {fold_json.stem}: training stage 2 on {len(train)} frames, predicting {len(test)}")
+    script = Path(__file__).with_name("metapose_s2.py")
+    subprocess.run([str(metapose_python()), str(script), "--mode", "train", "--directory", str(directory), "--release-root", str(RELEASE_ROOT), "--third-party", str(THIRD_PARTY),
+                    "--fold", fold_json.stem, "--rows", str(rows_file), "--epochs-per-stage", str(epochs_per_stage), "--patience", str(patience), "--max-stages", str(max_stages)], check=True, env=_tf_env())
+    return directory / f"s2_{fold_json.stem}.npz"
 
 
 # ----------------------------------------------------------------------------- evaluation transform
 class MetaPoseTrialTransform:
-    """Replace both views with the stage's 3D pose (H36M-17 -> MHR70 layout) on the trial's frames."""
+    """Replace both views with the stage's 3D pose (H36M-17 -> MHR70 layout) on the trial's frames.
 
-    def __init__(self, directory: Path, stage: str) -> None:
+    Args:
+        directory: The dataset's MetaPose directory (``inputs.npz``, ``s1.npz`` ...).
+        stage: ``s2`` (stage-2 network), ``s1`` (stage-1 optimum) or ``init``
+            (monocular initialisation).
+        fold: With ``stage="s2"``: use the network trained for this fold
+            (``s2_<fold>.npz``; only its test frames carry predictions).
+            ``None`` uses the released checkpoint's ``s2.npz``.
+    """
+
+    def __init__(self, directory: Path, stage: str, *, fold: str | None = None) -> None:
         if stage not in {"s1", "s2", "init"}:
             raise ValueError("stage must be s1, s2 or init")
         index = json.loads((directory / "index.json").read_text(encoding="utf-8"))
         self.slices = {(t["person"], t["trial"]): (t["start"], t["stop"]) for t in index["trials"]}
         s1 = np.load(directory / "s1.npz")
         self.valid = np.asarray(s1["usable"], dtype=bool)
-        if stage == "s2":
+        if stage == "s2" and fold is not None:
+            trained = np.load(directory / f"s2_{fold}.npz")
+            self.pose = np.full(s1["pose_opt"].shape, np.nan, dtype=np.float32)
+            self.pose[trained["rows"]] = trained["pose"]
+        elif stage == "s2":
             self.pose = np.load(directory / "s2.npz")["pose"]
         else:
             self.pose = s1["pose_opt"] if stage == "s1" else s1["pose_init"]
         self.valid &= np.isfinite(self.pose).all(axis=(1, 2))
         self.stage = stage
+        self.fold = fold
 
     def __call__(self, trial: PosePairTrial) -> PosePairTrial:
         key = (trial.person_id, trial.trial_id)
@@ -182,7 +251,7 @@ class MetaPoseTrialTransform:
         pose, valid = h36m17_to_mhr70(self.pose[start:stop])
         valid &= self.valid[start:stop][:, None]
         pose = np.where(valid[..., None], pose, 0.0)
-        metadata = {**dict(trial.source_metadata), "external_method": f"metapose_{self.stage}"}
+        metadata = {**dict(trial.source_metadata), "external_method": f"metapose_{self.stage}" + (f"_{self.fold}" if self.fold else "")}
         return replace(trial, face=pose, side=pose, valid_face=valid, valid_side=valid, source_metadata=metadata)
 
 
