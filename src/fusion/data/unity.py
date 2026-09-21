@@ -99,8 +99,8 @@ class UnityDataModule(DualViewDataModule):
             to the benchmark manifest plus the SAM3D camera cache.
     """
 
-    def __init__(self, config, *, sequence_loader: SequenceLoader | None = None) -> None:
-        super().__init__(config)
+    def __init__(self, config, *, sequence_loader: SequenceLoader | None = None, trial_transform=None) -> None:
+        super().__init__(config, trial_transform=trial_transform)
         self._sequence_loader = sequence_loader or self._default_sequence_loader()
 
     def _default_sequence_loader(self) -> SequenceLoader:
@@ -137,6 +137,7 @@ class UnityDataModule(DualViewDataModule):
         require_record = bool(options.get("require_cycle_records", True))
         samples: list[DualViewSample] = []
         for trial, gt, available in self._sequence_loader():
+            trial = self._transform(trial)
             reference = reference_valid = None
             if self.config.attach_reference and gt is not None and available is not None:
                 reference, reference_valid = unity22_to_mhr70(gt, available)

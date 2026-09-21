@@ -27,11 +27,13 @@ from .base import DataConfig, DualViewDataModule, SplitSpec
 from .windows import CycleWindowDataset, WindowConfig
 
 
-def build_datamodule(config: Mapping[str, Any]) -> DualViewDataModule:
+def build_datamodule(config: Mapping[str, Any], *, trial_transform: Any = None) -> DualViewDataModule:
     """Instantiate the DataModule named by ``config["name"]``.
 
     Args:
         config: The ``data`` section of the Hydra configuration.
+        trial_transform: Optional hook replacing each loaded trial's views
+            (published external baselines); ignored by the synthetic data.
 
     Returns:
         The DataModule for that dataset.
@@ -47,19 +49,19 @@ def build_datamodule(config: Mapping[str, Any]) -> DualViewDataModule:
     if name == "gymnastics":
         from .gymnastics import GymnasticsDataModule
 
-        return GymnasticsDataModule(config)
+        return GymnasticsDataModule(config, trial_transform=trial_transform)
     if name == "freeman":
         from .freeman import FreeManDataModule
 
-        return FreeManDataModule(config)
+        return FreeManDataModule(config, trial_transform=trial_transform)
     if name == "unity":
         from .unity import UnityDataModule
 
-        return UnityDataModule(config)
+        return UnityDataModule(config, trial_transform=trial_transform)
     if name == "sportspose":
         from .sportspose import SportsPoseDataModule
 
-        return SportsPoseDataModule(config)
+        return SportsPoseDataModule(config, trial_transform=trial_transform)
     raise ValueError(f"unknown dataset {name!r}; expected synthetic, gymnastics, freeman, unity or sportspose")
 
 

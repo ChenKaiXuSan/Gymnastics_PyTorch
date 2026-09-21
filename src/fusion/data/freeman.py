@@ -111,8 +111,8 @@ class FreeManDataModule(DualViewDataModule):
             per session of a subject id; defaults to the benchmark cache.
     """
 
-    def __init__(self, config, *, session_loader: SessionLoader | None = None) -> None:
-        super().__init__(config)
+    def __init__(self, config, *, session_loader: SessionLoader | None = None, trial_transform=None) -> None:
+        super().__init__(config, trial_transform=trial_transform)
         self._session_loader = session_loader or self._default_session_loader()
 
     def _default_session_loader(self) -> SessionLoader:
@@ -190,6 +190,7 @@ class FreeManDataModule(DualViewDataModule):
             subject_id = f"{int(subject):02d}"
             kept_before = len(samples)
             for trial, reference_path in self._session_loader(subject):
+                trial = self._transform(trial)
                 action = session_action(trial.trial_id, action_table) if action_table else None
                 if allowed_actions is not None and action not in allowed_actions:
                     self.skipped_sessions["action"] += 1

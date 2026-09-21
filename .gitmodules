@@ -1,3 +1,6 @@
 [submodule "third_party/sam-3d-body"]
 	path = src/pose_estimation/third_party/sam-3d-body
 	url = https://github.com/facebookresearch/sam-3d-body.git
+[submodule "src/fusion/external/third_party/VideoPose3D"]
+	path = src/fusion/external/third_party/VideoPose3D
+	url = https://github.com/facebookresearch/VideoPose3D.git

@@ -18,7 +18,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
@@ -26,10 +26,15 @@ from torch.utils.data import DataLoader
 from ..corruptions import CorruptionConfig
 from ..cycle_target import CycleTargetConfig
 from ..sample import DualViewSample, collate_fusion_batch
+from fusion.keypoints.schema import PosePairTrial
 from ..skeleton import CommonSkeleton, build_common_skeleton
 from .folds import read_fold_file
 from .sample_cache import cache_key, load_samples, save_samples
 from .windows import CycleWindowDataset, WindowConfig
+
+
+TrialTransform = Callable[[PosePairTrial], PosePairTrial]
+"""Maps a loaded trial to the trial that becomes the sample (same frames)."""
 
 
 @dataclass(frozen=True)
@@ -168,15 +173,24 @@ class DualViewDataModule(pl.LightningDataModule, ABC):
         split: Effective subject split (after ``setup``).
     """
 
-    def __init__(self, config: DataConfig | Mapping[str, Any]) -> None:
+    def __init__(self, config: DataConfig | Mapping[str, Any], *, trial_transform: "TrialTransform | None" = None) -> None:
         super().__init__()
         self.config = DataConfig.from_mapping(config)
+        # Optional hook applied to every loaded PosePairTrial before it becomes a
+        # sample: the published external baselines replace the SAM3D views with
+        # their own per-view or fused poses on the same frames and are then
+        # evaluated through exactly this DataModule (windows, phase, metrics).
+        self.trial_transform: TrialTransform | None = trial_transform
         self.skeleton: CommonSkeleton = build_common_skeleton(self.config.skeleton)
         self.samples: list[DualViewSample] = []
         self.split: SplitSpec = SplitSpec()
         self._datasets: dict[str, CycleWindowDataset] = {}
         # Subjects an adapter loaded but kept no sample of (session selection).
         self.filtered_subjects: set[str] = set()
+
+    def _transform(self, trial: PosePairTrial) -> PosePairTrial:
+        """Apply ``trial_transform`` (identity when unset)."""
+        return trial if self.trial_transform is None else self.trial_transform(trial)
 
     @abstractmethod
     def load_samples(self) -> Sequence[DualViewSample]:

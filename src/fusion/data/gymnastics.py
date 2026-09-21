@@ -62,7 +62,7 @@ from typing import Callable, Sequence
 
 import numpy as np
 
-from common.paths import PROJECT_ROOT, SAM3D_RESULTS_ROOT, TRIANGULATED_ROOT
+from common.paths import CONFIG_ROOT, PROJECT_ROOT, SAM3D_RESULTS_ROOT, TRIANGULATED_ROOT
 from fusion.keypoints.schema import PosePairTrial, valid_from_points
 
 from ..sample import DualViewSample, sample_from_pose_pair_trial
@@ -175,8 +175,8 @@ class GymnasticsDataModule(DualViewDataModule):
             ``(person_id, cycle_id)``; defaults to the triangulation loader.
     """
 
-    def __init__(self, config, *, trial_loader: TrialLoader | None = None, reference_loader: ReferenceLoader | None = None) -> None:
-        super().__init__(config)
+    def __init__(self, config, *, trial_loader: TrialLoader | None = None, reference_loader: ReferenceLoader | None = None, trial_transform=None) -> None:
+        super().__init__(config, trial_transform=trial_transform)
         self._trial_loader = trial_loader or self._default_trial_loader()
         self._reference_loader = reference_loader or self._default_reference_loader()
 
@@ -243,7 +243,7 @@ class GymnasticsDataModule(DualViewDataModule):
         split_root = _resolve(self.config.options.get("split_cycle_root", "local/runs/split_cycle"))
         require_mids = bool(self.config.options.get("require_cycle_mids", True))
         for person_id in self._person_ids():
-            trials = list(self._trial_loader(person_id))
+            trials = [self._transform(trial) for trial in self._trial_loader(person_id)]
             if not trials:
                 continue
             joined, bounds = concatenate_cycles(trials)

@@ -90,8 +90,8 @@ class SportsPoseDataModule(DualViewDataModule):
             per sequence; defaults to the benchmark cache.
     """
 
-    def __init__(self, config, *, sequence_loader: SequenceLoader | None = None) -> None:
-        super().__init__(config)
+    def __init__(self, config, *, sequence_loader: SequenceLoader | None = None, trial_transform=None) -> None:
+        super().__init__(config, trial_transform=trial_transform)
         self._sequence_loader = sequence_loader or self._default_sequence_loader()
 
     def _wanted_subjects(self) -> set[str] | None:
@@ -139,6 +139,7 @@ class SportsPoseDataModule(DualViewDataModule):
         require_record = bool(options.get("require_cycle_records", True))
         samples: list[DualViewSample] = []
         for trial, reference_points in self._sequence_loader():
+            trial = self._transform(trial)
             reference = reference_valid = None
             if self.config.attach_reference and reference_points is not None:
                 reference, reference_valid = coco17_to_mhr70(reference_points)
