@@ -11,8 +11,9 @@ The four pipeline stages are the top-level packages and the only entry points;
 | ③ | `pseudo_gt` | Camera calibration, per-person extrinsics, triangulated 3D pseudo-reference (evaluation only). | `python -m pseudo_gt calibrate`, `python -m pseudo_gt triangulate` |
 | ④ | `fusion` | **The proposed model.** Cycle-aware dual-view fusion (transformer encoders, FiLM, cross-view reliability) trained with Lightning and configured with Hydra. | `python -m fusion train` |
 | support | `fusion.keypoints` | Shared 3D-keypoint representation: `PosePairTrial`, `SkeletonSpec`, canonical body frame, trunk/quality features, person cache. | – |
-| support | `fusion.baselines` | Deterministic fusion methods and classical baselines. | `python -m fusion deterministic` |
-| support | `fusion.benchmarks` | FreeMan and Unity benchmarks. | `python -m fusion benchmark-{freeman,freeman-train,unity}` |
+| support | `fusion.baselines` | Deterministic fusion methods (incl. the calibration-free depth-aware rule) and classical baselines. | `python -m fusion deterministic` |
+| support | `fusion.external` | External learned baselines (TCN, SmoothNet, MetaPose-style, MUC-style) on the model's contract, retrained with the same protocol. | `python -m fusion train model=external_<name>` |
+| support | `fusion.benchmarks` | FreeMan, Unity and SportsPose benchmarks. | `python -m fusion benchmark-{freeman,freeman-train,unity,sportspose}` |
 | support | `fusion.analysis` | Metrics, comparisons, reports, cohort statistics. | `python -m fusion analyze`, `python -m fusion cohort-cycle` |
 | support | `common` | Canonical project paths and MHR70 metadata. | Imported by other packages |
 | archive | `fusion.archive.rotation_aware` | Frozen paper model (2026-09-19); kept for reproducing published tables. | `python -m fusion rotation-aware` |

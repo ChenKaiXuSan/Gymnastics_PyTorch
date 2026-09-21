@@ -1,0 +1,18 @@
+# External learned baseline trained with the project's protocol (fusion/external).
+# MetaPose-style per-frame aggregation MLP over the concatenated views of the whole body
+# (Usman et al., CVPR 2022; no temporal context), bounded residual on the base rule.
+name: external_metapose_mlp
+architecture: external
+backbone: metapose_mlp
+skeleton: mhr70_major
+samples_per_cycle: ${samples_per_cycle}
+hidden_dim: 512
+# Residual bound in canonical units (same as the proposed model); null = unbounded.
+max_delta: 0.25
+dropout: 0.0
+fusion:
+  # Base rule the baseline refines: 0.8 = the v1.1 depth-aware rule (same base as
+  # the proposed model), 0 = plain average (the base every published method uses).
+  depth_alpha: 0.8
+  min_precision: 0.5
+mlp_layers: 3

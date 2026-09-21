@@ -1,0 +1,20 @@
+# External learned baseline trained with the project's protocol (fusion/external).
+# SmoothNet temporal-only MLP refiner (Zeng et al., ECCV 2022), trained from scratch on
+# the base rule with sliding windows of 32 samples; residual bounded like the proposed model.
+name: external_smoothnet
+architecture: external
+backbone: smoothnet
+skeleton: mhr70_major
+samples_per_cycle: ${samples_per_cycle}
+hidden_dim: 512
+# Residual bound in canonical units (same as the proposed model); null = unbounded.
+max_delta: 0.25
+dropout: 0.0
+fusion:
+  # Base rule the baseline refines: 0.8 = the v1.1 depth-aware rule (same base as
+  # the proposed model), 0 = plain average (the base every published method uses).
+  depth_alpha: 0.8
+  min_precision: 0.5
+smoothnet_window: 32
+smoothnet_res_hidden: 256
+smoothnet_blocks: 3

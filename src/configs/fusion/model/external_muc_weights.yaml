@@ -1,0 +1,19 @@
+# External learned baseline trained with the project's protocol (fusion/external).
+# MUC-style learned per-view per-joint weights from both views of the frame
+# (Zhu et al., AAAI 2025: learned weighting instead of averaging); no residual.
+# depth_alpha 0 = weights on the raw views as published (avg base).
+name: external_muc_weights
+architecture: external
+backbone: muc_weights
+skeleton: mhr70_major
+samples_per_cycle: ${samples_per_cycle}
+hidden_dim: 512
+# Residual bound in canonical units (same as the proposed model); null = unbounded.
+max_delta: null
+dropout: 0.0
+fusion:
+  # Base rule the baseline refines: 0.8 = the v1.1 depth-aware rule (same base as
+  # the proposed model), 0 = plain average (the base every published method uses).
+  depth_alpha: 0.0
+  min_precision: 0.5
+mlp_layers: 3
