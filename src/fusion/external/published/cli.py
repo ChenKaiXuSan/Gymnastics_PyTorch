@@ -76,7 +76,7 @@ def _cache_gymnastics_view(item: tuple[str, str]) -> dict:
 
 def _run_metapose(args: argparse.Namespace) -> int:
     from .evaluate import evaluate_folds, fold_files, write_summary
-    from .metapose_pipeline import MetaPoseTrialTransform, prepare_dataset, run_shards, run_stage1, run_stage2_released, run_stage2_trained
+    from .metapose_pipeline import MetaPoseTrialTransform, prepare_dataset, run_shards, run_stage1, run_stage2_released, run_stage2_trained, stage2_name
     from .transform import view_source
     from .videopose3d import VideoPose3DLifter
 
@@ -95,11 +95,11 @@ def _run_metapose(args: argparse.Namespace) -> int:
         run_shards(directory, workers=args.workers)
     if "train" in stages:
         for fold in folds:
-            out = directory / f"s2_{fold.stem}.npz"
+            out = directory / f"{stage2_name(fold.stem, args.loss)}.npz"
             if out.is_file() and not args.force:
                 print(f"[metapose] {fold.stem}: {out} exists, skipping (use --force)")
                 continue
-            run_stage2_trained(directory, fold, epochs_per_stage=args.epochs_per_stage, patience=args.patience, max_stages=args.max_stages, seed=args.seed)
+            run_stage2_trained(directory, fold, epochs_per_stage=args.epochs_per_stage, patience=args.patience, max_stages=args.max_stages, seed=args.seed, loss=args.loss)
     if "s2" in stages:
         run_stage2_released(directory)
     if "evaluate" in stages:
@@ -107,9 +107,10 @@ def _run_metapose(args: argparse.Namespace) -> int:
         schedule = {"epochs_per_stage": args.epochs_per_stage, "early_stopping_patience": args.patience, "max_n_stages": args.max_stages, "released_schedule": "300 epochs x 10 stages, patience 50"}
         for stage in (_list(args.eval_stage) if args.eval_stage else ["s2"]):
             if stage == "s2" and not released:
-                factory = lambda fold: MetaPoseTrialTransform(directory, "s2", fold=fold.stem)  # noqa: E731
-                method = {"name": "metapose", "stage": "s2", "training": "authors' train_metapose per fold on the training subjects (fwd + soln losses, label-free; selection on the stage-1 optimum)", **schedule}
-                name = "s2"
+                factory = lambda fold: MetaPoseTrialTransform(directory, "s2", fold=fold.stem, loss=args.loss)  # noqa: E731
+                objective = {"fwd": "reprojection MSE to the SAM3D 2D (README default; the release uses 2D ground truth)", "ss": "heatmap log-likelihood (README S1+S2/SS)", "ts": "student of the stage-1 solution (README S1+S2/TS)"}[args.loss]
+                method = {"name": "metapose", "stage": "s2", "loss": args.loss, "training": f"authors' train_metapose per fold on the training subjects; objective: {objective}; label-free selection on the stage-1 optimum", **schedule}
+                name = stage2_name("", args.loss).rstrip("_")
             else:
                 factory = lambda fold, stage=stage: MetaPoseTrialTransform(directory, stage)  # noqa: E731
                 method = {"name": "metapose", "stage": stage, "checkpoint": "ckpt/h36m/cam2 (released, zero-shot)" if stage == "s2" else "none (optimisation only)"}
@@ -273,6 +274,7 @@ def make_parser() -> argparse.ArgumentParser:
     mp.add_argument("--patience", type=int, default=5, help="early-stopping patience (released: 50)")
     mp.add_argument("--max-stages", type=int, default=3, help="refinement stages (released: up to 10)")
     mp.add_argument("--seed", type=int, default=0)
+    mp.add_argument("--loss", default="fwd", choices=("fwd", "ss", "ts"), help="stage-2 objective: fwd (README default), ss (heatmap likelihood), ts (student of stage 1)")
     mp.add_argument("--folds", nargs="*", default=None, help="restrict training to these fold names")
     mp.add_argument("--force", action="store_true")
     mp.add_argument("--checkpoint", type=Path, default=None, help="VideoPose3D checkpoint used for the monocular initialisation")

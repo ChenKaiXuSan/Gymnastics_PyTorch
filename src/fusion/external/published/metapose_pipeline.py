@@ -178,13 +178,18 @@ def run_shards(directory: Path, *, workers: int = 8) -> Path:
     return directory / "shards"
 
 
-def run_stage2_trained(directory: Path, fold_json: Path, *, epochs_per_stage: int, patience: int, max_stages: int, seed: int = 0) -> Path:
-    """Train stage 2 on the fold's training subjects, predict its test subjects -> ``s2_<fold>.npz``
+def stage2_name(fold: str, loss: str = "fwd") -> str:
+    """``s2_<fold>`` for the default objective, ``s2_<loss>_<fold>`` for the README variants (ss, ts)."""
+    return f"s2_{fold}" if loss == "fwd" else f"s2_{loss}_{fold}"
+
+
+def run_stage2_trained(directory: Path, fold_json: Path, *, epochs_per_stage: int, patience: int, max_stages: int, seed: int = 0, loss: str = "fwd") -> Path:
+    """Train stage 2 on the fold's training subjects, predict its test subjects -> ``s2[_<loss>]_<fold>.npz``
     (``metapose_s2.py`` writes per-subject record shards once and recombines them per fold)."""
     script = Path(__file__).with_name("metapose_s2.py")
     subprocess.run([str(metapose_python()), str(script), "--mode", "train", "--directory", str(directory), "--release-root", str(RELEASE_ROOT), "--third-party", str(THIRD_PARTY),
-                    "--fold", fold_json.stem, "--fold-json", str(fold_json), "--epochs-per-stage", str(epochs_per_stage), "--patience", str(patience), "--max-stages", str(max_stages), "--seed", str(seed)], check=True, env=_tf_env())
-    return directory / f"s2_{fold_json.stem}.npz"
+                    "--fold", fold_json.stem, "--fold-json", str(fold_json), "--epochs-per-stage", str(epochs_per_stage), "--patience", str(patience), "--max-stages", str(max_stages), "--seed", str(seed), "--loss", loss], check=True, env=_tf_env())
+    return directory / f"{stage2_name(fold_json.stem, loss)}.npz"
 
 
 # ----------------------------------------------------------------------------- evaluation transform
@@ -198,9 +203,10 @@ class MetaPoseTrialTransform:
         fold: With ``stage="s2"``: use the network trained for this fold
             (``s2_<fold>.npz``; only its test frames carry predictions).
             ``None`` uses the released checkpoint's ``s2.npz``.
+        loss: Stage-2 objective variant of the trained run (``fwd``, ``ss``, ``ts``).
     """
 
-    def __init__(self, directory: Path, stage: str, *, fold: str | None = None) -> None:
+    def __init__(self, directory: Path, stage: str, *, fold: str | None = None, loss: str = "fwd") -> None:
         if stage not in {"s1", "s2", "init"}:
             raise ValueError("stage must be s1, s2 or init")
         index = json.loads((directory / "index.json").read_text(encoding="utf-8"))
@@ -208,7 +214,7 @@ class MetaPoseTrialTransform:
         s1 = np.load(directory / "s1.npz")
         self.valid = np.asarray(s1["usable"], dtype=bool)
         if stage == "s2" and fold is not None:
-            trained = np.load(directory / f"s2_{fold}.npz")
+            trained = np.load(directory / f"{stage2_name(fold, loss)}.npz")
             self.pose = np.full(s1["pose_opt"].shape, np.nan, dtype=np.float32)
             self.pose[trained["rows"]] = trained["pose"]
         elif stage == "s2":
@@ -218,6 +224,7 @@ class MetaPoseTrialTransform:
         self.valid &= np.isfinite(self.pose).all(axis=(1, 2))
         self.stage = stage
         self.fold = fold
+        self.loss = loss
 
     def __call__(self, trial: PosePairTrial) -> PosePairTrial:
         key = (trial.person_id, trial.trial_id)
@@ -229,7 +236,7 @@ class MetaPoseTrialTransform:
         pose, valid = h36m17_to_mhr70(self.pose[start:stop])
         valid &= self.valid[start:stop][:, None]
         pose = np.where(valid[..., None], pose, 0.0)
-        metadata = {**dict(trial.source_metadata), "external_method": f"metapose_{self.stage}" + (f"_{self.fold}" if self.fold else "")}
+        metadata = {**dict(trial.source_metadata), "external_method": f"metapose_{self.stage}" + (f"_{self.loss}_{self.fold}" if self.fold else "")}
         return replace(trial, face=pose, side=pose, valid_face=valid, valid_side=valid, source_metadata=metadata)
 
 

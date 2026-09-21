@@ -266,18 +266,33 @@ def assemble_fold(directory: Path, third_party: Path, *, fold: str, train_person
     return dataset_dir, train_rows, test_rows
 
 
-def run_trained(directory: Path, third_party: Path, *, fold: str, train_persons: list[str], test_persons: list[str], epochs_per_stage: int, patience: int, max_stages: int, learning_rate: float = 1e-4, seed: int = 0) -> Path:
+# The README's three stage-2 objectives (all label-free here: the 2D target is the SAM3D detection, not 2D ground truth).
+LOSS_FLAGS = {
+    "fwd": ["--lambda_fwd_loss=1.0", "--lambda_logp_loss=0.0", "--lambda_xopt_loss=0.0"],  # default: reprojection MSE to the 2D target
+    "ss": ["--lambda_fwd_loss=0.0", "--lambda_logp_loss=1.0", "--lambda_xopt_loss=0.0"],  # "S1+S2/SS": heatmap log-likelihood
+    "ts": ["--lambda_fwd_loss=0.0", "--lambda_logp_loss=0.0", "--lambda_xopt_loss=1.0"],  # "S1+S2/TS": student of the stage-1 solution
+}
+
+
+def run_name(fold: str, loss: str) -> str:
+    return f"s2_{fold}" if loss == "fwd" else f"s2_{loss}_{fold}"
+
+
+def run_trained(directory: Path, third_party: Path, *, fold: str, train_persons: list[str], test_persons: list[str], epochs_per_stage: int, patience: int, max_stages: int, learning_rate: float = 1e-4, seed: int = 0, loss: str = "fwd") -> Path:
     """Train stage 2 on the training subjects with the authors' script and predict the test subjects."""
+    if loss not in LOSS_FLAGS:
+        raise ValueError(f"loss must be one of {sorted(LOSS_FLAGS)}")
     dataset_dir, _, test_rows = assemble_fold(directory, third_party, fold=fold, train_persons=train_persons, test_persons=test_persons, seed=seed)
-    log_dir, preds = directory / f"s2_{fold}_tb", directory / f"s2_{fold}_preds"
+    name = run_name(fold, loss)
+    log_dir, preds = directory / f"{name}_tb", directory / f"{name}_preds"
     for path in (log_dir, preds):
         if path.exists():
             shutil.rmtree(path)
-    cmd = [*_trainer_command(), f"--data_root={directory}", f"--experiment_name=strict_external_{fold}", f"--tb_log_dir={log_dir}", f"--dataset=opt_{fold}", "--data_splits=train,test", *COMMON_FLAGS,
+    cmd = [*_trainer_command(), f"--data_root={directory}", f"--experiment_name=strict_external_{name}", f"--tb_log_dir={log_dir}", f"--dataset=opt_{fold}", "--data_splits=train,test", *COMMON_FLAGS, *LOSS_FLAGS[loss],
            # The script trains stages 0..max_n_stages and retrains a stage whose validation metric got worse; two retries are allowed.
            f"--epochs_per_stage={int(epochs_per_stage)}", f"--early_stopping_patience={int(patience)}", f"--max_n_stages={int(max_stages)}", f"--max_stage_attempts={int(max_stages) + 3}",
            f"--learning_rate={learning_rate}", f"--save_preds_to={preds}"]
-    best = directory / f"s2_{fold}_best"
+    best = directory / f"{name}_best"
     if best.exists():
         shutil.rmtree(best)
     best.mkdir(parents=True)
@@ -289,9 +304,9 @@ def run_trained(directory: Path, third_party: Path, *, fold: str, train_persons:
     finite = np.isfinite(pose).all(axis=(1, 2)).mean()
     if finite < 0.99:
         raise RuntimeError(f"stage 2 of {fold} produced non-finite poses on {100 * (1 - finite):.1f} % of the test frames")
-    out = directory / f"s2_{fold}.npz"
-    np.savez_compressed(out, pose=pose, rows=np.asarray(test_rows, dtype=np.int64))
-    print(f"[metapose-s2] {fold}: {len(pose)} test predictions -> {out}")
+    out = directory / f"{name}.npz"
+    np.savez_compressed(out, pose=pose, rows=np.asarray(test_rows, dtype=np.int64), loss=np.array(loss))
+    print(f"[metapose-s2] {name}: {len(pose)} test predictions -> {out}")
     return out
 
 
@@ -308,6 +323,7 @@ def main(argv=None) -> int:
     parser.add_argument("--patience", type=int, default=5)
     parser.add_argument("--max-stages", type=int, default=3)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--loss", choices=sorted(LOSS_FLAGS), default="fwd", help="stage-2 objective (README variants; fwd = default)")
     args = parser.parse_args(argv)
     directory, release_root, third_party = (Path(a).resolve() for a in (args.directory, args.release_root, args.third_party))
     if args.mode == "released":
@@ -321,7 +337,7 @@ def main(argv=None) -> int:
             write_shards(directory, third_party, workers=args.workers)
         fold = json.loads(Path(args.fold_json).read_text(encoding="utf-8"))
         run_trained(directory, third_party, fold=args.fold, train_persons=[str(p) for p in fold["train"]], test_persons=[str(p) for p in fold["test"]],
-                    epochs_per_stage=args.epochs_per_stage, patience=args.patience, max_stages=args.max_stages, seed=args.seed)
+                    epochs_per_stage=args.epochs_per_stage, patience=args.patience, max_stages=args.max_stages, seed=args.seed, loss=args.loss)
     return 0
 
 
