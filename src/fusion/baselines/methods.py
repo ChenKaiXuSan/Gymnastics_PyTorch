@@ -44,7 +44,23 @@ NO_EXTRINSIC_METHODS = (
     "sim3_face_stable_bodypart_weight",
     "sim3_face_stable_smooth_transform",
     "sim3_face_stable_smooth_kpt",
+    "avg_body_depthaware",
+    "avg_body_depthaware_hard",
 )
+
+
+# ``(alpha_face, alpha_side)`` of the depth-aware body averages: how much of
+# each view's own camera-depth coordinate is discounted (1 = discarded, 0 =
+# plain ``avg_body_current``). ``alpha = 0.8`` (a view's depth coordinate gets
+# 1/5 of the precision of its image-plane coordinates) was selected on the
+# FreeMan mocap reference, where the 0.5-0.95 range is within 0.5 mm and the
+# optimum lies at 0.75-0.875; it must never be tuned on the private
+# triangulated reference, which is built from the same image-plane
+# coordinates and rewards the hard rule by construction.
+DEPTH_AWARE_ALPHAS = {
+    "avg_body_depthaware": (0.8, 0.8),
+    "avg_body_depthaware_hard": (1.0, 1.0),
+}
 
 
 EXTRINSIC_METHODS = (
@@ -390,6 +406,81 @@ def current_body_average(face: np.ndarray, side: np.ndarray) -> np.ndarray:
     fused_body = 0.5 * (face_body + side_body)
     pelvis_ref, rotation_ref = build_body_frame(face)
     return kpts_body_to_world(fused_body, pelvis_ref, rotation_ref)
+
+
+def camera_depth_axis_in_body(rotation: np.ndarray) -> np.ndarray:
+    """Optical axis of the camera expressed in the body frame, ``[T, 3]``.
+
+    ``rotation`` is the per-frame matrix of :func:`build_body_frame`, whose
+    columns are the body axes in the view's own coordinates. SAM3D poses live
+    in the camera frame (optical axis ``+z``), so the depth direction seen from
+    the body frame is ``R^T e_z``, i.e. the third row of ``rotation``.
+    """
+    return np.asarray(rotation, dtype=np.float64)[:, 2, :]
+
+
+def depth_aware_body_average(
+    face: np.ndarray,
+    side: np.ndarray,
+    alpha_face: float = 0.8,
+    alpha_side: float = 0.8,
+    min_precision: float = 0.5,
+) -> np.ndarray:
+    """Calibration-free depth-aware average of the two views in the body frame.
+
+    :func:`current_body_average` weights both views equally along every body
+    axis, although each monocular estimate is reliable in its image plane and
+    unreliable along its own optical axis (metric depth). This variant keeps
+    the same body-frame construction and replaces the equal weights with the
+    per-view, per-frame precision ``W_v = I - alpha_v d_v d_v^T``, where
+    ``d_v`` is the camera optical axis of view ``v`` in the body frame
+    (:func:`camera_depth_axis_in_body`; no camera calibration involved), and
+    combines the views in precision form::
+
+        fused_body = (W_face + W_side)^-1 (W_face face_body + W_side side_body)
+
+    With ``alpha = 1`` and orthogonal cameras every coordinate is taken from
+    the view that measures it in the image plane (face: lateral and vertical,
+    side: antero-posterior and vertical; the shared vertical axis is
+    averaged). ``alpha = 0`` recovers :func:`current_body_average`.
+
+    A direction that both image planes miss (near-parallel optical axes) is
+    unobservable, and discarding both depths there would amplify the small
+    misalignment between the two body frames. Both alphas are therefore capped
+    per frame so that the combined precision keeps eigenvalues of at least
+    ``min_precision``: with orthogonal cameras the cap never binds, with
+    parallel cameras the shared depth coordinate is averaged instead of
+    discarded. Frames or joints that are NaN in either view stay NaN, as in
+    the plain average.
+    """
+    face_pelvis, face_rotation = build_body_frame(face)
+    side_pelvis, side_rotation = build_body_frame(side)
+    face_body = np.einsum("tij,tbj->tbi", np.transpose(face_rotation, (0, 2, 1)), face - face_pelvis[:, None, :])
+    side_body = np.einsum("tij,tbj->tbi", np.transpose(side_rotation, (0, 2, 1)), side - side_pelvis[:, None, :])
+
+    d_face = camera_depth_axis_in_body(face_rotation)
+    d_side = camera_depth_axis_in_body(side_rotation)
+    # Eigenvalues of d_f d_f^T + d_s d_s^T are 1 +- |cos(theta)| and 0, so the
+    # combined precision 2I - alpha (...) stays >= min_precision when
+    # alpha <= (2 - min_precision) / (1 + |cos(theta)|).
+    cosine = np.abs(np.einsum("ti,ti->t", d_face, d_side))
+    alpha_cap = np.clip((2.0 - float(min_precision)) / (1.0 + cosine), 0.0, 1.0)
+    alpha_face_t = np.minimum(float(np.clip(alpha_face, 0.0, 1.0)), alpha_cap)
+    alpha_side_t = np.minimum(float(np.clip(alpha_side, 0.0, 1.0)), alpha_cap)
+    eye = np.eye(3, dtype=np.float64)[None]
+    w_face = eye - alpha_face_t[:, None, None] * d_face[:, :, None] * d_face[:, None, :]
+    w_side = eye - alpha_side_t[:, None, None] * d_side[:, :, None] * d_side[:, None, :]
+
+    numerator = np.einsum("tij,tbj->tib", w_face, face_body.astype(np.float64)) + np.einsum(
+        "tij,tbj->tib", w_side, side_body.astype(np.float64)
+    )
+    system = w_face + w_side
+    fused_body = np.full(numerator.shape, np.nan, dtype=np.float64)
+    solvable = np.isfinite(system).all(axis=(1, 2))
+    if solvable.any():
+        fused_body[solvable] = np.linalg.solve(system[solvable], numerator[solvable])
+    fused_body = np.transpose(fused_body, (0, 2, 1)).astype(np.float32)
+    return kpts_body_to_world(fused_body, face_pelvis, face_rotation)
 
 
 def root_normalize(kpts: np.ndarray) -> np.ndarray:

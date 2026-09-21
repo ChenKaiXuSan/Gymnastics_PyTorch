@@ -43,12 +43,14 @@ from fusion.baselines.evaluation import (
 from fusion.baselines.methods import (
     AVAILABLE_METHODS,
     BASELINE_METHODS,
+    DEPTH_AWARE_ALPHAS,
     EXTRINSIC_METHODS,
     NO_EXTRINSIC_METHODS,
     STABLE_SIM3_JOINTS,
     align_side_with_extrinsic_rotation,
     bodypart_weights,
     current_body_average,
+    depth_aware_body_average,
     fuse_extrinsic_rotation,
     fuse_quality_weighted,
     fuse_weighted,
@@ -142,6 +144,12 @@ def process_person(
         }
         if method == "avg_body_current":
             fused_world = current_body_average(face, side)
+        elif method in DEPTH_AWARE_ALPHAS:
+            alpha_face, alpha_side = DEPTH_AWARE_ALPHAS[method]
+            extra["alpha_face"] = alpha_face
+            extra["alpha_side"] = alpha_side
+            extra["depth_axis_source"] = "body_frame_rotation_third_row"
+            fused_world = depth_aware_body_average(face, side, alpha_face, alpha_side)
         elif method == "avg_world_face_ref":
             fused_world = 0.5 * (face + side)
         elif method == "root_face_stable":

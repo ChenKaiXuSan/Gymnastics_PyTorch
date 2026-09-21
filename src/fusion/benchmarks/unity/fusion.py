@@ -18,8 +18,10 @@ from fusion.baselines.methods import (
     ALL_METHODS,
     apply_sim3,
     BASELINE_METHODS,
+    DEPTH_AWARE_ALPHAS,
     bodypart_weights,
     current_body_average,
+    depth_aware_body_average,
     estimate_joint_weights,
     fit_similarity,
     fuse_weighted,
@@ -152,6 +154,11 @@ def fuse_deterministic_sequence(
     stable_scales = None
     if method == "avg_body_current":
         fused = current_body_average(face, side)
+    elif method in DEPTH_AWARE_ALPHAS:
+        alpha_face, alpha_side = DEPTH_AWARE_ALPHAS[method]
+        fused = depth_aware_body_average(face, side, alpha_face, alpha_side)
+        metadata["alpha_face"] = alpha_face
+        metadata["alpha_side"] = alpha_side
     elif method == "avg_world_face_ref":
         fused = 0.5 * (face + side)
     elif method == "root_face_stable":
