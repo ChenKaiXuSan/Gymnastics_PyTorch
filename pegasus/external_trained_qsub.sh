@@ -10,7 +10,8 @@
 #          all | prepare | s1 | train | evaluate          (metapose)
 #          several stages run in order when "::"-separated, e.g. STAGE=prepare::s1
 # FOLDS    space-separated fold names to train (default: all)
-# EXTRA    extra command-line arguments, "::"-separated (qsub -v cannot carry spaces),
+# EXTRA    extra command-line arguments, "::"-separated (qsub -v cannot carry spaces;
+#          list values use "+" instead of ",", which qsub -v treats as a separator),
 #          e.g. EXTRA="--epochs::3::--force"
 # REPO     checkout to run (default: the main working tree)
 #

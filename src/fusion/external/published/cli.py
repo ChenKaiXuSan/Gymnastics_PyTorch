@@ -31,12 +31,18 @@ Results: ``local/runs/external_published/<method>/<dataset>/<mode>/summary.json`
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 from typing import Sequence
 
 from common.paths import PROJECT_ROOT
 
 OUTPUT_ROOT = PROJECT_ROOT / "local" / "runs" / "external_published"
+
+
+def _list(value: str) -> list[str]:
+    """Comma- or plus-separated option values (``qsub -v`` splits on commas)."""
+    return [v for v in re.split(r"[,+]", value) if v]
 
 
 def _run_videopose3d(args: argparse.Namespace) -> int:
@@ -99,7 +105,7 @@ def _run_metapose(args: argparse.Namespace) -> int:
     if "evaluate" in stages:
         released = bool(args.released)
         schedule = {"epochs_per_stage": args.epochs_per_stage, "early_stopping_patience": args.patience, "max_n_stages": args.max_stages, "released_schedule": "300 epochs x 10 stages, patience 50"}
-        for stage in (args.eval_stage.split(",") if args.eval_stage else ["s2"]):
+        for stage in (_list(args.eval_stage) if args.eval_stage else ["s2"]):
             if stage == "s2" and not released:
                 factory = lambda fold: MetaPoseTrialTransform(directory, "s2", fold=fold.stem)  # noqa: E731
                 method = {"name": "metapose", "stage": "s2", "training": "authors' train_metapose per fold on the training subjects (fwd + soln losses, label-free; selection on the stage-1 optimum)", **schedule}
@@ -140,7 +146,7 @@ def _run_canonpose(args: argparse.Namespace) -> int:
             print(f"[canonpose] training {args.dataset} {fold.stem} on {len(fold_train_persons(fold))} subjects")
             train(root / "inputs.npz", root / "index.json", fold_train_persons(fold), out, device=args.device, epochs=args.epochs, seed=args.seed)
     if "evaluate" in stages:
-        for mode in args.mode.split(","):
+        for mode in _list(args.mode):
             payload = evaluate_folds(args.dataset, lambda fold, mode=mode: CanonPoseTrialTransform(root / fold.stem / "lifter.pt", source, mode=mode, device=args.device), folds_dir=args.folds_dir, extra_overrides=extra)
             payload["method"] = {"name": "canonpose", "mode": mode, "training": "released recipe, self-supervised on the fold's training subjects", "epochs": args.epochs or "released default"}
             out = write_summary(root / f"summary_{mode}.json", payload)
@@ -173,7 +179,7 @@ def _run_mhformer(args: argparse.Namespace) -> int:
             print(f"[mhformer] training {args.dataset} {fold.stem} on {len(fold_persons(fold, 'train'))} subjects, selecting on {len(fold_persons(fold, 'val'))}")
             train(root / "inputs.npz", root / "index.json", fold_persons(fold, "train"), fold_persons(fold, "val"), out, device=args.device, config=config, epochs=args.epochs)
     if "evaluate" in stages:
-        for mode in args.mode.split(","):
+        for mode in _list(args.mode):
 
             def factory(fold, mode=mode):
                 lifter = MHFormerLifter(root / fold.stem / "model.pt", args.device)
@@ -211,7 +217,7 @@ def _run_mdvpose(args: argparse.Namespace) -> int:
             print(f"[mdvpose] training {args.dataset} {fold.stem} on {len(fold_persons(fold, 'train'))} subjects, selecting on {len(fold_persons(fold, 'val'))}")
             train(root / "inputs.npz", root / "index.json", fold_persons(fold, "train"), fold_persons(fold, "val"), out, device=args.device, epochs=args.epochs, config={"pairs_per_batch": args.pairs_per_batch})
     if "evaluate" in stages:
-        for mode in args.mode.split(","):
+        for mode in _list(args.mode):
 
             def factory(fold, mode=mode):
                 lifter = MDVPoseLifter(root / fold.stem / "model.pt", args.device)

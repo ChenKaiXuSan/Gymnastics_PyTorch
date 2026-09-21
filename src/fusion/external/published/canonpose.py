@@ -24,7 +24,15 @@ What is the authors' and what is ours:
 * the detector-specific skeleton-morphing network of Sec. 4.2 is skipped
   (it must be trained with 2D ground truth, which does not exist here);
 * two-view result: the canonical poses of both views averaged (the
-  canonical frame is shared by construction), also scored per view.
+  canonical frame is shared by construction), also scored per view;
+* reflection: the objective is invariant to a global reflection of the
+  scene (mirrored pose with mirrored cameras re-projects identically under
+  weak perspective), and on these two-view recordings every fold converges
+  to the mirrored solution. The release leaves this to its Human3.6M
+  evaluation convention; here the one bit per trained model is set from the
+  method's own input modality -- whether the canonical pose or its mirror
+  agrees better with SAM3D's per-view 3D keypoints on the first trials seen
+  (``REFLECTION_TRIALS``) -- never from the evaluation reference.
 """
 
 from __future__ import annotations
@@ -43,9 +51,11 @@ from common.paths import PROJECT_ROOT
 from common.skeletons.mhr70 import MHR70_INDEX
 from fusion.keypoints.schema import PosePairTrial
 
-from .fuse import procrustes_average
+from .fuse import procrustes_average, umeyama
 from .mapping import mhr70_to_coco17_2d
 from .transform import ViewSource
+
+REFLECTION_TRIALS = 20  # trials used to decide the global reflection of a trained lifter
 
 THIRD_PARTY = Path(__file__).resolve().parents[1] / "third_party" / "CanonPose"
 
@@ -312,7 +322,7 @@ def train(inputs: Path, index: Path, train_persons: Sequence[str], output: Path,
 class CanonPoseTrialTransform:
     """Replace both views with the trained lifter's canonical poses (averaged or per view)."""
 
-    def __init__(self, checkpoint: Path, source: ViewSource, *, mode: str = "canonical_average", device: str = "cuda") -> None:
+    def __init__(self, checkpoint: Path, source: ViewSource, *, mode: str = "canonical_average", device: str = "cuda", resolve_reflection: bool = True) -> None:
         import torch
 
         if mode not in {"canonical_average", "procrustes_average", "per_view"}:
@@ -323,6 +333,33 @@ class CanonPoseTrialTransform:
         self.model = _load_lifter_class()()
         self.model.load_state_dict(payload["state_dict"])
         self.model.to(self.device).eval()
+        self.resolve_reflection = resolve_reflection
+        self.reflect: bool | None = None
+        self._reflection_votes: list[tuple[float, float]] = []
+
+    # ----- reflection ambiguity ----------------------------------------------
+    @staticmethod
+    def _pa_error(pose: np.ndarray, valid: np.ndarray, target: np.ndarray, target_valid: np.ndarray) -> float:
+        """Mean per-frame Procrustes error (rotation, no reflection) on the joints both have."""
+        errors = []
+        for t in range(pose.shape[0]):
+            ok = valid[t] & target_valid[t]
+            if ok.sum() < 6:
+                continue
+            scale, rotation, shift = umeyama(pose[t, ok], target[t, ok])
+            errors.append(float(np.linalg.norm(scale * pose[t, ok] @ rotation.T + shift - target[t, ok], axis=-1).mean()))
+        return float(np.mean(errors)) if errors else float("nan")
+
+    def _vote_reflection(self, trial: PosePairTrial, pose_a: np.ndarray, valid_a: np.ndarray) -> None:
+        mirrored = pose_a * np.array([1.0, 1.0, -1.0], dtype=np.float32)
+        plain = self._pa_error(pose_a, valid_a, trial.face, trial.valid_face)
+        flipped = self._pa_error(mirrored, valid_a, trial.face, trial.valid_face)
+        if np.isfinite(plain) and np.isfinite(flipped):
+            self._reflection_votes.append((plain, flipped))
+        if len(self._reflection_votes) >= REFLECTION_TRIALS:
+            plain_mean, flipped_mean = (float(np.mean(v)) for v in zip(*self._reflection_votes))
+            self.reflect = flipped_mean < plain_mean
+            print(f"[canonpose] reflection resolved on {len(self._reflection_votes)} trials: PA vs SAM3D {1000 * plain_mean:.1f} mm, mirrored {1000 * flipped_mean:.1f} mm -> {'mirror' if self.reflect else 'keep'}")
 
     def lift(self, view, frame_map) -> tuple[np.ndarray, np.ndarray]:
         import torch
@@ -347,6 +384,11 @@ class CanonPoseTrialTransform:
         view_a, view_b = self.source.views(trial)
         pose_a, valid_a = self.lift(view_a, trial.face_map)
         pose_b, valid_b = self.lift(view_b, trial.side_map)
+        if self.resolve_reflection and self.reflect is None:
+            self._vote_reflection(trial, pose_a, valid_a)
+        if self.resolve_reflection and (self.reflect if self.reflect is not None else self._reflection_votes and np.mean([f < p for p, f in self._reflection_votes]) > 0.5):
+            pose_a = pose_a * np.array([1.0, 1.0, -1.0], dtype=np.float32)
+            pose_b = pose_b * np.array([1.0, 1.0, -1.0], dtype=np.float32)
         if self.mode == "canonical_average":
             both = valid_a & valid_b
             fused = np.where(both[..., None], 0.5 * (pose_a + pose_b), np.where(valid_a[..., None], pose_a, pose_b))

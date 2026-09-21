@@ -141,6 +141,13 @@ def write_opt_records(directory: Path, third_party: Path, *, out: Path, rows: np
     return out
 
 
+def _trainer_command() -> list[str]:
+    """The launcher (``metapose_launch.py``: CPU SVD, private best-model path) unless ``METAPOSE_LAUNCHER=0``."""
+    if os.environ.get("METAPOSE_LAUNCHER", "1") == "0":
+        return [sys.executable, "-m", "metapose.train_metapose"]
+    return [sys.executable, str(Path(__file__).with_name("metapose_launch.py"))]
+
+
 COMMON_FLAGS = [
     "--dataset_warmup=false", "--n_cam=2", "--train_repeat_k=1", "--permute_cams_aug=false", "--use_equivariant_model=true",
     "--debug_show_single_frame_pmpjes=false", "--debug_enable_check_numerics=false", "--standardize_init_best=false",
@@ -161,7 +168,7 @@ def run_released(directory: Path, release_root: Path, third_party: Path) -> Path
     log_dir, preds = directory / "s2_tb", directory / "s2_preds"
     if preds.exists():
         shutil.rmtree(preds)
-    cmd = [sys.executable, "-m", "metapose.train_metapose", f"--data_root={directory}", "--experiment_name=strict_external", f"--tb_log_dir={log_dir}", "--dataset=opt", "--data_splits=test,test", *COMMON_FLAGS,
+    cmd = [*_trainer_command(), f"--data_root={directory}", "--experiment_name=strict_external", f"--tb_log_dir={log_dir}", "--dataset=opt", "--data_splits=test,test", *COMMON_FLAGS,
            f"--load_weights_from={release_root / 'ckpt' / 'h36m' / 'cam2' / 'model'}", "--load_stages_n=1", "--epochs_per_stage=0", "--max_stage_attempts=1", "--debug_take_n_train_batches=1", f"--save_preds_to={preds}"]
     env = {**os.environ, "PYTHONPATH": str(third_party) + os.pathsep + os.environ.get("PYTHONPATH", "")}
     subprocess.run(cmd, check=True, env=env, cwd=str(third_party))
@@ -178,9 +185,24 @@ def _write_shard(args: tuple[str, str, str, np.ndarray]) -> tuple[str, int]:
     return out, int(len(rows))
 
 
+def trainable_rows(directory: Path) -> np.ndarray:
+    """Frames with a sane stage-1 solution: usable, weak-perspective scales in [0.25, 4] and a non-collapsed pose.
+
+    The batched solver occasionally ends in a degenerate optimum (a collapsed
+    pose with a huge scale; FreeMan: 1 of 710k frames); such targets are
+    excluded from stage-2 training, never from the test rows.
+    """
+    s1 = np.load(directory / "s1.npz")
+    usable = np.asarray(s1["usable"], dtype=bool)
+    scale = np.asarray(s1["scale_opt"], dtype=np.float64)
+    spread = np.asarray(s1["pose_opt"], dtype=np.float64).std(axis=1).mean(axis=1)
+    sane = ((scale >= 0.25) & (scale <= 4.0)).all(axis=1) & (spread >= 0.05)
+    return usable & sane
+
+
 def write_shards(directory: Path, third_party: Path, *, workers: int = 8) -> Path:
-    """``shards/<person>/train`` (usable frames) and ``shards/<person>/test`` (all frames, index order) for every subject."""
-    usable = np.asarray(np.load(directory / "s1.npz")["usable"], dtype=bool)
+    """``shards/<person>/train`` (trainable frames) and ``shards/<person>/test`` (all frames, index order) for every subject."""
+    usable = trainable_rows(directory)
     shards = directory / "shards"
     if shards.exists():
         shutil.rmtree(shards)
@@ -211,7 +233,7 @@ def assemble_fold(directory: Path, third_party: Path, *, fold: str, train_person
     """``opt_<fold>/{train,test}`` from the subject shards; returns the directory and the (train, test) rows."""
     shards = directory / "shards"
     manifest = json.loads((shards / "manifest.json").read_text(encoding="utf-8"))["persons"]
-    usable = np.asarray(np.load(directory / "s1.npz")["usable"], dtype=bool)
+    usable = trainable_rows(directory)
     blocks = {person: (int(v["start"]), int(v["stop"])) for person, v in manifest.items()}
     missing = [p for p in train_persons + test_persons if p not in blocks]
     if missing:
@@ -249,15 +271,22 @@ def run_trained(directory: Path, third_party: Path, *, fold: str, train_persons:
     for path in (log_dir, preds):
         if path.exists():
             shutil.rmtree(path)
-    cmd = [sys.executable, "-m", "metapose.train_metapose", f"--data_root={directory}", f"--experiment_name=strict_external_{fold}", f"--tb_log_dir={log_dir}", f"--dataset=opt_{fold}", "--data_splits=train,test", *COMMON_FLAGS,
+    cmd = [*_trainer_command(), f"--data_root={directory}", f"--experiment_name=strict_external_{fold}", f"--tb_log_dir={log_dir}", f"--dataset=opt_{fold}", "--data_splits=train,test", *COMMON_FLAGS,
            # The script trains stages 0..max_n_stages and retrains a stage whose validation metric got worse; two retries are allowed.
            f"--epochs_per_stage={int(epochs_per_stage)}", f"--early_stopping_patience={int(patience)}", f"--max_n_stages={int(max_stages)}", f"--max_stage_attempts={int(max_stages) + 3}",
            f"--learning_rate={learning_rate}", f"--save_preds_to={preds}"]
-    env = {**os.environ, "PYTHONPATH": str(third_party) + os.pathsep + os.environ.get("PYTHONPATH", "")}
+    best = directory / f"s2_{fold}_best"
+    if best.exists():
+        shutil.rmtree(best)
+    best.mkdir(parents=True)
+    env = {**os.environ, "PYTHONPATH": str(third_party) + os.pathsep + os.environ.get("PYTHONPATH", ""), "METAPOSE_BEST_MODEL": str(best / "model")}
     subprocess.run(cmd, check=True, env=env, cwd=str(third_party))
     pose = _load_preds(preds)
     if len(pose) != len(test_rows):
         raise RuntimeError(f"stage 2 returned {len(pose)} predictions for {len(test_rows)} test frames")
+    finite = np.isfinite(pose).all(axis=(1, 2)).mean()
+    if finite < 0.99:
+        raise RuntimeError(f"stage 2 of {fold} produced non-finite poses on {100 * (1 - finite):.1f} % of the test frames")
     out = directory / f"s2_{fold}.npz"
     np.savez_compressed(out, pose=pose, rows=np.asarray(test_rows, dtype=np.int64))
     print(f"[metapose-s2] {fold}: {len(pose)} test predictions -> {out}")
