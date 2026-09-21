@@ -28,8 +28,16 @@ Protocol: 5-fold subject-disjoint cross-validation, single seed (0), 50 epochs.
 | script | purpose |
 |---|---|
 | `submit_fusion_5fold.sh <dataset> [experiment]` | submit the 5 folds of one dataset as 5 jobs (recommended entry point) |
-| `fusion_fold_qsub.sh` | one fold (`DATA`, `FOLD`, `SWEEP`, ...) on the SKIING account / `gpu` queue |
-| `fusion_fold_qsub_hp.sh` | same job on the HP260146 account / `gen_S` queue (`ACCOUNT=HP260146` in the submitter); each account has its own cap of about 25 queued requests |
+| `fusion_fold_qsub.sh` | one fold (`DATA`, `FOLD`, `SWEEP`, ...); the submitter passes `-A/-q` (HP260146/`gen_S` by default, `ACCOUNT=SKIING` -> `gpu`) |
+| `fusion_fold_qsub_hp.sh` | equivalent copy pinned to HP260146 / `gen_S` |
+
+Requests are 3 h (`elapstim_req`): a fold takes about an hour and a short
+request backfills into scheduling gaps. The only hard cap is the project
+budget in GPU-hours: `qsub` reserves `elapstim_req x gpunum` at submission
+and refuses ("Budget exceeded") when the reservation exceeds the remainder;
+check with `rbudgetcheck -a`. Scheduling order is the user's past-usage rank
+plus one point per hour waited (`sstat -f <request>` shows the breakdown);
+`qattach -c "nvidia-smi" <request>` samples a running job's node.
 | `fusion_train_qsub.sh` | one run with the dataset's default split (`DATA`, `RUN_NAME`, ...) |
 | `submit_fusion_transfer.sh <ckpt> <protocol> [sweep]` | evaluate one checkpoint on every fold of a target protocol (zero-shot transfer, `test_only=true`) |
 

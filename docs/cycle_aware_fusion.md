@@ -256,11 +256,20 @@ Every run writes `config.yaml`, `logs/` (CSV), `checkpoints/` and
 `result.json` below `local/runs/cycle_aware/<run_name>`. `python -m
 fusion.train` is equivalent to the CLI.
 
+GPU defaults (2026-09-21): `data.num_workers=8`, `trainer.precision=bf16-mixed`
+and `trainer.matmul_precision=high` (TF32). Profiling a fold on an H100 with
+the previous defaults (in-process loader, fp32) showed 55–64 % GPU
+utilisation, 5 % of the memory and one CPU core saturated; the windowing,
+corruption and cross-cycle target are CPU work that the workers now do in
+parallel. The corruption seed is a function of `(seed, window_id, epoch)`, so
+worker parallelism does not change the sampled damage. The Procrustes
+metrics always run in fp32 with autocast disabled.
+
 On a large shared CPU box cap the threads and keep the DataLoader in-process
-(`trainer.num_threads=32 data.num_workers=0`); the default of one torch
-thread per core plus forked workers oversubscribes the machine. Measured on
-HP260146 (96 cores, no GPU): about 0.5 s per batch of 8 windows, i.e. roughly
-1.5 min per epoch over the 96 training people.
+(`trainer.num_threads=32 data.num_workers=0 trainer.precision=32`); the default
+of one torch thread per core plus forked workers oversubscribes the machine.
+Measured on HP260146 (96 cores, no GPU): about 0.5 s per batch of 8 windows,
+i.e. roughly 1.5 min per epoch over the 96 training people.
 
 `ta_mpjpe` (translation-only alignment) is logged only for references that
 share the canonical body frame (synthetic data); for the triangulated,
