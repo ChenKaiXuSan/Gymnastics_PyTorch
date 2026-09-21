@@ -47,7 +47,6 @@ from common.paths import CONFIG_ROOT, PROJECT_ROOT
 
 from .data import build_datamodule
 from .lightning_module import CycleAwareFusionModule
-from .model import CycleAwareModelConfig
 
 CONFIG_DIR = CONFIG_ROOT / "fusion"
 
@@ -89,7 +88,9 @@ def build_module(cfg: DictConfig) -> CycleAwareFusionModule:
     model = OmegaConf.to_container(cfg.model, resolve=True)
     assert isinstance(model, dict)
     model.pop("name", None)
-    return CycleAwareFusionModule(CycleAwareModelConfig.from_mapping(model), loss, optimizer, evaluation, diagnostics)
+    # The mapping may carry ``architecture`` (cycle_aware | external); the
+    # Lightning module dispatches on it and validates the remaining fields.
+    return CycleAwareFusionModule(model, loss, optimizer, evaluation, diagnostics)
 
 
 def build_trainer(cfg: DictConfig, run_dir: Path) -> pl.Trainer:

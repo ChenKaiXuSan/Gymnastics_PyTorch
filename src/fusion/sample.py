@@ -27,11 +27,17 @@ Common Coordinate System:
       (so one unit is approximately one torso length).
 
     Both views are canonicalised independently, which removes the unknown
-    relative camera pose without calibration.  The transform of View A is
-    kept (:attr:`DualViewSample.transform_a`) so a fused pose can be mapped
-    back into View A's original world frame.  Reference poses (ground truth or
-    pseudo ground truth) stay in their native frame, so accuracy against them
-    is measured after Procrustes alignment.
+    relative camera pose without calibration.  The transforms of both views
+    are kept (:attr:`DualViewSample.transform_a`, :attr:`DualViewSample.transform_b`):
+    View A's so a fused pose can be mapped back into its original world frame,
+    and both because the third row of each rotation is that camera's optical
+    axis expressed in the body frame (:func:`camera_depth_axes`), the
+    direction along which a monocular estimate is least reliable.  The
+    architecture v1.1 fusion rule uses these ``depth_a`` / ``depth_b`` axes;
+    they are derived from the views' own keypoints, so no camera parameters
+    are involved.  Reference poses (ground truth or pseudo ground truth) stay
+    in their native frame, so accuracy against them is measured after
+    Procrustes alignment.
 
 Cycle Information:
     ``cycle_bounds`` lists complete motion cycles as half-open frame ranges
@@ -47,6 +53,8 @@ Tensor shapes in :class:`FusionBatch` (``B`` windows, ``T`` samples, ``J`` joint
 
     pose_a, pose_b         [B, T, J, 3]  float32
     valid_a, valid_b       [B, T, J]     bool
+    depth_a, depth_b       [B, T, 3]     float32 unit camera optical axis of each view in
+                                          the body frame (zero where unknown or on padding)
     frame_mask             [B, T]        bool   (false on padding)
     delta_t                [B, T]        float32 seconds since the previous sample
     timestamps             [B, T]        float64 seconds
@@ -162,6 +170,8 @@ class DualViewSample:
             world-frame references, for which only Procrustes-aligned errors
             are meaningful.
         transform_a: Optional canonical transform of View A.
+        transform_b: Optional canonical transform of View B (kept for its
+            depth axis; see :func:`camera_depth_axes`).
         metadata: Free-form provenance (JSON-serialisable).
     """
 
@@ -180,6 +190,7 @@ class DualViewSample:
     reference_valid: np.ndarray | None = None
     reference_canonical: bool = False
     transform_a: CanonicalTransformRecord | None = None
+    transform_b: CanonicalTransformRecord | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -232,6 +243,8 @@ class DualViewSample:
             object.__setattr__(self, "reference_valid", _readonly(reference_valid, dtype=bool))
         if self.transform_a is not None and len(self.transform_a.valid) != frames:
             raise ValueError("transform_a must cover every frame")
+        if self.transform_b is not None and len(self.transform_b.valid) != frames:
+            raise ValueError("transform_b must cover every frame")
         object.__setattr__(self, "view_a", _readonly(np.where(valid_a[..., None], view_a, 0.0), dtype=np.float32))
         object.__setattr__(self, "view_b", _readonly(np.where(valid_b[..., None], view_b, 0.0), dtype=np.float32))
         object.__setattr__(self, "valid_a", _readonly(valid_a, dtype=bool))
@@ -267,6 +280,48 @@ class DualViewSample:
         """Stable identifier ``dataset/subject/sequence``."""
         return f"{self.dataset}/{self.subject_id}/{self.sequence_id}"
 
+    @property
+    def depth_a(self) -> np.ndarray:
+        """``[T, 3]`` camera optical axis of View A in the body frame (zero where unknown)."""
+        return camera_depth_axes(self.transform_a, self.num_frames)
+
+    @property
+    def depth_b(self) -> np.ndarray:
+        """``[T, 3]`` camera optical axis of View B in the body frame (zero where unknown)."""
+        return camera_depth_axes(self.transform_b, self.num_frames)
+
+
+def camera_depth_axes(transform: CanonicalTransformRecord | None, frames: int) -> np.ndarray:
+    """Unit optical axis of a view's camera expressed in that view's body frame.
+
+    The canonical transform maps ``canonical = (world - origin) @ rotation / scale``
+    per frame, so a direction ``u`` of the view's own (camera) coordinates
+    becomes ``u @ rotation`` in the body frame.  SAM3D-Body poses live in the
+    camera frame with the optical axis ``+z``, hence the depth axis is the
+    third row ``rotation[t, 2, :]``.  Its sign is irrelevant to the fusion
+    rule, which only uses ``d d^T``.
+
+    Args:
+        transform: The view's canonical transform, or ``None`` when the view
+            was not canonicalised (synthetic data in the canonical frame).
+        frames: Number of frames ``T``.
+
+    Returns:
+        ``[T, 3]`` float32 unit vectors; zero rows where the transform is
+        missing or the frame's body frame was not observed, which the model
+        treats as "no depth information" (isotropic weighting).
+    """
+    axes = np.zeros((frames, 3), dtype=np.float32)
+    if transform is None:
+        return axes
+    if len(transform.valid) != frames:
+        raise ValueError("transform must cover every frame")
+    rows = np.asarray(transform.rotation, dtype=np.float64)[:, 2, :]
+    norms = np.linalg.norm(rows, axis=-1)
+    usable = transform.valid & np.isfinite(rows).all(axis=-1) & (norms > 1e-6)
+    axes[usable] = (rows[usable] / norms[usable, None]).astype(np.float32)
+    return axes
+
 
 class FusionBatch(TypedDict, total=False):
     """Collated tensor batch consumed by the model and the losses.
@@ -279,6 +334,8 @@ class FusionBatch(TypedDict, total=False):
     pose_b: torch.Tensor
     valid_a: torch.Tensor
     valid_b: torch.Tensor
+    depth_a: torch.Tensor
+    depth_b: torch.Tensor
     frame_mask: torch.Tensor
     delta_t: torch.Tensor
     timestamps: torch.Tensor
@@ -382,9 +439,10 @@ def sample_from_pose_pair_trial(
     face, side = np.asarray(trial.face, dtype=np.float32), np.asarray(trial.side, dtype=np.float32)
     valid_face, valid_side = np.asarray(trial.valid_face, dtype=bool), np.asarray(trial.valid_side, dtype=bool)
     transform_a: CanonicalTransformRecord | None = None
+    transform_b: CanonicalTransformRecord | None = None
     if canonicalize:
         face, valid_face, transform_a = canonicalize_view(face, valid_face)
-        side, valid_side, _ = canonicalize_view(side, valid_side)
+        side, valid_side, transform_b = canonicalize_view(side, valid_side)
     select = list(skeleton.source_indices)
     provenance: dict[str, Any] = {k: v for k, v in dict(trial.source_metadata).items()}
     provenance.update({"canonicalized": bool(canonicalize), "skeleton": skeleton.name, "fps": float(trial.fps)})
@@ -405,6 +463,7 @@ def sample_from_pose_pair_trial(
         reference=None if reference is None else np.asarray(reference, dtype=np.float32)[:, select],
         reference_valid=None if reference_valid is None else np.asarray(reference_valid, dtype=bool)[:, select],
         transform_a=transform_a,
+        transform_b=transform_b,
         metadata=provenance,
     )
 

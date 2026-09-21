@@ -57,6 +57,7 @@ from typing import Any, Mapping, Sequence
 import torch
 from torch import Tensor
 
+from .modules.weighted_fusion import depth_aware_pose_fusion
 from .outputs import PoseFusionOutput
 from .skeleton import CommonSkeleton
 
@@ -401,15 +402,30 @@ def pseudo_target(
     valid_b: Tensor,
     *,
     consensus_distance: float,
+    depth_a: Tensor | None = None,
+    depth_b: Tensor | None = None,
+    depth_alpha: float = 0.0,
+    min_precision: float = 0.5,
 ) -> tuple[Tensor, Tensor]:
     """Build the label-free recovery target from the clean views.
+
+    The target is the model's own closed-form base rule applied to the clean
+    views with equal reliability: the plain average for architecture v1.0
+    (``depth_alpha = 0``) and the depth-aware precision fusion for v1.1.
+    Using the same rule as ``P_base`` matters: a target built with the plain
+    average would carry the depth bias that the v1.1 base removes, and the
+    residual would learn to put it back.
 
     Args:
         clean_a: ``[B, T, J, 3]`` clean View A.
         clean_b: ``[B, T, J, 3]`` clean View B.
         valid_a: ``[B, T, J]`` validity of View A.
         valid_b: ``[B, T, J]`` validity of View B.
-        consensus_distance: Maximum disagreement for averaging.
+        consensus_distance: Maximum disagreement for fusing both views.
+        depth_a: Optional ``[B, T, 3]`` camera-depth axis of View A.
+        depth_b: Optional ``[B, T, 3]`` camera-depth axis of View B.
+        depth_alpha: ``fusion.depth_alpha`` of the model (0 = average).
+        min_precision: ``fusion.min_precision`` of the model.
 
     Returns:
         Tuple ``(target, target_valid)`` with shapes ``[B, T, J, 3]`` and
@@ -421,7 +437,9 @@ def pseudo_target(
     consensus = both & (distance <= consensus_distance)
     only_a = valid_a & ~valid_b
     only_b = valid_b & ~valid_a
-    target = torch.where(consensus[..., None], 0.5 * (clean_a + clean_b), torch.zeros_like(clean_a))
+    half = torch.full_like(clean_a[..., :1], 0.5)
+    fused, _ = depth_aware_pose_fusion(clean_a, clean_b, half, half, consensus, consensus, depth_a, depth_b, alpha=float(depth_alpha), min_precision=float(min_precision))
+    target = torch.where(consensus[..., None], fused, torch.zeros_like(clean_a))
     target = torch.where(only_a[..., None], clean_a, target)
     target = torch.where(only_b[..., None], clean_b, target)
     return target, consensus | only_a | only_b
@@ -838,6 +856,8 @@ def compute_losses(
     skeleton: CommonSkeleton,
     config: LossConfig,
     samples_per_cycle: int,
+    depth_alpha: float = 0.0,
+    min_precision: float = 0.5,
 ) -> LossBreakdown:
     """Evaluate every objective on one batch.
 
@@ -852,6 +872,9 @@ def compute_losses(
         skeleton: Common skeleton (bones, left/right pairs).
         config: :class:`LossConfig`.
         samples_per_cycle: ``S``.
+        depth_alpha: The model's ``fusion.depth_alpha`` so the recovery
+            target uses the same base rule as ``P_base`` (0 = average).
+        min_precision: The model's ``fusion.min_precision``.
 
     Returns:
         :class:`LossBreakdown` with finite scalar tensors.
@@ -914,7 +937,18 @@ def compute_losses(
         clean_b = batch.get("clean_b", batch["pose_b"])
         clean_valid_a = batch.get("clean_valid_a", batch["valid_a"])
         clean_valid_b = batch.get("clean_valid_b", batch["valid_b"])
-        target, target_valid = pseudo_target(clean_a, clean_b, clean_valid_a, clean_valid_b, consensus_distance=config.recovery.consensus_distance)
+        depth_a, depth_b = batch.get("depth_a"), batch.get("depth_b")
+        target, target_valid = pseudo_target(
+            clean_a,
+            clean_b,
+            clean_valid_a,
+            clean_valid_b,
+            consensus_distance=config.recovery.consensus_distance,
+            depth_a=None if depth_a is None else depth_a.to(device),
+            depth_b=None if depth_b is None else depth_b.to(device),
+            depth_alpha=depth_alpha,
+            min_precision=min_precision,
+        )
         target_valid = target_valid & frame_mask[..., None]
         if config.recovery.target == "reference":
             reference_valid = batch.get("reference_valid")

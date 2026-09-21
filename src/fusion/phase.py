@@ -186,15 +186,16 @@ def normalize_sample_to_phase(sample: DualViewSample, samples_per_cycle: int) ->
     reference = reference_valid = None
     if sample.reference is not None and sample.reference_valid is not None:
         reference, reference_valid = _interpolate_view(sample.reference, sample.reference_valid, timestamps, query)
-    transform = None
-    if sample.transform_a is not None:
-        nearest = np.clip(np.searchsorted(timestamps, query, side="left"), 0, len(timestamps) - 1)
-        transform = replace(
-            sample.transform_a,
-            rotation=sample.transform_a.rotation[nearest],
-            origin=sample.transform_a.origin[nearest],
-            valid=sample.transform_a.valid[nearest],
-        )
+    nearest = np.clip(np.searchsorted(timestamps, query, side="left"), 0, len(timestamps) - 1)
+
+    def resample_transform(transform):
+        # Rotations are taken from the nearest original frame (no interpolation).
+        if transform is None:
+            return None
+        return replace(transform, rotation=transform.rotation[nearest], origin=transform.origin[nearest], valid=transform.valid[nearest])
+
+    transform_a = resample_transform(sample.transform_a)
+    transform_b = resample_transform(sample.transform_b)
     # Guard against duplicate timestamps produced by extremely short cycles.
     query = np.maximum.accumulate(query + np.arange(len(query)) * 1e-9)
     metadata = dict(sample.metadata)
@@ -214,7 +215,8 @@ def normalize_sample_to_phase(sample: DualViewSample, samples_per_cycle: int) ->
         reference=reference,
         reference_valid=reference_valid,
         reference_canonical=sample.reference_canonical,
-        transform_a=transform,
+        transform_a=transform_a,
+        transform_b=transform_b,
         metadata=metadata,
     )
 

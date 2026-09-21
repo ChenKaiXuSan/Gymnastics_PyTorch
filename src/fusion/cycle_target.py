@@ -19,8 +19,12 @@ samples per cycle):
         per (phase, joint):
 
             both views valid and |P_A - P_B| <= disagreement_threshold
-                -> consensus (mean; the interface admits quality-weighted
-                   fusion later)
+                -> consensus: the plain mean (``method: mean``, architecture
+                   v1.0) or the model's depth-aware base rule with equal
+                   weights (``method: depth_aware``, v1.1).  The consensus
+                   must use the same rule as ``P_base``: a mean target would
+                   carry the depth bias the v1.1 base removes and pull the
+                   prediction back toward the average.
             exactly one view valid -> that view
             otherwise              -> no reliable consensus (invalid)
 
@@ -74,7 +78,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 
-CONSENSUS_METHODS = ("mean",)
+CONSENSUS_METHODS = ("mean", "depth_aware")
 AGGREGATIONS = ("median", "trimmed_mean")
 
 
@@ -85,18 +89,25 @@ class ViewConsensusConfig:
     Attributes:
         disagreement_threshold: Maximum |P_A - P_B| (canonical units) for the
             two views to be fused; larger disagreements yield no consensus.
-        method: Fusion rule for agreeing views; ``"mean"`` (the only rule
-            implemented; the interface admits a quality-weighted rule).
+        method: Fusion rule for agreeing views: ``"mean"`` or
+            ``"depth_aware"`` (the v1.1 base rule with equal weights, see
+            :func:`fusion.modules.weighted_fusion.depth_aware_pose_fusion`).
+        depth_alpha: ``fusion.depth_alpha`` of the model for ``depth_aware``.
+        min_precision: ``fusion.min_precision`` of the model.
     """
 
     disagreement_threshold: float = 0.15
     method: str = "mean"
+    depth_alpha: float = 0.8
+    min_precision: float = 0.5
 
     def __post_init__(self) -> None:
         if self.disagreement_threshold < 0:
             raise ValueError("disagreement_threshold must be non-negative")
         if self.method not in CONSENSUS_METHODS:
             raise ValueError(f"method must be one of {CONSENSUS_METHODS}")
+        if not 0.0 <= float(self.depth_alpha) < 1.0 or not 0.0 < float(self.min_precision) <= 1.0:
+            raise ValueError("depth_alpha must be in [0, 1) and min_precision in (0, 1]")
 
 
 @dataclass(frozen=True)
@@ -218,6 +229,8 @@ def view_consensus(
     valid_a: np.ndarray,
     valid_b: np.ndarray,
     config: ViewConsensusConfig,
+    depth_a: np.ndarray | None = None,
+    depth_b: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Stage 1: fuse the two views of one cycle into one observation per joint.
 
@@ -227,6 +240,8 @@ def view_consensus(
         valid_a: ``[T, J]`` validity of View A.
         valid_b: ``[T, J]`` validity of View B.
         config: Disagreement threshold and fusion rule.
+        depth_a: ``[T, 3]`` camera-depth axis of View A (``depth_aware`` rule).
+        depth_b: ``[T, 3]`` camera-depth axis of View B.
 
     Returns:
         Tuple ``(pose, valid, disagreement)``: the consensus pose
@@ -240,11 +255,39 @@ def view_consensus(
     agree = both & (disagreement <= config.disagreement_threshold)
     only_a = valid_a & ~valid_b
     only_b = valid_b & ~valid_a
-    fused = np.where(agree[..., None], 0.5 * (view_a + view_b), 0.0)  # "mean" rule
+    if config.method == "depth_aware" and depth_a is not None and depth_b is not None:
+        fused = _depth_aware_consensus(view_a, view_b, agree, depth_a, depth_b, config)
+    else:
+        fused = np.where(agree[..., None], 0.5 * (view_a + view_b), 0.0)  # "mean" rule
     fused = np.where(only_a[..., None], view_a, fused)
     fused = np.where(only_b[..., None], view_b, fused)
     valid = agree | only_a | only_b
     return fused.astype(np.float32), valid, disagreement.astype(np.float32)
+
+
+def _depth_aware_consensus(view_a: np.ndarray, view_b: np.ndarray, agree: np.ndarray, depth_a: np.ndarray, depth_b: np.ndarray, config: ViewConsensusConfig) -> np.ndarray:
+    """Equal-weight v1.1 base rule on agreeing joints (zero elsewhere), via the torch implementation."""
+    import torch
+
+    from .modules.weighted_fusion import depth_aware_pose_fusion
+
+    a = torch.from_numpy(np.ascontiguousarray(view_a, dtype=np.float32))[None]
+    b = torch.from_numpy(np.ascontiguousarray(view_b, dtype=np.float32))[None]
+    mask = torch.from_numpy(np.ascontiguousarray(agree, dtype=bool))[None]
+    half = torch.full_like(a[..., :1], 0.5)
+    fused, _ = depth_aware_pose_fusion(
+        a,
+        b,
+        half,
+        half,
+        mask,
+        mask,
+        torch.from_numpy(np.ascontiguousarray(depth_a, dtype=np.float32))[None],
+        torch.from_numpy(np.ascontiguousarray(depth_b, dtype=np.float32))[None],
+        alpha=float(config.depth_alpha),
+        min_precision=float(config.min_precision),
+    )
+    return fused[0].numpy().astype(np.float32)
 
 
 def _aggregate(candidates: np.ndarray, valid: np.ndarray, aggregation: str) -> tuple[np.ndarray, np.ndarray]:
@@ -317,6 +360,8 @@ def cross_cycle_target(
     samples_per_cycle: int,
     config: CycleTargetConfig,
     compatibility_gate: Callable[[np.ndarray, np.ndarray], np.ndarray] | None = None,
+    depth_a: np.ndarray | None = None,
+    depth_b: np.ndarray | None = None,
 ) -> CrossCycleTarget:
     """Leave-one-cycle-out target and statistics for a phase-normalised sample.
 
@@ -330,6 +375,9 @@ def cross_cycle_target(
         samples_per_cycle: ``S``.
         config: :class:`CycleTargetConfig`.
         compatibility_gate: Optional compatibility hook (see :class:`CycleConfidence`).
+        depth_a: Optional ``[T, 3]`` camera-depth axis of View A (used by the
+            ``depth_aware`` consensus).
+        depth_b: Optional ``[T, 3]`` camera-depth axis of View B.
 
     Returns:
         :class:`CrossCycleTarget` (all fields zero / ``inf`` where undefined).
@@ -346,7 +394,18 @@ def cross_cycle_target(
     if len(bounds) < 2 or not config.enabled:
         return result
     # Stage 1: one consensus observation per cycle.
-    consensus = [view_consensus(view_a[s:e], view_b[s:e], valid_a[s:e], valid_b[s:e], config.consensus) for s, e in bounds]
+    consensus = [
+        view_consensus(
+            view_a[s:e],
+            view_b[s:e],
+            valid_a[s:e],
+            valid_b[s:e],
+            config.consensus,
+            None if depth_a is None else depth_a[s:e],
+            None if depth_b is None else depth_b[s:e],
+        )
+        for s, e in bounds
+    ]
     confidence = CycleConfidence(config.confidence, compatibility_gate)
     target, conf = result.target.copy(), result.confidence.copy()
     dispersion, count = result.dispersion.copy(), result.candidate_count.copy()

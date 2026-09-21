@@ -295,8 +295,10 @@ def test_compute_losses_v2_end_to_end(tiny_config, tiny_batch, skeleton):
 
 
 def test_hydra_v2_default_and_v1_preset(tmp_path: Path):
-    cfg = compose_config(["experiment=smoke", f"output_root={tmp_path}", "run_name=v2", "diagnostics.gradient_norm.enabled=true", "diagnostics.gradient_norm.interval=1"])
+    # The v2 objectives (on the v1.0 base) are reproduced through experiment=v2.
+    cfg = compose_config(["experiment=[smoke,v2]", f"output_root={tmp_path}", "run_name=v2", "diagnostics.gradient_norm.enabled=true", "diagnostics.gradient_norm.interval=1"])
     assert cfg.loss.cycle.weight == 1.0 and cfg.loss.reliability.weight == 0.02 and cfg.loss.recovery.weight == 0.0 and cfg.data.cycle_target.enabled and cfg.loss.periodicity.type == "contrastive"
+    assert cfg.model.fusion.depth_alpha == 0.0 and cfg.data.cycle_target.consensus.method == "mean"
     result = run(cfg)
     metrics = result["test_metrics"]
     assert "test/cycle_raw" in metrics and "test/cycle_weighted" in metrics and "test/total" in metrics and "test/cycle_target_error" in metrics

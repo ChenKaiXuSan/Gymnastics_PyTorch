@@ -1,7 +1,11 @@
-# Architecture v1.0 of the cycle-aware dual-view fusion model (scalar convex
-# base P_base = w_A P_A + w_B P_B).  Kept for the alpha = 0 ablation and for
-# reproducing the v1/v2 sweeps; the default model is v1_1.yaml.
-name: v1
+# Architecture v1.1 (2026-09-20) of the cycle-aware dual-view fusion model.
+# Identical to v1.0 except for the base-pose rule: the scalar reliability
+# scales a per-view precision matrix that discounts each view's own
+# camera-depth axis (row 2 of its canonicalisation rotation, calibration-free),
+#   Lambda_v = w_v (I - depth_alpha d_v d_v^T),
+#   P_base   = (Lambda_A + Lambda_B)^-1 (Lambda_A P_A + Lambda_B P_B).
+# Encoders, heads, widths and the residual are unchanged (src/fusion/model.py).
+name: v1_1
 # Common skeleton: "mhr70" (70 joints) or "mhr70_major" (20 major joints).
 skeleton: mhr70_major
 # Feature width D shared by every branch.
@@ -55,6 +59,11 @@ residual:
   max_delta: 0.25
 
 fusion:
-  # 0 = architecture v1.0 base (no depth prior); see model/v1_1.yaml.
-  depth_alpha: 0.0
+  # Fraction of each view's precision removed along its own depth axis, [0, 1).
+  # 0.8 was selected on the FreeMan reference (0.5-0.95 within 0.5 mm, optimum
+  # 0.75-0.875); it is a fixed prior, never learned, and must not be tuned on
+  # the private triangulated reference (which rewards alpha -> 1 by construction).
+  depth_alpha: 0.8
+  # Eigenvalue floor of the unit-weight precision sum: caps depth_alpha per
+  # frame when the two optical axes are nearly parallel.
   min_precision: 0.5

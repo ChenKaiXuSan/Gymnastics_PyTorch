@@ -27,7 +27,8 @@ src/
 ├── fusion/             # ④ the proposed cycle-aware fusion network   python -m fusion train
 │   ├── keypoints/      #    shared 3D-keypoint representation (trial schema, skeleton, body frame, cache)
 │   ├── baselines/      #    deterministic matrix + classical baselines   python -m fusion deterministic
-│   ├── benchmarks/     #    FreeMan / Unity                              python -m fusion benchmark-*
+│   ├── external/       #    external learned baselines (TCN, SmoothNet, MetaPose-, MUC-style) trained with the same protocol
+│   ├── benchmarks/     #    FreeMan / Unity / SportsPose                 python -m fusion benchmark-*
 │   ├── analysis/       #    metrics, reports, cohort statistics          python -m fusion analyze | cohort-cycle
 │   └── archive/        #    frozen paper model (rotation_aware)          python -m fusion rotation-aware
 ├── common/             # shared library: paths, config helpers, MHR70 metadata, CLI dispatcher
@@ -142,7 +143,7 @@ python -m fusion benchmark-freeman run
 Downloaded archives, extracted subject workspaces, predictions, and reports all
 remain under ignored `local/` paths.
 
-## Cycle-aware dual-view fusion (Architecture v1.0)
+## Cycle-aware dual-view fusion (Architecture v1.1)
 
 `fusion` is a second, self-contained learned fusion
 model that treats the repeated-cycle structure of the recorded motion as a
@@ -154,9 +155,12 @@ in [docs/cycle_aware_fusion.md](docs/cycle_aware_fusion.md).
 ### Research goal
 
 Two uncalibrated monocular 3D pose estimates of the same person (View A/B)
-fail at different joints and different times. The model learns, without any
-3D labels, *how much to trust each view for every joint at every time step*
-and applies a small bounded correction, using local motion (velocity) and
+fail at different joints and different times. The base pose combines the two
+views with a calibration-free geometric prior (v1.1: each view's precision is
+discounted along its own camera-depth axis, obtained from the view's own
+canonicalisation), and the model learns, without any 3D labels, *how much to
+trust each view for every joint at every time step* on top of that prior and
+applies a small bounded correction, using local motion (velocity) and
 cycle-scale motion (phase, periodic recurrence) as the evidence.
 
 ### Architecture

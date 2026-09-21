@@ -1,4 +1,4 @@
-# Cycle-Aware Dual-View 3D Pose Fusion (Architecture v1.0)
+# Cycle-Aware Dual-View 3D Pose Fusion (Architecture v1.1)
 
 `fusion` fuses two independent monocular 3D pose
 estimates of one person (View A = face camera, View B = side camera on the
@@ -17,8 +17,13 @@ frame (`fusion.keypoints.geometry.canonicalize_pose`): origin
 at the hip midpoint, x from left to right hip, y along pelvis→thorax, z
 completing a right-handed frame, and lengths divided by the median torso
 length of the sequence. The two views are therefore directly comparable
-without calibration; the transform of View A is stored so the fused pose can
-be mapped back into its world frame.
+without calibration; the transforms of both views are stored: View A's so
+the fused pose can be mapped back into its world frame, and both because the
+third row of each canonical rotation is that camera's optical axis expressed
+in the body frame (`sample.camera_depth_axes`, shipped as `depth_a` /
+`depth_b [T, 3]`). Since SAM3D-Body predicts in the camera frame, this is
+the direction along which the monocular estimate is least reliable, and it
+is obtained from the view's own keypoints without any camera parameters.
 
 ### 1.2 Cycles, middles and phase normalisation
 
@@ -72,8 +77,43 @@ applied to each view:
 | FiLM | `H = (1 + γ(F_motion)) · F_pose + β(F_motion)` with zero-initialised γ, β | `modules/film.py` |
 | Cross-view | `C_A = H_A + Attn(H_A ← H_B)`, `C_B = H_B + Attn(H_B ← H_A)` over the joints of the same frame | `modules/cross_view_attention.py` |
 | Reliability | `R_A = g([C_A ; C_B ; flags])`, `R_B = g([C_B ; C_A ; flags])`, `[w_A, w_B] = softmax([R_A, R_B])` | `modules/reliability.py` |
-| Weighted fusion | `P_base = w_A · P_A + w_B · P_B` on the **original** inputs | `modules/weighted_fusion.py` |
+| Depth-aware fusion (v1.1) | `Λ_v = w_v · (I − α d_v d_vᵀ)`, `P_base = (Λ_A + Λ_B)⁻¹ (Λ_A P_A + Λ_B P_B)` on the **original** inputs | `modules/weighted_fusion.py` |
 | Residual | `ΔP = max_delta · tanh(MLP([w_A C_A + w_B C_B ; |C_A − C_B| ; P_base]))`, `P_hat = P_base + ΔP` | `modules/residual_refinement.py` |
+
+**Base rule (v1.1, 2026-09-20).** Architecture v1.0 used the scalar convex
+fusion `P_base = w_A · P_A + w_B · P_B`, one weight per joint and time step
+shared by x, y and z. The identifiability probes showed that the dominant
+error of each view is systematic and lies along that view's own camera-depth
+axis (side view: the body's lateral axis; face view: antero-posterior), that
+no input-derived signal can tell which view carries it (every label-free
+weighting converges to 0.5 / 0.5), and that a scalar per-joint weight cannot
+express a per-axis preference at all. v1.1 therefore turns the scalar
+reliability into a per-view precision matrix with a fixed geometric prior:
+
+```
+d_v      = R_v[t, 2, :]                      camera optical axis of view v in the body frame
+Λ_v      = w_v · (I − α · d_v d_vᵀ)          precision w_v in the image plane, w_v (1 − α) along depth
+P_base   = (Λ_A + Λ_B)⁻¹ (Λ_A P_A + Λ_B P_B) precision-weighted least squares, per frame and joint
+```
+
+* `α = fusion.depth_alpha = 0.8` is a **fixed prior selected on the FreeMan
+  reference** (0.5–0.95 within 0.5 mm, optimum 0.75–0.875). It is never
+  learned: every label-free objective is built from view consensus and would
+  drive a learned `α` back to 0. It must not be tuned on the private
+  triangulated reference, which is built from the same image-plane
+  coordinates and rewards `α → 1` by construction.
+* `α = 0` is bit-identical to v1.0 (`model=v1`, preset
+  `experiment=v1_0_base`); with `α = 1` and orthogonal cameras every
+  coordinate would come from the view that measures it in the image plane.
+* `w_A + w_B = 1` and `α < 1` keep `Λ_A + Λ_B` invertible; a joint valid in
+  one view only is returned exactly; for near-parallel optical axes `α` is
+  capped per frame (`fusion.min_precision`) so the unobservable direction is
+  averaged instead of amplifying frame noise. The learned scalar `w_v` keeps
+  its role: trusting one view more when a joint is damaged in the other.
+* The same closed-form rule with equal weights is the deterministic baseline
+  `avg_body_depthaware` of `python -m fusion deterministic`, and is logged on
+  every evaluation as `pa_mpjpe_rule` (also `_corrupted_rule`) so each run
+  reports what the learned parts add to the rule on the same windows.
 
 Tensor folding is documented in each module: the spatial transformer folds
 `B·T` and attends over `J`; the temporal transformers fold `B·J` and attend
@@ -86,14 +126,47 @@ Properties enforced by tests (`tests/fusion`):
 * `w_A + w_B = 1` for every `(b, t, j)`; a joint valid in one view only takes
   that view; a joint valid in neither is flagged invalid.
 * At initialisation FiLM and the residual are identities, so the model equals
-  the reliability-weighted fusion.
+  the reliability-weighted (v1.1: depth-aware) fusion; `depth_alpha = 0`
+  reproduces the v1.0 base bit for bit and the torch rule matches the
+  deterministic baseline `avg_body_depthaware` (`tests/fusion/test_depth_aware_fusion.py`).
 * Swapping the views swaps the outputs (symmetry).
 * Every parameter receives a gradient in a full forward/backward pass.
 
-### 1.4 Objectives (version 2, default `loss=v2`)
+### 1.4 Objectives (version 3, default `loss=v3`)
 
-No target is built from the current window's own two views.  Five terms
-(`losses.py`), every coefficient a Hydra value (`src/configs/fusion/loss/v2.yaml`):
+Three terms (`losses.py`, `src/configs/fusion/loss/v3.yaml`), following the
+division of labour established by the identifiability probes: the per-axis
+structure is a prior inside `P_base`, the loss only has to (a) not break it on
+clean data and (b) recover from single-view damage:
+
+```
+L = 1.0 · L_rec + 0.02 · L_rel + 0.01 · L_res
+```
+
+* **`L_rec`**: Huber (β 0.05) between `P_hat` and the model's own base rule
+  applied to the **clean** views with equal weights (`pseudo_target` with the
+  model's `depth_alpha`; both clean views valid and within
+  `consensus_distance = 0.15`, or exactly one valid → that view). On clean
+  joints it anchors `w → ½` and `ΔP → 0`; on synthetically corrupted joints it
+  is the recovery target. The target must use the same rule as `P_base`: a
+  plain-average target would carry the depth bias the v1.1 base removes, and
+  the residual would learn to put it back.
+* **`L_rel`**: cross-entropy on the reliability logits where corruption
+  damaged exactly one view (label = the undamaged view).
+* **`L_res`**: L1 norm of `ΔP`.
+* FreeMan / Unity: `experiment=reference_supervised` replaces the clean-view
+  target by the attached reference (`recovery.target = reference`); the
+  private triangulated reference is never used for training.
+
+Every other term is kept for reproduction and as a logged metric
+(`cycle_target_error`, position periodicity, bone / half-cycle symmetry, the
+feature-level terms): their targets inherit the inputs' repeatable bias and
+they hurt on the private data (v2: 29.8 mm vs 27.5 average; measurement
+preset: 33.0 mm). `data.cycle_target.consensus.method = depth_aware` keeps the
+cross-cycle target consistent with the v1.1 base whenever it is enabled.
+
+**Version 2 (`experiment=v2`, `loss=v2` on `model=v1`)**, the previous
+default, used five terms:
 
 ```
 L = 1.0 · L_cycle + 0.02 · L_rel + 0.1 · L_period + 0.1 · L_sym + 0.01 · L_res
@@ -161,13 +234,46 @@ hurt every metric on the private data.
 
 ### 1.5 Evaluation
 
+**Reporting protocol (decision 2026-09-21).** This is the only protocol used
+for reporting from now on; the older deterministic-matrix protocol (70 joints,
+one similarity alignment per cycle, fixed 14-person test split) is archived
+and kept solely to regenerate the Sports Engineering manuscript.
+
+* 5-fold subject-disjoint cross-validation, single seed, 50 epochs; the
+  metric of a run is the mean over the five folds' test people
+  (`src/configs/fusion/folds/{gymnastics,freeman_all40}`).
+* Phase-normalised windows (`samples_per_cycle` samples per cycle, 2 cycles per
+  window, non-overlapping evaluation windows).
+* Per-frame Procrustes PA-MPJPE (`metrics.per_joint_error`, align =
+  `procrustes`) in mm, pooled over all valid joint-frames.
+* The 20 major joints of `mhr70_major` (nose, neck, shoulders, elbows, wrists,
+  hips, knees, ankles, toe tips, heels); on FreeMan only the 13 of them with a
+  reference count. The 70-joint set (40 finger + 5 face points) is not used.
+* Deterministic methods are compared under the same protocol by fusing the
+  world-frame inputs, canonicalising the output and evaluating it on the same
+  windows (`local/runs/fuse_depthaware/unified_*_model_protocol*.json`); the
+  matrix's own `metrics_by_person.csv` numbers are not reported.
+* Learned baselines are trained with the same folds, windows and objectives
+  as the proposed model (no zero-shot transfer of public checkpoints).
+
 Validation and test windows may carry a reference pose (triangulated
 pseudo-reference, FreeMan `keypoints3d_optim`, Unity native 3D). Because the
 fused pose lives in the canonical frame of View A, the primary metric is the
 Procrustes-aligned MPJPE (`metrics.py`); translation-aligned MPJPE is also
-logged. Both are reported for `P_hat` and for `P_base` so the contribution
-of the residual is visible. References are never attached to training
-windows.
+logged. All are reported for `P_hat`, for `P_base` and for the closed-form
+rule with equal weights (`*_rule`) so the contributions of the residual and of
+the learned reliability are visible. References are never attached to
+training windows (except `data.train_with_reference` on FreeMan / Unity).
+
+**Reference caveat (2026-09-20).** The private reference is triangulated from
+the same SAM3D 2D keypoints as the inputs, i.e. it trusts each view's
+image-plane coordinates by construction. Rules that do the same (the
+depth-aware base, `α → 1`) are therefore rewarded far beyond their true gain:
+on FreeMan the depth-aware rule improves the plain average by 4–7 % against
+the 8-camera reference, but by 36–38 % against a pseudo-reference triangulated
+from the two SAM3D views the way the private one is. Report private accuracy
+with this caveat, take effect sizes from FreeMan, and never select `α`, weights
+or checkpoints on the private reference.
 
 ## 2. Datasets
 
@@ -203,6 +309,7 @@ FreeMan keeps only the repetitive action classes by default
 src/configs/fusion/
 ├── config.yaml              root: samples_per_cycle, num_cycles, seed, run_name, output_root
 ├── model/v1_1.yaml          architecture v1.1 (default) and ablation switches; model/v1.yaml = v1.0 base
+├── model/external_*.yaml    external learned baselines (fusion/external): tcn, smoothnet, metapose_mlp, muc_weights
 ├── data/{synthetic,gymnastics,freeman,unity}.yaml   (+ _common.yaml)
 ├── loss/{v3,v2,v1_recovery}.yaml   v3 = default
 ├── corruption/{default,none}.yaml
@@ -217,6 +324,24 @@ is always `num_cycles · samples_per_cycle` samples. `num_cycles` may be
 fractional (0.5, 1, 2, ...) or `null`, which gives the long-term branch the
 whole sequence as context (one padded window per sequence; preset
 `experiment=full_context`).
+
+### 3.1 External learned baselines (`fusion/external`)
+
+Published architectures are compared as *retrained* baselines, never through
+their public checkpoints: each one is implemented on the model's own
+input/output contract (both canonical views, validity, phase, depth axes ->
+`PoseFusionOutput`), starts from the same closed-form base rule with equal
+weights, and is trained with the same folds, windows, corruption and
+objectives (`python -m fusion train model=external_<name>`; on FreeMan with
+`experiment=reference_supervised_v3`). The residual baselines have no
+reliability head, so pass `loss.reliability.weight=0`.
+
+| Config | Architecture | Learned part |
+|---|---|---|
+| `external_tcn` | VideoPose3D-style dilated temporal convolution per joint (Pavllo et al., CVPR 2019; the plain-TCN control of the archived model) | bounded residual on the base rule |
+| `external_smoothnet` | SmoothNet temporal-only MLP, sliding windows of 32 samples, trained from scratch (Zeng et al., ECCV 2022) | bounded residual on the base rule |
+| `external_metapose_mlp` | MetaPose-style per-frame aggregation MLP over the concatenated views (Usman et al., CVPR 2022) | bounded residual on the base rule |
+| `external_muc_weights` | MUC-style learned per-view per-joint weights instead of averaging (Zhu et al., AAAI 2025); plain-average base as published | weights only, no residual |
 
 ## 4. Commands
 

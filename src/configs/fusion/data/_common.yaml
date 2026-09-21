@@ -29,11 +29,16 @@ cycle_target:
   neighbors: 2
   # Stage-2 aggregation over the other cycles: "median" or "trimmed_mean".
   aggregation: median
-  # Stage 1: within-cycle view consensus (both views agree -> mean; one valid ->
-  # that view; disagreement above the threshold -> no consensus).
+  # Stage 1: within-cycle view consensus (both views agree -> fused with the
+  # model's own base rule; one valid -> that view; disagreement above the
+  # threshold -> no consensus).  "depth_aware" with the model's depth_alpha is
+  # the v1.1 rule (alpha 0 = plain mean = architecture v1.0); a mean target under
+  # v1.1 would pull the prediction back toward the average along the depth axes.
   consensus:
     disagreement_threshold: 0.15
-    method: mean
+    method: depth_aware
+    depth_alpha: ${model.fusion.depth_alpha}
+    min_precision: ${model.fusion.min_precision}
   # C = C_repeatability * C_compatibility * C_validity
   confidence:
     # C_repeatability = 1 / (1 + (MAD / tau)^2), canonical units.

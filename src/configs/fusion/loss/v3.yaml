@@ -1,0 +1,58 @@
+# Version-3 objectives (architecture v1.1, 2026-09-20; src/fusion/losses.py):
+#   L = recovery.weight * L_rec + reliability.weight * L_rel + residual.weight * L_res
+#
+# Division of labour established by the identifiability probes:
+#   * the per-axis (depth) structure is a fixed geometric prior inside P_base
+#     (model.fusion.depth_alpha) - no input-derived loss can identify it;
+#   * L_rec: recovery toward the model's own base rule applied to the CLEAN
+#     views with equal weights (the same rule as P_base, so the target carries
+#     no plain-average depth bias).  On clean joints it anchors w -> 1/2 and
+#     Delta_P -> 0; on synthetically corrupted joints it is the recovery target;
+#   * L_rel: corruption-labelled reliability CE, the only signal that identifies
+#     gross single-view damage for the scalar head;
+#   * L_res: L1 leash on the residual.
+# Cross-cycle, periodicity and symmetry terms stay at 0 (logged as metrics):
+# their targets inherit the inputs' repeatable bias and they hurt (v2: 29.8 mm,
+# measurement preset: 33.0 mm).  For FreeMan/Unity use experiment=reference_supervised.
+
+recovery:
+  weight: 1.0
+  kind: smooth_l1
+  # pseudo: base rule on the clean views (label-free); reference: attached
+  # reference pose where available (needs data.train_with_reference=true).
+  target: pseudo
+  beta: 0.05
+  consensus_distance: 0.15
+
+reliability:
+  # CE on joints where exactly one view was corrupted; starts near ln 2 = 0.69
+  # while L_rec is ~0.02, so it stays well below recovery.weight.
+  weight: 0.02
+
+residual:
+  weight: 0.01
+  norm: l1
+
+# Version-2 terms, off (kept as logged metrics).
+cycle:
+  weight: 0.0
+  kind: smooth_l1
+  beta: 0.05
+  external_reference: true
+  dead_zone:
+    enabled: true
+    method: mad
+    scale: 1.0
+    minimum: 0.0
+    maximum: null
+periodicity:
+  weight: 0.0
+  type: contrastive
+  temperature: 0.1
+  negative_phase_margin: 0.25
+symmetry:
+  weight: 0.0
+position_priors:
+  periodicity_weight: 0.0
+  bone_symmetry_weight: 0.0
+  half_symmetry_weight: 0.0

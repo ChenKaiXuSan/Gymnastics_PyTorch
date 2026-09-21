@@ -5,9 +5,9 @@
 #   python -m fusion train data=freeman experiment=no_film
 defaults:
   - _self_
-  - model: v1
+  - model: v1_1
   - data: synthetic
-  - loss: v2
+  - loss: v3
   - corruption: default
   - trainer: default
   - optimizer: default

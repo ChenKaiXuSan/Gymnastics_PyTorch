@@ -11,7 +11,12 @@ Original skeleton / coordinate system:
     applied because the data are generated in the canonical frame).
 
 Views and synchronisation:
-    Both views share the same timestamps (perfectly synchronised).
+    Both views share the same timestamps (perfectly synchronised).  View A is
+    "observed" by a camera looking along the body z axis and View B by a
+    camera looking along the body x axis; both samples carry the matching
+    canonical transforms so ``depth_a`` / ``depth_b`` are defined, and the
+    noise of each view can be inflated along its own optical axis
+    (``depth_noise_ratio``) to mimic monocular depth uncertainty.
 
 Ground truth:
     The clean generating motion is attached as ``reference`` in the same
@@ -21,7 +26,8 @@ Cycle information:
     Exact, from the generating period.
 
 Options (``data.options``):
-    subjects, sequences_per_subject, frames, period, fps, noise
+    subjects, sequences_per_subject, frames, period, fps, noise,
+    depth_noise_ratio (noise multiplier along each view's optical axis, 1 = isotropic)
 """
 
 from __future__ import annotations
@@ -30,8 +36,23 @@ from typing import Sequence
 
 import numpy as np
 
-from ..sample import DualViewSample
+from ..sample import CanonicalTransformRecord, DualViewSample
 from .base import DualViewDataModule, SplitSpec
+
+# Camera optical axes of the two synthetic views, as rows 2 of the canonical
+# rotations: View A looks along body z, View B along body x (both proper rotations).
+VIEW_A_ROTATION = np.eye(3, dtype=np.float32)
+VIEW_B_ROTATION = np.array([[0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]], dtype=np.float32)
+
+
+def synthetic_transform(rotation: np.ndarray, frames: int) -> CanonicalTransformRecord:
+    """Constant canonical transform (identity origin/scale) with the given rotation."""
+    return CanonicalTransformRecord(
+        rotation=np.broadcast_to(rotation, (frames, 3, 3)).copy(),
+        origin=np.zeros((frames, 3), dtype=np.float32),
+        scale=1.0,
+        valid=np.ones(frames, dtype=bool),
+    )
 
 
 class SyntheticDataModule(DualViewDataModule):
@@ -45,6 +66,10 @@ class SyntheticDataModule(DualViewDataModule):
         period = int(options.get("period", 24))
         fps = float(options.get("fps", 30.0))
         noise = float(options.get("noise", 0.01))
+        depth_ratio = float(options.get("depth_noise_ratio", 1.0))
+        # Per-axis noise scale of each view in the body frame (depth axis inflated).
+        noise_a = noise * np.array([1.0, 1.0, depth_ratio], dtype=np.float32)
+        noise_b = noise * np.array([depth_ratio, 1.0, 1.0], dtype=np.float32)
         rng = np.random.default_rng(self.config.seed)
         joints = self.skeleton.num_joints
         samples: list[DualViewSample] = []
@@ -55,8 +80,8 @@ class SyntheticDataModule(DualViewDataModule):
                 phase_offset = rng.uniform(0, 2 * np.pi)
                 t = np.arange(frames, dtype=np.float32)
                 clean = rest[None] + amplitude[None] * np.sin(2 * np.pi * t / period + phase_offset)[:, None, None]
-                view_a = clean + rng.normal(scale=noise, size=clean.shape).astype(np.float32)
-                view_b = clean + rng.normal(scale=noise, size=clean.shape).astype(np.float32)
+                view_a = clean + (rng.normal(size=clean.shape) * noise_a).astype(np.float32)
+                view_b = clean + (rng.normal(size=clean.shape) * noise_b).astype(np.float32)
                 valid_a = np.ones((frames, joints), dtype=bool)
                 valid_b = np.ones((frames, joints), dtype=bool)
                 valid_b[:, joints - 1] = False
@@ -76,7 +101,9 @@ class SyntheticDataModule(DualViewDataModule):
                         reference=clean.astype(np.float32),
                         reference_valid=np.ones((frames, joints), dtype=bool),
                         reference_canonical=True,
-                        metadata={"fps": fps, "period": period},
+                        transform_a=synthetic_transform(VIEW_A_ROTATION, frames),
+                        transform_b=synthetic_transform(VIEW_B_ROTATION, frames),
+                        metadata={"fps": fps, "period": period, "depth_noise_ratio": depth_ratio},
                     )
                 )
         return samples

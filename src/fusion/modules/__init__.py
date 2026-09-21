@@ -13,7 +13,9 @@ and the tensor shapes it consumes and produces.
     film                   H = (1 + gamma(F_motion)) * F_pose + beta(F_motion)
     cross_view_attention   H_A <-> H_B bidirectional exchange
     reliability            [w_A, w_B] = softmax(R), per joint and time step
-    weighted_fusion        P_base = w_A * P_A + w_B * P_B
+    weighted_fusion        P_base = w_A * P_A + w_B * P_B                       (v1.0)
+                           P_base = (L_A + L_B)^-1 (L_A P_A + L_B P_B),
+                           L_v = w_v (I - alpha d_v d_v^T)                      (v1.1)
     residual_refinement    P_hat = P_base + Delta_P
 """
 
@@ -26,7 +28,7 @@ from .residual_refinement import ResidualRefinement
 from .short_motion import ShortMotionTransformer
 from .spatial_transformer import SpatialTransformer
 from .transformer import MaskedTransformerEncoder, TransformerBlock
-from .weighted_fusion import weighted_pose_fusion
+from .weighted_fusion import depth_aware_pose_fusion, weighted_pose_fusion
 
 __all__ = [
     "BidirectionalCrossViewAttention",
@@ -39,5 +41,6 @@ __all__ = [
     "ShortMotionTransformer",
     "SpatialTransformer",
     "TransformerBlock",
+    "depth_aware_pose_fusion",
     "weighted_pose_fusion",
 ]

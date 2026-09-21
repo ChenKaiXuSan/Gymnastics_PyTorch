@@ -24,6 +24,8 @@ Corruption:
 
 Output dictionary (``T = length``, ``J`` joints):
     pose_a, pose_b [T, J, 3]      valid_a, valid_b [T, J]
+    depth_a, depth_b [T, 3]       (camera optical axis of each view in the body frame;
+                                   zero where unknown or on padding)
     frame_mask [T]                delta_t [T]           timestamps [T]
     phase [T]  phase_valid [T]    cycle_index [T]   half_index [T]
     reference [T, J, 3]           reference_valid [T, J]   (zeros/false if absent)
@@ -160,7 +162,17 @@ class CycleWindowDataset(Dataset[dict[str, Any]]):
         for prepared in self.samples:
             phase, phase_valid, cycle_index, half_index = phase_from_cycle_bounds(prepared.num_frames, prepared.cycle_bounds, prepared.cycle_mids)
             if self.cycle_target.enabled and phase_normalize and len(prepared.cycle_bounds) >= 2:
-                reference = cross_cycle_target(prepared.view_a, prepared.view_b, prepared.valid_a, prepared.valid_b, prepared.cycle_bounds, samples_per_cycle=window.samples_per_cycle, config=self.cycle_target)
+                reference = cross_cycle_target(
+                    prepared.view_a,
+                    prepared.view_b,
+                    prepared.valid_a,
+                    prepared.valid_b,
+                    prepared.cycle_bounds,
+                    samples_per_cycle=window.samples_per_cycle,
+                    config=self.cycle_target,
+                    depth_a=prepared.depth_a,
+                    depth_b=prepared.depth_b,
+                )
             else:
                 reference = CrossCycleTarget.empty(prepared.num_frames, prepared.num_joints)
             for start in window_starts(prepared.num_frames, self.length, stride):
@@ -195,6 +207,11 @@ class CycleWindowDataset(Dataset[dict[str, Any]]):
             out[:available] = torch.from_numpy(np.array(values[start:stop], dtype=bool, copy=True))
             return out
 
+        def pad_axes(values: np.ndarray) -> torch.Tensor:
+            out = torch.zeros((length, 3), dtype=torch.float32)
+            out[:available] = torch.from_numpy(np.array(values[start:stop], dtype=np.float32, copy=True))
+            return out
+
         timestamps = torch.zeros(length, dtype=torch.float64)
         timestamps[:available] = torch.from_numpy(np.array(sample.timestamps[start:stop], copy=True))
         delta_t = torch.zeros(length, dtype=torch.float32)
@@ -220,6 +237,8 @@ class CycleWindowDataset(Dataset[dict[str, Any]]):
             "pose_b": pad_points(sample.view_b),
             "valid_a": pad_mask(sample.valid_a),
             "valid_b": pad_mask(sample.valid_b),
+            "depth_a": pad_axes(sample.depth_a),
+            "depth_b": pad_axes(sample.depth_b),
             "frame_mask": frame_mask,
             "delta_t": delta_t,
             "timestamps": timestamps,

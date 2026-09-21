@@ -197,8 +197,10 @@ def test_freeman_datamodule_with_injected_loader(tmp_path: Path):
     assert not datamodule.samples[1].has_cycles and datamodule.samples[1].metadata["cycle_record"]
     assert sample.reference is not None and np.allclose(sample.reference[sample.reference_valid], 1.0)  # 100 cm -> 1 m
     assert datamodule.split.train == ("01", "02") and datamodule.split.val == ("03",) and datamodule.split.test == ("04",)
-    batch = next(iter(datamodule.train_dataloader()))
-    assert batch["phase_valid"].any() and (batch["half_index"][batch["phase_valid"]] >= 0).all()
+    # Windows are shuffled and most sessions have no cycles: find a batch with phase.
+    batch = next(b for b in datamodule.train_dataloader() if b["phase_valid"].any())
+    assert (batch["half_index"][batch["phase_valid"]] >= 0).all()
+    assert batch["depth_a"].shape == batch["depth_b"].shape == (batch["pose_a"].shape[0], batch["pose_a"].shape[1], 3)
     # Missing records are an error by default and tolerated when disabled.
     with pytest.raises(FileNotFoundError):
         FreeManDataModule({"name": "freeman", "options": {**options, "cycle_records_root": str(tmp_path / "nowhere")}}, session_loader=session_loader).setup()

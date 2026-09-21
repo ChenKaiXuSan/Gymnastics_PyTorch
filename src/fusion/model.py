@@ -1,4 +1,4 @@
-"""CycleAwareFusionModel: the complete dual-view fusion network (v1.0).
+"""CycleAwareFusionModel: the complete dual-view fusion network (v1.1).
 
 This module assembles the building blocks of :mod:`.modules` into the pure
 PyTorch model.  It has no knowledge of datasets, losses or training loops;
@@ -6,7 +6,7 @@ those live in :mod:`.data`, :mod:`.losses` and :mod:`.lightning_module`.
 
 Pipeline (one shared encoder applied to each view):
 
-    P_A, P_B [B, T, J, 3], valid masks, delta_t, phase
+    P_A, P_B [B, T, J, 3], valid masks, delta_t, phase, d_A, d_B [B, T, 3]
         |
         |-- velocity: v = (P[t] - P[t-1]) / delta_t[t]                (velocity.py)
         |-- F_pose  = SpatialTransformer(P, valid)                    (spatial_transformer.py)
@@ -17,9 +17,19 @@ Pipeline (one shared encoder applied to each view):
         |
     C_A, C_B = CrossViewAttention(H_A, H_B)                           (cross_view_attention.py)
     [w_A, w_B] = softmax(R(C_A, C_B))                                 (reliability.py)
-    P_base = w_A * P_A + w_B * P_B                                    (weighted_fusion.py)
+    Lambda_v = w_v (I - alpha d_v d_v^T)                              (weighted_fusion.py)
+    P_base = (Lambda_A + Lambda_B)^-1 (Lambda_A P_A + Lambda_B P_B)
     Delta_P = Residual(C_A, C_B, w, P_base)                           (residual_refinement.py)
     P_hat = P_base + Delta_P
+
+Version history:
+    1.0  P_base = w_A P_A + w_B P_B: one scalar weight per joint and time step.
+    1.1  (2026-09-20) depth-aware base: the scalar weight scales a per-view
+         precision matrix that discounts the view's own camera-depth axis
+         ``d_v`` (row 2 of its canonicalisation rotation, calibration-free)
+         by the fixed prior ``fusion.depth_alpha`` (0.8, selected on the
+         FreeMan reference).  ``depth_alpha = 0`` is bit-identical to 1.0.
+         Encoders, heads, widths and the residual are unchanged.
 
 Ablation switches (all through :class:`CycleAwareModelConfig`, i.e. Hydra):
     short_motion.enabled   F_short := 0
@@ -29,11 +39,13 @@ Ablation switches (all through :class:`CycleAwareModelConfig`, i.e. Hydra):
     cross_view.enabled     C := H (no exchange)
     reliability.enabled    R := 0 (equal weights up to validity)
     residual.enabled       Delta_P := 0 (pure weighted fusion)
+    fusion.depth_alpha     0 := architecture v1.0 base (no depth prior)
 
 Assumptions:
     * Inputs are expressed in the canonical body frame produced by the
       dataset adapters (see :mod:`.sample`), so the two views are directly
-      comparable without calibration.
+      comparable without calibration; ``d_A`` / ``d_B`` come from the same
+      canonicalisation (zero rows disable the depth prior for that frame).
     * ``delta_t`` carries physical seconds so velocities are physical even
       after phase normalisation.
     * The window length ``T`` is arbitrary at inference; during training it is
@@ -57,11 +69,13 @@ from .modules import (
     ResidualRefinement,
     ShortMotionTransformer,
     SpatialTransformer,
-    weighted_pose_fusion,
+    depth_aware_pose_fusion,
 )
 from .outputs import PoseFusionOutput
 from .phase import PhaseEncoding
 from .skeleton import CommonSkeleton, build_common_skeleton
+
+ARCHITECTURE_VERSION = "1.1"
 from .velocity import BOUNDARY_STRATEGIES, compute_velocity
 
 
@@ -174,6 +188,32 @@ class ResidualConfig:
 
 
 @dataclass(frozen=True)
+class FusionConfig:
+    """Base-pose fusion rule settings (architecture v1.1).
+
+    Attributes:
+        depth_alpha: Fraction of each view's precision removed along its own
+            camera-depth axis, in ``[0, 1)``.  ``0`` reproduces the v1.0
+            scalar convex fusion exactly; ``0.8`` (default) is the value
+            selected on the FreeMan reference.  A fixed prior, never learned:
+            the label-free objectives are built from view consensus and
+            would drive a learned value back to zero.
+        min_precision: Eigenvalue floor of the unit-weight precision sum,
+            enforced by capping ``depth_alpha`` per frame when the two
+            optical axes are nearly parallel.
+    """
+
+    depth_alpha: float = 0.8
+    min_precision: float = 0.5
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= float(self.depth_alpha) < 1.0:
+            raise ValueError("fusion.depth_alpha must be in [0, 1)")
+        if not 0.0 < float(self.min_precision) <= 1.0:
+            raise ValueError("fusion.min_precision must be in (0, 1]")
+
+
+@dataclass(frozen=True)
 class CycleAwareModelConfig:
     """Complete model configuration (mirrors ``src/configs/fusion/model``).
 
@@ -186,7 +226,7 @@ class CycleAwareModelConfig:
         samples_per_cycle: Samples per phase-normalised cycle ``S``.
         velocity_boundary: First-sample velocity strategy.
         spatial, short_motion, long_motion, phase_encoding, film,
-        cross_view, reliability, residual: Sub-module settings.
+        cross_view, reliability, residual, fusion: Sub-module settings.
     """
 
     skeleton: str = "mhr70_major"
@@ -204,6 +244,7 @@ class CycleAwareModelConfig:
     cross_view: CrossViewConfig = field(default_factory=CrossViewConfig)
     reliability: ReliabilityConfig = field(default_factory=ReliabilityConfig)
     residual: ResidualConfig = field(default_factory=ResidualConfig)
+    fusion: FusionConfig = field(default_factory=FusionConfig)
 
     def __post_init__(self) -> None:
         if self.hidden_dim <= 0 or self.num_heads <= 0 or self.hidden_dim % self.num_heads:
@@ -214,6 +255,11 @@ class CycleAwareModelConfig:
             raise ValueError(f"velocity_boundary must be one of {BOUNDARY_STRATEGIES}")
         if self.long_motion.num_cycles is not None and self.long_motion.num_cycles <= 0:
             raise ValueError("long_motion.num_cycles must be positive or None")
+
+    @property
+    def architecture_version(self) -> str:
+        """``"1.1"`` with the depth-aware base, ``"1.0"`` when ``fusion.depth_alpha == 0``."""
+        return ARCHITECTURE_VERSION if float(self.fusion.depth_alpha) > 0 else "1.0"
 
     @property
     def window_length(self) -> int | None:
@@ -373,6 +419,48 @@ class CycleAwareFusionModel(nn.Module):
         pose_b = torch.where(valid_b[..., None], pose_b, torch.zeros_like(pose_b))
         return pose_a, pose_b, valid_a, valid_b, delta, phase.to(pose_a.dtype), phase_valid.bool() & frame_mask
 
+    def _validate_depth(
+        self,
+        depth_a: torch.Tensor | None,
+        depth_b: torch.Tensor | None,
+        pose_a: torch.Tensor,
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        if depth_a is None or depth_b is None or float(self.config.fusion.depth_alpha) == 0.0:
+            return None, None
+        batch, frames = pose_a.shape[:2]
+        axes = []
+        for depth in (depth_a, depth_b):
+            depth = torch.as_tensor(depth, dtype=pose_a.dtype, device=pose_a.device)
+            if depth.shape != (batch, frames, 3):
+                raise ValueError("depth axes must have shape [B, T, 3]")
+            # Non-finite or non-unit rows carry no usable direction: zero them
+            # (isotropic weighting for that frame) instead of failing.
+            norm = torch.linalg.vector_norm(depth, dim=-1, keepdim=True)
+            usable = torch.isfinite(depth).all(dim=-1, keepdim=True) & (norm > 1e-6)
+            axes.append(torch.where(usable, depth / norm.clamp_min(1e-6), torch.zeros_like(depth)))
+        return axes[0], axes[1]
+
+    def fuse_base(
+        self,
+        pose_a: torch.Tensor,
+        pose_b: torch.Tensor,
+        weight_a: torch.Tensor,
+        weight_b: torch.Tensor,
+        valid_a: torch.Tensor,
+        valid_b: torch.Tensor,
+        depth_a: torch.Tensor | None = None,
+        depth_b: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """The base-pose rule of this configuration (:func:`depth_aware_pose_fusion`).
+
+        Exposed so losses and diagnostics can evaluate the closed-form rule on
+        other inputs (e.g. the clean views with equal weights).  Depth axes
+        are validated here (unit-normalised; unusable rows become zero).
+        """
+        fusion = self.config.fusion
+        depth_a, depth_b = self._validate_depth(depth_a, depth_b, pose_a)
+        return depth_aware_pose_fusion(pose_a, pose_b, weight_a, weight_b, valid_a, valid_b, depth_a, depth_b, alpha=float(fusion.depth_alpha), min_precision=float(fusion.min_precision))
+
     def encode_view(
         self,
         pose: torch.Tensor,
@@ -413,6 +501,8 @@ class CycleAwareFusionModel(nn.Module):
         phase: torch.Tensor | None = None,
         phase_valid: torch.Tensor | None = None,
         frame_mask: torch.Tensor | None = None,
+        depth_a: torch.Tensor | None = None,
+        depth_b: torch.Tensor | None = None,
     ) -> PoseFusionOutput:
         """Fuse two views.
 
@@ -426,6 +516,11 @@ class CycleAwareFusionModel(nn.Module):
             phase: Optional ``[B, T]`` cycle phase in ``[0, 1)``.
             phase_valid: Optional ``[B, T]`` bool validity of ``phase``.
             frame_mask: Optional ``[B, T]`` bool; false on padding frames.
+            depth_a: Optional ``[B, T, 3]`` unit optical axis of View A's
+                camera in the body frame (v1.1 depth prior; zero rows =
+                unknown).  When ``None`` for either view the base falls back
+                to the v1.0 scalar fusion.
+            depth_b: Optional ``[B, T, 3]`` likewise for View B.
 
         Returns:
             :class:`PoseFusionOutput` with ``pose = base_pose + delta_pose``.
@@ -441,7 +536,7 @@ class CycleAwareFusionModel(nn.Module):
         else:
             cross_a, cross_b = guided_a, guided_b
         logits, weight_a, weight_b = self.reliability(cross_a, cross_b, valid_a, valid_b)
-        base_pose, valid = weighted_pose_fusion(pose_a, pose_b, weight_a, weight_b, valid_a, valid_b)
+        base_pose, valid = self.fuse_base(pose_a, pose_b, weight_a, weight_b, valid_a, valid_b, depth_a, depth_b)
         delta_pose = self.residual(cross_a, cross_b, weight_a, weight_b, base_pose, valid)
         return PoseFusionOutput(
             pose=base_pose + delta_pose,

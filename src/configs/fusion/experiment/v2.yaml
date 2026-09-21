@@ -1,0 +1,12 @@
+# @package _global_
+# Version-2 objectives on the architecture v1.0 base, for reproducing the
+# v2 sweeps (gymnastics_v2_5fold_seed0, freeman_all40_v2_5fold_seed0) under
+# the current code.
+defaults:
+  - override /model: v1
+  - override /loss: v2
+run_name: ${data.name}_${model.name}_v2loss_seed${seed}
+data:
+  cycle_target:
+    consensus:
+      method: mean

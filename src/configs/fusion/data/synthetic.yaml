@@ -9,3 +9,6 @@ options:
   period: 24
   fps: 30.0
   noise: 0.01
+  # Noise multiplier along each view's optical axis (View A: body z, View B:
+  # body x); 1 = isotropic.  > 1 mimics monocular depth uncertainty.
+  depth_noise_ratio: 1.0

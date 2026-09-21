@@ -1,0 +1,15 @@
+# @package _global_
+# Reference-supervised variant of the v3 objectives (architecture v1.1): the
+# recovery target is the attached reference pose (FreeMan 8-camera references /
+# Unity ground truth) brought into the frame of the base pose, so the
+# reliability head and the residual get a signal that is independent of the
+# inputs. Only for datasets whose reference is independent of the inputs; the
+# gymnastics adapter refuses references in training.
+defaults:
+  - override /loss: v3
+run_name: ${data.name}_${model.name}_reference_supervised_v3_seed${seed}
+loss:
+  recovery:
+    target: reference
+data:
+  train_with_reference: true

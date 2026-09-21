@@ -11,9 +11,14 @@ Layout:
     <cache_dir>/<dataset>_<key>/index.json      list of sample files + config
     <cache_dir>/<dataset>_<key>/<n>.npz         one sample per file
 
-The key is a SHA-256 of the dataset name, skeleton, adapter options and the
-``attach_reference`` flag, so a changed configuration never reads a stale
-cache.  Metadata is stored as JSON inside the npz.
+The key is a SHA-256 of the dataset name, skeleton, adapter options, the
+``attach_reference`` flag and the cache format version, so a changed
+configuration (or an older on-disk format) never reads a stale cache.
+Metadata is stored as JSON inside the npz.
+
+Format history:
+    1  view arrays, cycles, reference, transform of View A.
+    2  adds the transform of View B (architecture v1.1 needs both depth axes).
 """
 
 from __future__ import annotations
@@ -28,11 +33,12 @@ import numpy as np
 from ..sample import CanonicalTransformRecord, DualViewSample
 
 INDEX_FILENAME = "index.json"
+CACHE_FORMAT = 2
 
 
 def cache_key(name: str, skeleton: str, options: Mapping[str, Any], attach_reference: bool) -> str:
-    """Deterministic key for one adapter configuration."""
-    payload = json.dumps({"name": name, "skeleton": skeleton, "options": dict(options), "attach_reference": bool(attach_reference)}, sort_keys=True, default=str)
+    """Deterministic key for one adapter configuration and cache format."""
+    payload = json.dumps({"name": name, "skeleton": skeleton, "options": dict(options), "attach_reference": bool(attach_reference), "format": CACHE_FORMAT}, sort_keys=True, default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
@@ -66,11 +72,12 @@ def save_samples(directory: Path, samples: Sequence[DualViewSample], *, config: 
         if sample.reference is not None and sample.reference_valid is not None:
             arrays["reference"] = sample.reference
             arrays["reference_valid"] = sample.reference_valid
-        if sample.transform_a is not None:
-            arrays["transform_rotation"] = sample.transform_a.rotation
-            arrays["transform_origin"] = sample.transform_a.origin
-            arrays["transform_scale"] = np.asarray(sample.transform_a.scale, dtype=np.float64)
-            arrays["transform_valid"] = sample.transform_a.valid
+        for prefix, transform in (("transform", sample.transform_a), ("transform_b", sample.transform_b)):
+            if transform is not None:
+                arrays[f"{prefix}_rotation"] = transform.rotation
+                arrays[f"{prefix}_origin"] = transform.origin
+                arrays[f"{prefix}_scale"] = np.asarray(transform.scale, dtype=np.float64)
+                arrays[f"{prefix}_valid"] = transform.valid
         filename = f"{index:06d}.npz"
         np.savez_compressed(directory / filename, **arrays)
         files.append(filename)
@@ -89,14 +96,16 @@ def load_samples(directory: Path) -> list[DualViewSample] | None:
     for filename in index["files"]:
         with np.load(directory / filename, allow_pickle=False) as data:
             header = json.loads(str(data["header"]))
-            transform = None
-            if "transform_rotation" in data:
-                transform = CanonicalTransformRecord(
-                    rotation=data["transform_rotation"],
-                    origin=data["transform_origin"],
-                    scale=float(data["transform_scale"]),
-                    valid=data["transform_valid"],
-                )
+            transforms: dict[str, CanonicalTransformRecord | None] = {}
+            for prefix in ("transform", "transform_b"):
+                transforms[prefix] = None
+                if f"{prefix}_rotation" in data:
+                    transforms[prefix] = CanonicalTransformRecord(
+                        rotation=data[f"{prefix}_rotation"],
+                        origin=data[f"{prefix}_origin"],
+                        scale=float(data[f"{prefix}_scale"]),
+                        valid=data[f"{prefix}_valid"],
+                    )
             samples.append(
                 DualViewSample(
                     dataset=header["dataset"],
@@ -113,7 +122,8 @@ def load_samples(directory: Path) -> list[DualViewSample] | None:
                     reference=data["reference"] if "reference" in data else None,
                     reference_valid=data["reference_valid"] if "reference_valid" in data else None,
                     reference_canonical=bool(header.get("reference_canonical", False)),
-                    transform_a=transform,
+                    transform_a=transforms["transform"],
+                    transform_b=transforms["transform_b"],
                     metadata=header["metadata"],
                 )
             )

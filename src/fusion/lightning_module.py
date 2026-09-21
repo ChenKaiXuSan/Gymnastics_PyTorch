@@ -64,6 +64,31 @@ from .losses import LossBreakdown, LossConfig, compute_losses, masked_mean, pseu
 from .measurement import retention_ratios
 from .metrics import per_joint_error
 from .model import CycleAwareFusionModel, CycleAwareModelConfig
+
+
+ARCHITECTURES = ("cycle_aware", "external")
+
+
+def build_fusion_model(model_config: CycleAwareModelConfig | Mapping[str, Any] | None, *, skeleton: CommonSkeleton | None = None) -> tuple[str, torch.nn.Module]:
+    """Instantiate the proposed model or an external baseline from ``model_config``.
+
+    A mapping may carry ``architecture: cycle_aware`` (default, the proposed
+    :class:`CycleAwareFusionModel`) or ``architecture: external`` (a baseline of
+    :mod:`fusion.external` trained with the same protocol); the key is stored
+    with the hyper-parameters so checkpoints rebuild the right class.
+    """
+    architecture = "cycle_aware"
+    config: Any = model_config
+    if isinstance(model_config, Mapping):
+        config = dict(model_config)
+        architecture = str(config.pop("architecture", "cycle_aware"))
+    if architecture == "cycle_aware":
+        return architecture, CycleAwareFusionModel(config, skeleton=skeleton)
+    if architecture == "external":
+        from .external import ExternalFusionModel
+
+        return architecture, ExternalFusionModel(config, skeleton=skeleton)
+    raise ValueError(f"architecture must be one of {ARCHITECTURES}: {architecture}")
 from .outputs import PoseFusionOutput
 from .skeleton import CommonSkeleton
 
@@ -162,7 +187,7 @@ class CycleAwareFusionModule(pl.LightningModule):
         skeleton: CommonSkeleton | None = None,
     ) -> None:
         super().__init__()
-        self.model = CycleAwareFusionModel(model_config, skeleton=skeleton)
+        self.architecture, self.model = build_fusion_model(model_config, skeleton=skeleton)
         self.skeleton = self.model.skeleton
         self.loss_config = LossConfig.from_mapping(loss_config)
         self.optimizer_config = OptimizerConfig.from_mapping(optimizer_config)
@@ -172,7 +197,7 @@ class CycleAwareFusionModule(pl.LightningModule):
         # ``load_from_checkpoint`` can rebuild the exact same architecture.
         self.save_hyperparameters(
             {
-                "model_config": self.model.config.to_dict(),
+                "model_config": {**self.model.config.to_dict(), "architecture": self.architecture},
                 "loss_config": self.loss_config.to_dict(),
                 "optimizer_config": asdict(self.optimizer_config),
                 "evaluation_config": asdict(self.evaluation_config),
@@ -192,10 +217,45 @@ class CycleAwareFusionModule(pl.LightningModule):
             batch.get("phase"),
             batch.get("phase_valid"),
             batch.get("frame_mask"),
+            batch.get("depth_a"),
+            batch.get("depth_b"),
         )
 
     def _losses(self, output: PoseFusionOutput, batch: Mapping[str, Any]) -> LossBreakdown:
-        return compute_losses(output, batch, skeleton=self.skeleton, config=self.loss_config, samples_per_cycle=self.model.config.samples_per_cycle)
+        fusion = self.model.config.fusion
+        return compute_losses(
+            output,
+            batch,
+            skeleton=self.skeleton,
+            config=self.loss_config,
+            samples_per_cycle=self.model.config.samples_per_cycle,
+            depth_alpha=float(fusion.depth_alpha),
+            min_precision=float(fusion.min_precision),
+        )
+
+    def _clean_target(self, batch: Mapping[str, Any]) -> tuple[torch.Tensor, torch.Tensor]:
+        """Closed-form base rule on the clean views with equal weights (the recovery target)."""
+        fusion = self.model.config.fusion
+        return pseudo_target(
+            batch["clean_a"],
+            batch["clean_b"],
+            batch["clean_valid_a"],
+            batch["clean_valid_b"],
+            consensus_distance=self.loss_config.recovery.consensus_distance,
+            depth_a=batch.get("depth_a"),
+            depth_b=batch.get("depth_b"),
+            depth_alpha=float(fusion.depth_alpha),
+            min_precision=float(fusion.min_precision),
+        )
+
+    def _rule_pose(self, batch: Mapping[str, Any], frame_mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """The model's base rule on the (possibly corrupted) inputs with equal weights.
+
+        Logged next to the model so every run reports how much the learned
+        parts add to the closed-form fusion on the same windows.
+        """
+        half = torch.full_like(batch["pose_a"][..., :1], 0.5)
+        return self.model.fuse_base(batch["pose_a"], batch["pose_b"], half, half, batch["valid_a"] & frame_mask, batch["valid_b"] & frame_mask, batch.get("depth_a"), batch.get("depth_b"))
 
     def _diagnostics(self, output: PoseFusionOutput, batch: Mapping[str, Any]) -> dict[str, torch.Tensor]:
         frame_mask = batch["frame_mask"][..., None]
@@ -214,7 +274,7 @@ class CycleAwareFusionModule(pl.LightningModule):
             metrics["cycle_target_error_base"] = masked_mean(torch.linalg.vector_norm(output.base_pose - batch["cycle_target"], dim=-1), confident)
             metrics["cycle_confidence_mean"] = masked_mean(cycle_confidence, valid)
         if "clean_a" in batch:
-            target, target_valid = pseudo_target(batch["clean_a"], batch["clean_b"], batch["clean_valid_a"], batch["clean_valid_b"], consensus_distance=self.loss_config.recovery.consensus_distance)
+            target, target_valid = self._clean_target(batch)
             corrupted = (batch["corruption_mask_a"] | batch["corruption_mask_b"]) & target_valid & valid
             error = torch.linalg.vector_norm(output.pose - target, dim=-1)
             metrics["corrupted_error"] = masked_mean(error, corrupted)
@@ -232,13 +292,18 @@ class CycleAwareFusionModule(pl.LightningModule):
                 alignments.append(("ta_mpjpe", "translation"))
             errors: dict[str, torch.Tensor] = {}
             masks: dict[str, torch.Tensor] = {}
+            rule_pose, rule_valid = self._rule_pose(batch, frame_mask)
             for name, align in alignments:
                 errors[name], masks[name] = per_joint_error(output.pose, reference, usable, align=align)
                 metrics[name] = masked_mean(errors[name], masks[name])
                 base_error, _ = per_joint_error(output.base_pose, reference, usable, align=align)
                 metrics[f"{name}_base"] = masked_mean(base_error, masks[name])
+                # Closed-form rule with equal weights: the learning-free baseline on the same windows.
+                rule_error, rule_mask = per_joint_error(rule_pose, reference, reference_valid & rule_valid & frame_mask, align=align)
+                metrics[f"{name}_rule"] = masked_mean(rule_error, rule_mask)
                 if name == "pa_mpjpe":
                     errors["base"] = base_error
+                    errors["rule"], masks["rule"] = rule_error, rule_mask
             cfg = self.evaluation_config
             if cfg.per_view_error or cfg.single_view_failure:
                 face_error, face_mask = per_joint_error(batch["pose_a"], reference, reference_valid & batch["valid_a"] & frame_mask, align="procrustes")
@@ -250,6 +315,7 @@ class CycleAwareFusionModule(pl.LightningModule):
                 # Reference error restricted to the joints the corruption touched.
                 metrics["pa_mpjpe_corrupted"] = masked_mean(errors["pa_mpjpe"], masks["pa_mpjpe"] & corrupted)
                 metrics["pa_mpjpe_corrupted_base"] = masked_mean(errors["base"], masks["pa_mpjpe"] & corrupted)
+                metrics["pa_mpjpe_corrupted_rule"] = masked_mean(errors["rule"], masks["rule"] & corrupted)
             if cfg.single_view_failure:
                 # Frame-level mean error of each view; a view "fails" above the threshold.
                 def frame_error(error: torch.Tensor, mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -335,6 +401,8 @@ class CycleAwareFusionModule(pl.LightningModule):
 
     def gradient_module_map(self) -> dict[str, torch.nn.Module]:
         """Named sub-modules whose gradient norms are reported."""
+        if self.architecture != "cycle_aware":
+            return self.model.gradient_module_map()
         modules: dict[str, torch.nn.Module] = {"pose_encoder": self.model.spatial}
         if self.model.short_motion is not None:
             modules["short_motion"] = self.model.short_motion
