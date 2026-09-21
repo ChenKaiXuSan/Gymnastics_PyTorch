@@ -14,8 +14,8 @@ Code: git submodule ``fusion/external/third_party/VideoPose3D``; weights:
 
 from __future__ import annotations
 
+import importlib.util
 import os
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -30,6 +30,23 @@ DEFAULT_CHECKPOINT = CHECKPOINT_ROOT / "videopose3d" / "pretrained_h36m_detectro
 # Architecture of the released checkpoint (README: "-arc 3,3,3,3,3", 1024 channels).
 FILTER_WIDTHS = (3, 3, 3, 3, 3)
 CHANNELS = 1024
+
+
+def _load_temporal_model_class():
+    """Import ``TemporalModel`` from the submodule by file path.
+
+    VideoPose3D's package is called ``common`` like this repository's shared
+    library, so it cannot go on ``sys.path``; ``common/model.py`` only depends
+    on torch and is loaded as a standalone module.
+    """
+    path = THIRD_PARTY_ROOT / "common" / "model.py"
+    if not path.is_file():
+        raise FileNotFoundError(f"VideoPose3D submodule missing at {THIRD_PARTY_ROOT}; run `git submodule update --init`")
+    spec = importlib.util.spec_from_file_location("videopose3d_common_model", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module.TemporalModel
 
 
 def resolve_checkpoint(path: str | Path | None = None) -> Path:
@@ -50,12 +67,7 @@ class VideoPose3DLifter:
     def __init__(self, checkpoint: str | Path | None = None, device: str = "cuda", *, test_time_augmentation: bool = True) -> None:
         import torch
 
-        if str(THIRD_PARTY_ROOT) not in sys.path:
-            sys.path.insert(0, str(THIRD_PARTY_ROOT))
-        if not (THIRD_PARTY_ROOT / "common" / "model.py").is_file():
-            raise FileNotFoundError(f"VideoPose3D submodule missing at {THIRD_PARTY_ROOT}; run `git submodule update --init`")
-        from common.model import TemporalModel  # type: ignore  # noqa: E402  (third-party)
-
+        TemporalModel = _load_temporal_model_class()
         self.device = torch.device(device if torch.cuda.is_available() or device == "cpu" else "cpu")
         self.model = TemporalModel(17, 2, 17, filter_widths=list(FILTER_WIDTHS), causal=False, dropout=0.25, channels=CHANNELS, dense=False)
         state = torch.load(resolve_checkpoint(checkpoint), map_location="cpu", weights_only=False)

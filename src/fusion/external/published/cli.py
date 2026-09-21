@@ -42,26 +42,28 @@ def _run_videopose3d(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cache_gymnastics_view(item: tuple[str, str]) -> dict:
+    from .keypoints2d import DEFAULT_CACHE_ROOT, gymnastics_view
+
+    person, view = item
+    v = gymnastics_view(person, view, cache_root=DEFAULT_CACHE_ROOT)
+    return {"person": person, "view": view, "frames": int(len(v.frame_ids)), "size": [v.width, v.height]}
+
+
 def _run_keypoints2d(args: argparse.Namespace) -> int:
     from concurrent.futures import ProcessPoolExecutor
 
     from common.paths import SAM3D_PERSON_ROOT
 
-    from .keypoints2d import DEFAULT_CACHE_ROOT, gymnastics_view, write_manifest
+    from .keypoints2d import DEFAULT_CACHE_ROOT, write_manifest
 
     if args.dataset != "gymnastics":
         raise SystemExit("keypoints2d caches are only needed for the private recordings; FreeMan and SportsPose read their benchmark caches directly")
     persons = args.persons or sorted((p.name for p in SAM3D_PERSON_ROOT.iterdir() if p.is_dir()), key=lambda s: (len(s), s))
     jobs = [(person, view) for person in persons for view in ("face", "side")]
     entries = []
-
-    def work(item):
-        person, view = item
-        v = gymnastics_view(person, view, cache_root=DEFAULT_CACHE_ROOT)
-        return {"person": person, "view": view, "frames": int(len(v.frame_ids)), "size": [v.width, v.height]}
-
     with ProcessPoolExecutor(max_workers=max(1, args.workers)) as pool:
-        for entry in pool.map(work, jobs):
+        for entry in pool.map(_cache_gymnastics_view, jobs):
             entries.append(entry)
             print(f"  person_{entry['person']} {entry['view']}: {entry['frames']} frames {entry['size']}")
     path = write_manifest(DEFAULT_CACHE_ROOT, "gymnastics", entries)
