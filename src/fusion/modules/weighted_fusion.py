@@ -159,31 +159,38 @@ def depth_aware_pose_fusion(
         raise ValueError("depth axes must have shape [B, T, 3]")
     valid_a, valid_b = valid_a.bool(), valid_b.bool()
     dtype = pose_a.dtype
-    depth_a = depth_a.to(dtype)
-    depth_b = depth_b.to(dtype)
-    # Per-frame cap (same rule as the deterministic baseline): the eigenvalues
-    # of d_A d_A^T + d_B d_B^T are 1 +- |cos| and 0, so the unit-weight sum
-    # W_A + W_B keeps eigenvalues >= min_precision iff
-    # alpha_t <= (2 - min_precision) / (1 + |cos|); the reliability-weighted
-    # sum (w_A + w_B = 1) is then >= min_precision / 2 > 0 as well.
-    cosine = (depth_a * depth_b).sum(dim=-1).abs()
-    alpha_t = torch.clamp((2.0 - float(min_precision)) / (1.0 + cosine), max=float(alpha))  # [B, T]
-    eye = torch.eye(3, dtype=dtype, device=pose_a.device)
-    projector_a = eye - alpha_t[..., None, None] * depth_a[..., :, None] * depth_a[..., None, :]  # [B, T, 3, 3]
-    projector_b = eye - alpha_t[..., None, None] * depth_b[..., :, None] * depth_b[..., None, :]
-    # Invalid views contribute nothing (the reliability head already masks them;
-    # this makes the rule exact for any weights).
-    weight_a = torch.where(valid_a[..., None], weight_a, torch.zeros_like(weight_a))
-    weight_b = torch.where(valid_b[..., None], weight_b, torch.zeros_like(weight_b))
-    precision_a = weight_a[..., None] * projector_a[:, :, None]  # [B, T, J, 3, 3]
-    precision_b = weight_b[..., None] * projector_b[:, :, None]
-    safe_a = torch.where(valid_a[..., None], pose_a, torch.zeros_like(pose_a))
-    safe_b = torch.where(valid_b[..., None], pose_b, torch.zeros_like(pose_b))
-    numerator = (precision_a @ safe_a[..., None]) + (precision_b @ safe_b[..., None])  # [B, T, J, 3, 1]
-    system = precision_a + precision_b
-    valid = valid_a | valid_b
-    # Joints valid in neither view have a zero system: substitute the identity
-    # so the batched solve stays well posed (their output is zeroed below).
-    system = torch.where(valid[..., None, None], system, eye.expand_as(system))
-    fused = torch.linalg.solve(system, numerator)[..., 0]
-    return torch.where(valid[..., None], fused, torch.zeros_like(fused)), valid
+    # The 3x3 solves are not autocast-safe (the matmuls would produce bfloat16
+    # numerators against an fp32 system): run the fusion in fp32 and return
+    # in the callers' dtype.
+    with torch.autocast(device_type=pose_a.device.type, enabled=False):
+        pose_a, pose_b = pose_a.float(), pose_b.float()
+        weight_a, weight_b = weight_a.float(), weight_b.float()
+        depth_a = depth_a.float()
+        depth_b = depth_b.float()
+        # Per-frame cap (same rule as the deterministic baseline): the eigenvalues
+        # of d_A d_A^T + d_B d_B^T are 1 +- |cos| and 0, so the unit-weight sum
+        # W_A + W_B keeps eigenvalues >= min_precision iff
+        # alpha_t <= (2 - min_precision) / (1 + |cos|); the reliability-weighted
+        # sum (w_A + w_B = 1) is then >= min_precision / 2 > 0 as well.
+        cosine = (depth_a * depth_b).sum(dim=-1).abs()
+        alpha_t = torch.clamp((2.0 - float(min_precision)) / (1.0 + cosine), max=float(alpha))  # [B, T]
+        eye = torch.eye(3, dtype=torch.float32, device=pose_a.device)
+        projector_a = eye - alpha_t[..., None, None] * depth_a[..., :, None] * depth_a[..., None, :]  # [B, T, 3, 3]
+        projector_b = eye - alpha_t[..., None, None] * depth_b[..., :, None] * depth_b[..., None, :]
+        # Invalid views contribute nothing (the reliability head already masks them;
+        # this makes the rule exact for any weights).
+        weight_a = torch.where(valid_a[..., None], weight_a, torch.zeros_like(weight_a))
+        weight_b = torch.where(valid_b[..., None], weight_b, torch.zeros_like(weight_b))
+        precision_a = weight_a[..., None] * projector_a[:, :, None]  # [B, T, J, 3, 3]
+        precision_b = weight_b[..., None] * projector_b[:, :, None]
+        safe_a = torch.where(valid_a[..., None], pose_a, torch.zeros_like(pose_a))
+        safe_b = torch.where(valid_b[..., None], pose_b, torch.zeros_like(pose_b))
+        numerator = (precision_a @ safe_a[..., None]) + (precision_b @ safe_b[..., None])  # [B, T, J, 3, 1]
+        system = precision_a + precision_b
+        valid = valid_a | valid_b
+        # Joints valid in neither view have a zero system: substitute the identity
+        # so the batched solve stays well posed (their output is zeroed below).
+        system = torch.where(valid[..., None, None], system, eye.expand_as(system))
+        fused = torch.linalg.solve(system, numerator)[..., 0]
+        fused = torch.where(valid[..., None], fused, torch.zeros_like(fused))
+    return fused.to(dtype), valid
