@@ -237,9 +237,11 @@ def assemble_fold(directory: Path, third_party: Path, *, fold: str, train_person
     blocks = {person: (int(v["start"]), int(v["stop"])) for person, v in manifest.items()}
     missing = [p for p in train_persons + test_persons if p not in blocks]
     if missing:
-        raise ValueError(f"{fold}: no shards for subjects {missing}")
+        # Fold subjects without any kept session (e.g. FreeMan's action / cycle filters), like the DataModule's tolerance.
+        print(f"[metapose-s2] {fold}: subjects without records skipped: {missing}", flush=True)
+    train_persons = [p for p in train_persons if p in blocks and manifest[p]["train_rows"] > 0]
+    test_persons = [p for p in test_persons if p in blocks]
     rng = np.random.default_rng(seed)
-    train_persons = [p for p in train_persons if manifest[p]["train_rows"] > 0]
     order = [train_persons[i] for i in rng.permutation(len(train_persons))]
     train_rows = np.concatenate([np.arange(*blocks[p]) for p in order])
     train_rows = train_rows[usable[train_rows]]
