@@ -321,12 +321,39 @@ def run_trained(directory: Path, third_party: Path, *, fold: str, train_persons:
     return out
 
 
+def run_predict(directory: Path, third_party: Path, *, fold: str, train_persons: list[str], test_persons: list[str], loss: str, weights: Path, stages: int = 1, seed: int = 0) -> Path:
+    """Predict the test subjects with an already trained stage-2 checkpoint (``--epochs_per_stage=0`` path)."""
+    dataset_dir, _, test_rows = assemble_fold(directory, third_party, fold=fold, train_persons=train_persons, test_persons=test_persons, seed=seed)
+    name = run_name(fold, loss)
+    log_dir, preds = directory / f"{name}_predict_tb", directory / f"{name}_preds"
+    for path in (log_dir, preds):
+        if path.exists():
+            shutil.rmtree(path)
+    # No training: the test split serves as both splits like the released inference path.
+    cmd = [*_trainer_command(), f"--data_root={directory}", f"--experiment_name=predict_{name}", f"--tb_log_dir={log_dir}", f"--dataset=opt_{fold}", "--data_splits=test,test", *COMMON_FLAGS,
+           f"--load_weights_from={weights}", f"--load_stages_n={int(stages)}", "--epochs_per_stage=0", "--max_stage_attempts=1", "--debug_take_n_train_batches=1", f"--save_preds_to={preds}"]
+    env = {**os.environ, "PYTHONPATH": str(third_party) + os.pathsep + os.environ.get("PYTHONPATH", "")}
+    subprocess.run(cmd, check=True, env=env, cwd=str(third_party))
+    pose = _load_preds(preds)
+    if len(pose) != len(test_rows):
+        raise RuntimeError(f"prediction returned {len(pose)} poses for {len(test_rows)} test frames")
+    finite = np.isfinite(pose).all(axis=(1, 2)).mean()
+    if finite < 0.99:
+        raise RuntimeError(f"{name}: non-finite poses on {100 * (1 - finite):.1f} % of the test frames")
+    out = directory / f"{name}.npz"
+    np.savez_compressed(out, pose=pose, rows=np.asarray(test_rows, dtype=np.int64), loss=np.array(loss), stages=np.array(stages))
+    print(f"[metapose-s2] {name}: {len(pose)} test predictions from {weights} ({stages} stage(s)) -> {out}")
+    return out
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--release-root", type=Path, required=True)
     parser.add_argument("--third-party", type=Path, required=True)
-    parser.add_argument("--mode", choices=("released", "shards", "train"), default="train")
+    parser.add_argument("--mode", choices=("released", "shards", "train", "predict"), default="train")
+    parser.add_argument("--weights", type=Path, default=None, help="predict mode: trained checkpoint prefix (e.g. s2_ts_fold_01_best/model)")
+    parser.add_argument("--stages", type=int, default=1, help="predict mode: number of stage models in the checkpoint")
     parser.add_argument("--fold", default=None, help="fold name (train mode)")
     parser.add_argument("--fold-json", type=Path, default=None, help="fold file with train / test subject lists (train mode)")
     parser.add_argument("--workers", type=int, default=8, help="shard writer processes")
@@ -347,8 +374,13 @@ def main(argv=None) -> int:
         if not (directory / "shards" / "manifest.json").is_file():
             write_shards(directory, third_party, workers=args.workers)
         fold = json.loads(Path(args.fold_json).read_text(encoding="utf-8"))
-        run_trained(directory, third_party, fold=args.fold, train_persons=[str(p) for p in fold["train"]], test_persons=[str(p) for p in fold["test"]],
-                    epochs_per_stage=args.epochs_per_stage, patience=args.patience, max_stages=args.max_stages, seed=args.seed, loss=args.loss)
+        persons = dict(train_persons=[str(p) for p in fold["train"]], test_persons=[str(p) for p in fold["test"]])
+        if args.mode == "predict":
+            if not args.weights:
+                raise SystemExit("--weights is required in predict mode")
+            run_predict(directory, third_party, fold=args.fold, loss=args.loss, weights=Path(args.weights).resolve(), stages=args.stages, seed=args.seed, **persons)
+        else:
+            run_trained(directory, third_party, fold=args.fold, epochs_per_stage=args.epochs_per_stage, patience=args.patience, max_stages=args.max_stages, seed=args.seed, loss=args.loss, **persons)
     return 0
 
 

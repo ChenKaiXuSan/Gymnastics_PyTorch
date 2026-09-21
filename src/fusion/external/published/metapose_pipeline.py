@@ -192,6 +192,16 @@ def run_stage2_trained(directory: Path, fold_json: Path, *, epochs_per_stage: in
     return directory / f"{stage2_name(fold_json.stem, loss)}.npz"
 
 
+def run_stage2_predict(directory: Path, fold_json: Path, *, loss: str = "fwd", stages: int = 1, seed: int = 0) -> Path:
+    """Export the fold's test predictions from the saved best checkpoint of a (partially) trained run
+    (``s2[_<loss>]_<fold>_best/model``), e.g. when a later refinement stage failed."""
+    script = Path(__file__).with_name("metapose_s2.py")
+    weights = directory / f"{stage2_name(fold_json.stem, loss)}_best" / "model"
+    subprocess.run([str(metapose_python()), str(script), "--mode", "predict", "--directory", str(directory), "--release-root", str(RELEASE_ROOT), "--third-party", str(THIRD_PARTY),
+                    "--fold", fold_json.stem, "--fold-json", str(fold_json), "--loss", loss, "--weights", str(weights), "--stages", str(stages), "--seed", str(seed)], check=True, env=_tf_env())
+    return directory / f"{stage2_name(fold_json.stem, loss)}.npz"
+
+
 # ----------------------------------------------------------------------------- evaluation transform
 class MetaPoseTrialTransform:
     """Replace both views with the stage's 3D pose (H36M-17 -> MHR70 layout) on the trial's frames.

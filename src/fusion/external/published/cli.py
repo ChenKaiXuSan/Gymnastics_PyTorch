@@ -80,7 +80,7 @@ def _cache_gymnastics_view(item: tuple[str, str]) -> dict:
 
 def _run_metapose(args: argparse.Namespace) -> int:
     from .evaluate import evaluate_folds, fold_files, write_summary
-    from .metapose_pipeline import MetaPoseTrialTransform, prepare_dataset, run_shards, run_stage1, run_stage2_released, run_stage2_trained, stage2_name
+    from .metapose_pipeline import MetaPoseTrialTransform, prepare_dataset, run_shards, run_stage1, run_stage2_predict, run_stage2_released, run_stage2_trained, stage2_name
     from .transform import view_source
     from .videopose3d import VideoPose3DLifter
 
@@ -90,6 +90,9 @@ def _run_metapose(args: argparse.Namespace) -> int:
     folds = fold_files(args.dataset, args.folds_dir)
     if args.folds:
         folds = [f for f in folds if f.stem in set(args.folds)]
+    if "predict" in stages:
+        for fold in folds:
+            run_stage2_predict(directory, fold, loss=args.loss, stages=args.checkpoint_stages, seed=args.seed)
     if "prepare" in stages:
         lifter = VideoPose3DLifter(args.checkpoint, args.device, test_time_augmentation=not args.no_tta)
         prepare_dataset(args.dataset, lifter.lift, view_source(args.dataset), output_dir=directory, lifted_cache=OUTPUT_ROOT / "lifted", extra_overrides=extra)
@@ -318,7 +321,8 @@ def make_parser() -> argparse.ArgumentParser:
     vt.add_argument("--override", nargs="*", default=None)
     mp = sub.add_parser("metapose", help="official MetaPose: stage-1 solver + stage-2 network trained per fold")
     mp.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "sportspose"))
-    mp.add_argument("--stage", default="all", choices=("prepare", "s1", "shards", "train", "s2", "evaluate", "all"), help="all = prepare, s1, shards, train, evaluate; s2 = released checkpoint (zero-shot)")
+    mp.add_argument("--stage", default="all", choices=("prepare", "s1", "shards", "train", "predict", "s2", "evaluate", "all"), help="all = prepare, s1, shards, train, evaluate; predict = export from a saved best checkpoint; s2 = released checkpoint (zero-shot)")
+    mp.add_argument("--checkpoint-stages", type=int, default=1, help="predict: number of stage models in the saved checkpoint")
     mp.add_argument("--workers", type=int, default=8, help="record shard writer processes")
     mp.add_argument("--eval-stage", default="s2", help="comma-separated: s2, s1 (iterative refinement only), init (monocular initialisation)")
     mp.add_argument("--released", action="store_true", help="evaluate the released checkpoint's s2.npz instead of the per-fold trained networks")
