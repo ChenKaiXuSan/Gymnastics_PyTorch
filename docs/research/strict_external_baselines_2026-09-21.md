@@ -102,29 +102,46 @@ inputs without rewriting the method.
   flips), 888 s/epoch -> 4.7 h per fold. MDVPose: 580 s/epoch with three
   clip pairs per batch (887 s with one) -> 30 epochs = 4.8 h per fold.
 
-## Results (model protocol: 5 folds, phase windows, per-frame PA-MPJPE, mm)
+## Results (model protocol: 5 folds, phase windows, per-frame PA-MPJPE, mm; joints = major joints the skeleton covers)
 
-| Method | Gymnastics (private) | FreeMan-repetitive | SportsPose |
-|---|---:|---:|---:|
-| CanonPose, trained per fold, `canonical_average` (13 joints) | **30.0 +- 0.9** | running (jobs 15526-15530) | waits for the SAM3D cache |
-| MetaPose, stage 2 trained per fold (13 joints) | running (job 15725 evaluates) | fold_01 running (15746) | -- |
-| MHFormer-81, trained per fold, `procrustes_average` (13 joints) | -- (no reference) | running (15558-15562) | -- |
-| MDVPose, trained per fold, `procrustes_average` (13 joints) | -- (no reference) | running (15665-15669, 30 epochs) | -- |
-| VideoPose3D H36M checkpoint, zero-shot (appendix) | -- | 86.3 +- 6.3 | -- |
+| Method | Supervision | Gymnastics (private) | FreeMan-repetitive | SportsPose |
+|---|---|---:|---:|---:|
+| CanonPose, trained per fold, `canonical_average` | none | **30.0 ± 0.9** (13 j) | 53.4 ± 4.3 (12 j) | waits for the SAM3D cache |
+| CanonPose, `per_view` | none | 37.6 ± 1.4 | 62.9 ± 3.7 | -- |
+| MetaPose stage 1 (optimisation only, a published ablation) | none | 44.3 ± 0.9 (14 j) | 55.7 ± 4.8 (13 j) | -- |
+| MetaPose stage 2 trained, README default `fwd` objective | none | 127.8 ± 51.4 | (stage 1 crashes in cuSOLVER `gesvd`) | -- |
+| MetaPose stage 2 trained, `ts` (student of stage 1) | none | 76.9 ± 9.1 | folds trained by the other session, evaluation pending | -- |
+| MHFormer-81, trained per fold, `procrustes_average` | 3D reference | n/a (no independent reference) | 44.1 ± 6.2 (13 j; folds 40.5 / 35.9 / 54.0 / 47.5 / 42.8) | -- |
+| MHFormer-81, `per_view` | 3D reference | n/a | 51.0 ± 5.5 | -- |
+| MDVPose, trained per fold (30 epochs), `procrustes_average` | 3D reference | n/a | **40.3 ± 6.5** (13 j; folds 35.7 / 33.1 / 51.4 / 43.5 / 38.0) | -- |
+| MDVPose, `per_view` | 3D reference | n/a | 45.6 ± 5.6 | -- |
+| VideoPose3D-243, trained per fold | 3D reference | n/a | running (jobs 16284-16288) | -- |
+| VideoPose3D H36M checkpoint, zero-shot (appendix only) | -- | -- | 86.3 ± 6.3 | -- |
+
+Notes: MHFormer fold_04 and MDVPose folds 04/05 hit the 5.5 h job limit
+(epoch 18/19, 19/30 and 29/30); their checkpoints are the best
+validation-subject epochs (11, 18, 2), which had already been reached, so
+they were not re-run. MetaPose `init` (the monocular VideoPose3D
+initialisation) scores 92.6 / 93.7 mm. The private column can only hold
+label-free methods: the triangulated pseudo-reference is built from the
+same two views and is the evaluation reference, so supervising a method
+with it would be circular (training never reads it, by project policy).
 
 Reference rows for the same protocol come from `python -m fusion analyze`
 (the model: 18.4 mm on the private data, 20 joints); external rows are
-scored on the 13 major joints their skeleton covers, so the comparison
+scored on the 12-14 major joints their skeleton covers, so the comparison
 table must re-aggregate the model on those joints.
 
-## Status (2026-09-21, evening)
+## Status (2026-09-22 noon)
 
-* Framework, mappings, evaluator, all four adapters: done, tested
-  (`tests/fusion/external/test_published.py`).
-* CanonPose: gymnastics done (5 folds, 37 min each); FreeMan folds running.
-* MetaPose: gymnastics folds trained (8-15 min each), evaluation running;
-  FreeMan fold_01 running (the first attempt crashed inside cuSOLVER's
-  `gesvd` in the `pmpjpe` metric 18 min into epoch 1 -- cause not yet
-  established; the launcher's opt-in CPU-SVD patch exists for that case).
-* MHFormer, MDVPose: FreeMan 5-fold campaigns running.
+* Framework, mappings, evaluator, five adapters (CanonPose, MetaPose,
+  MHFormer, MDVPose, VideoPose3D-trained): done, tested
+  (`tests/fusion/external/test_published.py`); `python -m fusion
+  external-published report` tabulates every `summary_*.json`.
+* Gymnastics: CanonPose and MetaPose (S1, S2 fwd, S2 ts) evaluated.
+* FreeMan: CanonPose, MetaPose S1, MHFormer, MDVPose evaluated;
+  VideoPose3D-trained 5 folds running; MetaPose S2 (fwd) fails inside
+  cuSOLVER's `gesvd` in stage 1 on this dataset (twice; the launcher's
+  opt-in CPU-SVD pin exists for it), the `ts` folds were trained by the
+  concurrent session.
 * SportsPose column waits for the user's `sam3d_sp` inference jobs.
