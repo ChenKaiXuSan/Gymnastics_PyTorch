@@ -109,8 +109,8 @@ inputs without rewriting the method.
 | CanonPose, trained per fold, `canonical_average` | none | **30.0 ± 0.9** (13 j) | 53.4 ± 4.3 (12 j) | waits for the SAM3D cache |
 | CanonPose, `per_view` | none | 37.6 ± 1.4 | 62.9 ± 3.7 | -- |
 | MetaPose stage 1 (optimisation only, a published ablation) | none | 44.3 ± 0.9 (14 j) | 55.7 ± 4.8 (13 j) | -- |
-| MetaPose stage 2 trained, README default `fwd` objective | none | 127.8 ± 51.4 | (stage 1 crashes in cuSOLVER `gesvd`) | -- |
-| MetaPose stage 2 trained, `ts` (student of stage 1) | none | 76.9 ± 9.1 | folds trained by the other session, evaluation pending | -- |
+| MetaPose stage 2 trained, README default `fwd` objective | none | 127.8 ± 51.4 | not run (stage 1 crashes in cuSOLVER `gesvd`; the worst variant on the private data) | -- |
+| MetaPose stage 2 trained, `ts` (student of stage 1) | none | 76.9 ± 9.1 | 68.0 ± 1.6 (13 j; folds 65.5 / 66.7 / 69.2 / 69.2 / 69.6) | -- |
 | MHFormer-81, trained per fold, `procrustes_average` | 3D reference | n/a (no independent reference) | 44.1 ± 6.2 (13 j; folds 40.5 / 35.9 / 54.0 / 47.5 / 42.8) | -- |
 | MHFormer-81, `per_view` | 3D reference | n/a | 51.0 ± 5.5 | -- |
 | MDVPose, trained per fold (30 epochs), `procrustes_average` | 3D reference | n/a | **40.3 ± 6.5** (13 j; folds 35.7 / 33.1 / 51.4 / 43.5 / 38.0) | -- |
@@ -141,8 +141,9 @@ table must re-aggregate the model on those joints.
   external-published report` tabulates every `summary_*.json`.
 * Gymnastics: CanonPose and MetaPose (S1, S2 fwd, S2 ts) evaluated.
 * FreeMan: CanonPose, MetaPose S1, MHFormer, MDVPose, VideoPose3D-trained
-  evaluated; MetaPose S2 (fwd) fails inside
-  cuSOLVER's `gesvd` in stage 1 on this dataset (twice; the launcher's
-  opt-in CPU-SVD pin exists for it), the `ts` folds were trained by the
-  concurrent session.
+  and MetaPose S2 `ts` evaluated (the `ts` folds were trained by the
+  concurrent session, fold_01 exported from its best checkpoint after the
+  cuSOLVER crash); MetaPose S2 `fwd` is not run on FreeMan (crashes inside
+  `gesvd` in stage 1, twice; the launcher's opt-in CPU-SVD pin exists).
+  The learned stage 2 never beats stage 1 on either dataset.
 * SportsPose column waits for the user's `sam3d_sp` inference jobs.
