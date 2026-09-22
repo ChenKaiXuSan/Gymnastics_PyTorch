@@ -102,7 +102,54 @@ inputs without rewriting the method.
   flips), 888 s/epoch -> 4.7 h per fold. MDVPose: 580 s/epoch with three
   clip pairs per batch (887 s with one) -> 30 epochs = 4.8 h per fold.
 
-## Results (model protocol: 5 folds, phase windows, per-frame PA-MPJPE, mm; joints = major joints the skeleton covers)
+## Comparison table (12 common joints, 5 folds, per-frame PA-MPJPE, mm)
+
+Every published method predicts a different skeleton (12-14 of the 20 major
+joints), so the table is computed on their intersection -- shoulders,
+elbows, wrists, hips, knees, ankles (`evaluate.COMPARISON_JOINTS`). The
+Procrustes alignment and the error use exactly those joints for every row,
+ours included: the model's fold checkpoints run through the same evaluator
+(`python -m fusion external-published model --run <sweep> --joints
+comparison12`), which on all 20 joints reproduces the sweep's own numbers.
+
+| Method | Supervision | Gymnastics (private) | FreeMan-repetitive |
+|---|---|---:|---:|
+| **Ours (cycle-aware v1.1)** | none | **19.3 ± 1.0** | **41.4 ± 6.2** |
+| MDVPose (MotionBERT multi-view fine-tune, 30 ep) | 3D reference | n/a | 39.8 ± 5.8 |
+| MHFormer-81 | 3D reference | n/a | 43.6 ± 5.5 |
+| VideoPose3D-243 | 3D reference | n/a | 46.3 ± 5.8 |
+| CanonPose (canonical average) | none | 28.0 ± 0.9 | 53.4 ± 4.3 |
+| MetaPose stage 1 (optimisation) | none | 43.3 ± 0.9 | 55.9 ± 5.0 |
+| MetaPose stage 2, `ts` | none | 75.5 ± 10.3 | 68.4 ± 1.5 |
+| VideoPose3D H36M checkpoint, zero-shot (appendix) | -- | -- | 83.8 ± 6.4 |
+| *single-view rows:* CanonPose per view | none | 36.2 ± 1.4 | 62.9 ± 3.7 |
+| *single-view rows:* MHFormer / MDVPose / VideoPose3D per view | 3D reference | n/a | 50.6 / 45.0 / 52.5 |
+
+Per-fold values are in each `summary_*_12joints.json`. Ours vs each method
+(fold-wise difference, Wilcoxon on 5 folds -- p = 0.0625 is the floor at
+n = 5):
+
+| Comparison | Diff (mm) | Folds ours is better | p |
+|---|---:|---:|---:|
+| Gymnastics: MetaPose S1 - ours | +24.0 | 5/5 | 0.062 |
+| Gymnastics: CanonPose - ours | +8.7 | 5/5 | 0.062 |
+| FreeMan: MetaPose S1 - ours | +14.5 | 5/5 | 0.062 |
+| FreeMan: CanonPose - ours | +12.1 | 5/5 | 0.062 |
+| FreeMan: VideoPose3D-trained - ours | +4.9 | 5/5 | 0.062 |
+| FreeMan: MHFormer - ours | +2.2 | 4/5 | 0.125 |
+| FreeMan: MDVPose - ours | -1.6 | 0/5 | 0.062 |
+
+Reading: against every **label-free** method our model wins on both
+datasets and on every fold. Against the **reference-supervised** methods on
+FreeMan it still beats VideoPose3D (5/5) and MHFormer (4/5), and is 1.6 mm
+behind MDVPose, which fine-tunes a MotionBERT checkpoint pretrained on
+Human3.6M and is trained on the reference itself -- the honest reading is
+"on par with the supervised state of the art without using any 3D labels".
+On the private data the supervised rows do not exist: its only 3D is the
+triangulated pseudo-reference, which is derived from the same two views and
+is the evaluation reference, so training on it would be circular.
+
+## Per-method results on their own joint sets (12-14 joints)
 
 | Method | Supervision | Gymnastics (private) | FreeMan-repetitive | SportsPose |
 |---|---|---:|---:|---:|
@@ -132,6 +179,7 @@ Reference rows for the same protocol come from `python -m fusion analyze`
 (the model: 18.4 mm on the private data, 20 joints); external rows are
 scored on the 12-14 major joints their skeleton covers, so the comparison
 table must re-aggregate the model on those joints.
+
 
 ## Status (2026-09-22 noon)
 
