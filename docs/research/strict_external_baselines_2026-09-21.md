@@ -115,7 +115,8 @@ inputs without rewriting the method.
 | MHFormer-81, `per_view` | 3D reference | n/a | 51.0 ± 5.5 | -- |
 | MDVPose, trained per fold (30 epochs), `procrustes_average` | 3D reference | n/a | **40.3 ± 6.5** (13 j; folds 35.7 / 33.1 / 51.4 / 43.5 / 38.0) | -- |
 | MDVPose, `per_view` | 3D reference | n/a | 45.6 ± 5.6 | -- |
-| VideoPose3D-243, trained per fold | 3D reference | n/a | running (jobs 16284-16288) | -- |
+| VideoPose3D-243, trained per fold (80 epochs), `procrustes_average` | 3D reference | n/a | 46.6 ± 6.5 (13 j; folds 42.7 / 38.6 / 56.9 / 50.8 / 44.3) | -- |
+| VideoPose3D-243, `per_view` | 3D reference | n/a | 52.8 ± 5.8 | -- |
 | VideoPose3D H36M checkpoint, zero-shot (appendix only) | -- | -- | 86.3 ± 6.3 | -- |
 
 Notes: MHFormer fold_04 and MDVPose folds 04/05 hit the 5.5 h job limit
@@ -139,8 +140,8 @@ table must re-aggregate the model on those joints.
   (`tests/fusion/external/test_published.py`); `python -m fusion
   external-published report` tabulates every `summary_*.json`.
 * Gymnastics: CanonPose and MetaPose (S1, S2 fwd, S2 ts) evaluated.
-* FreeMan: CanonPose, MetaPose S1, MHFormer, MDVPose evaluated;
-  VideoPose3D-trained 5 folds running; MetaPose S2 (fwd) fails inside
+* FreeMan: CanonPose, MetaPose S1, MHFormer, MDVPose, VideoPose3D-trained
+  evaluated; MetaPose S2 (fwd) fails inside
   cuSOLVER's `gesvd` in stage 1 on this dataset (twice; the launcher's
   opt-in CPU-SVD pin exists for it), the `ts` folds were trained by the
   concurrent session.
