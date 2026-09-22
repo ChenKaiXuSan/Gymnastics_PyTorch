@@ -25,6 +25,9 @@
                   MDVPose (MotionBERT fine-tuned with multi-view consistency,
                   supervised) trained per fold from the MotionBERT H36M checkpoint;
                   FreeMan / SportsPose only; see mdvpose.py
+    model         --dataset ... --run <sweep dir> [--joints comparison12|all]
+                  our own model's checkpoints through the same evaluator, so its
+                  number is on the joints the external methods cover
     report        [--markdown out.md] [--csv out.csv]   table of every summary_*.json
     keypoints2d   --dataset gymnastics [--persons ...]   build the private 2D cache
                   (decodes every per-frame SAM3D file once; run on the cluster)
@@ -49,11 +52,33 @@ def _list(value: str) -> list[str]:
     return [v for v in re.split(r"[,+]", value) if v]
 
 
+def _joints(args: argparse.Namespace) -> list[str] | None:
+    """``--joints``: ``all`` (the method's own joints), ``comparison12`` or explicit names."""
+    from .evaluate import COMPARISON_JOINTS
+
+    value = getattr(args, "joints", None)
+    if not value or value == "all":
+        return None
+    if value == "comparison12":
+        return list(COMPARISON_JOINTS)
+    return _list(value)
+
+
+def _summary_name(stem: str, joints: list[str] | None) -> str:
+    """A joint subset writes its own file so the method's own-joint summary survives."""
+    return f"summary_{stem}.json" if joints is None else f"summary_{stem}_{len(joints)}joints.json"
+
+
+def _joints_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--joints", default="all", help="'all' (the method's own joints), 'comparison12', or comma/plus-separated joint names")
+
+
 def _run_videopose3d(args: argparse.Namespace) -> int:
     from .evaluate import evaluate_folds, write_summary
     from .transform import LiftedTrialTransform, view_source
     from .videopose3d import VideoPose3DLifter
 
+    joints = _joints(args)
     lifter = VideoPose3DLifter(args.checkpoint, args.device, test_time_augmentation=not args.no_tta)
     cache_dir = OUTPUT_ROOT / "lifted"
     source = view_source(args.dataset)
@@ -62,9 +87,9 @@ def _run_videopose3d(args: argparse.Namespace) -> int:
         return LiftedTrialTransform(lifter.lift, source, mode=args.mode, cache_dir=cache_dir, method="videopose3d")
 
     extra = list(args.override or [])
-    payload = evaluate_folds(args.dataset, factory, folds_dir=args.folds_dir, extra_overrides=extra)
+    payload = evaluate_folds(args.dataset, factory, folds_dir=args.folds_dir, extra_overrides=extra, joints=joints)
     payload["method"] = {"name": "videopose3d", "mode": args.mode, "checkpoint": str(args.checkpoint or "default"), "test_time_augmentation": not args.no_tta, "receptive_field": lifter.receptive_field}
-    out = write_summary(OUTPUT_ROOT / "videopose3d" / args.dataset / args.mode / "summary.json", payload)
+    out = write_summary(OUTPUT_ROOT / "videopose3d" / args.dataset / args.mode / _summary_name("zero_shot", joints).replace("summary_zero_shot.json", "summary.json"), payload)
     s = payload["summary"]
     print(f"[external/videopose3d] {args.dataset} {args.mode}: PA-MPJPE {s['pa_mpjpe_mean'] * 1000:.1f} ± {s['pa_mpjpe_sd'] * 1000:.1f} mm over {s['folds']} folds, joints {len(s['joint_names'])} -> {out}")
     return 0
@@ -110,6 +135,7 @@ def _run_metapose(args: argparse.Namespace) -> int:
     if "s2" in stages:
         run_stage2_released(directory)
     if "evaluate" in stages:
+        joints = _joints(args)
         released = bool(args.released)
         schedule = {"epochs_per_stage": args.epochs_per_stage, "early_stopping_patience": args.patience, "max_n_stages": args.max_stages, "released_schedule": "300 epochs x 10 stages, patience 50"}
         for stage in (_list(args.eval_stage) if args.eval_stage else ["s2"]):
@@ -123,9 +149,9 @@ def _run_metapose(args: argparse.Namespace) -> int:
                 method = {"name": "metapose", "stage": stage, "checkpoint": "ckpt/h36m/cam2 (released, zero-shot)" if stage == "s2" else "none (optimisation only)"}
                 name = "s2_released" if stage == "s2" else stage
             method.update({"init": "videopose3d", "heatmaps": "single gaussian at the SAM3D keypoint (sigma 2 % of the box)"})
-            payload = evaluate_folds(args.dataset, factory, folds_dir=args.folds_dir, extra_overrides=extra)
+            payload = evaluate_folds(args.dataset, factory, folds_dir=args.folds_dir, extra_overrides=extra, joints=joints)
             payload["method"] = method
-            out = write_summary(directory / f"summary_{name}.json", payload)
+            out = write_summary(directory / _summary_name(name, joints), payload)
             s = payload["summary"]
             print(f"[external/metapose] {args.dataset} {name}: PA-MPJPE {s['pa_mpjpe_mean'] * 1000:.1f} ± {s['pa_mpjpe_sd'] * 1000:.1f} mm over {s['folds']} folds, joints {len(s['joint_names'])} -> {out}")
     return 0
@@ -154,10 +180,11 @@ def _run_canonpose(args: argparse.Namespace) -> int:
             print(f"[canonpose] training {args.dataset} {fold.stem} on {len(fold_train_persons(fold))} subjects")
             train(root / "inputs.npz", root / "index.json", fold_train_persons(fold), out, device=args.device, epochs=args.epochs, seed=args.seed)
     if "evaluate" in stages:
+        joints = _joints(args)
         for mode in _list(args.mode):
-            payload = evaluate_folds(args.dataset, lambda fold, mode=mode: CanonPoseTrialTransform(root / fold.stem / "lifter.pt", source, mode=mode, device=args.device), folds_dir=args.folds_dir, extra_overrides=extra)
+            payload = evaluate_folds(args.dataset, lambda fold, mode=mode: CanonPoseTrialTransform(root / fold.stem / "lifter.pt", source, mode=mode, device=args.device), folds_dir=args.folds_dir, extra_overrides=extra, joints=joints)
             payload["method"] = {"name": "canonpose", "mode": mode, "training": "released recipe, self-supervised on the fold's training subjects", "epochs": args.epochs or "released default"}
-            out = write_summary(root / f"summary_{mode}.json", payload)
+            out = write_summary(root / _summary_name(mode, joints), payload)
             s = payload["summary"]
             print(f"[external/canonpose] {args.dataset} {mode}: PA-MPJPE {s['pa_mpjpe_mean'] * 1000:.1f} ± {s['pa_mpjpe_sd'] * 1000:.1f} mm over {s['folds']} folds, joints {len(s['joint_names'])} -> {out}")
     return 0
@@ -187,15 +214,16 @@ def _run_mhformer(args: argparse.Namespace) -> int:
             print(f"[mhformer] training {args.dataset} {fold.stem} on {len(fold_persons(fold, 'train'))} subjects, selecting on {len(fold_persons(fold, 'val'))}")
             train(root / "inputs.npz", root / "index.json", fold_persons(fold, "train"), fold_persons(fold, "val"), out, device=args.device, config=config, epochs=args.epochs)
     if "evaluate" in stages:
+        joints = _joints(args)
         for mode in _list(args.mode):
 
             def factory(fold, mode=mode):
                 lifter = MHFormerLifter(root / fold.stem / "model.pt", args.device)
                 return LiftedTrialTransform(lifter.lift, source, mode=mode, cache_dir=OUTPUT_ROOT / "lifted", method=f"mhformer_{args.dataset}_{fold.stem}")
 
-            payload = evaluate_folds(args.dataset, factory, folds_dir=args.folds_dir, extra_overrides=extra)
+            payload = evaluate_folds(args.dataset, factory, folds_dir=args.folds_dir, extra_overrides=extra, joints=joints)
             payload["method"] = {"name": "mhformer", "mode": mode, "training": "released recipe, supervised on the fold's training subjects' reference joints (both views)", "frames": args.frames or CONFIG["frames"], "epochs": (args.epochs or CONFIG["nepoch"]) - 1, "selection": "best validation-subject MPJPE"}
-            out = write_summary(root / f"summary_{mode}.json", payload)
+            out = write_summary(root / _summary_name(mode, joints), payload)
             s = payload["summary"]
             print(f"[external/mhformer] {args.dataset} {mode}: PA-MPJPE {s['pa_mpjpe_mean'] * 1000:.1f} ± {s['pa_mpjpe_sd'] * 1000:.1f} mm over {s['folds']} folds, joints {len(s['joint_names'])} -> {out}")
     return 0
@@ -225,15 +253,16 @@ def _run_mdvpose(args: argparse.Namespace) -> int:
             print(f"[mdvpose] training {args.dataset} {fold.stem} on {len(fold_persons(fold, 'train'))} subjects, selecting on {len(fold_persons(fold, 'val'))}")
             train(root / "inputs.npz", root / "index.json", fold_persons(fold, "train"), fold_persons(fold, "val"), out, device=args.device, epochs=args.epochs, config={"pairs_per_batch": args.pairs_per_batch})
     if "evaluate" in stages:
+        joints = _joints(args)
         for mode in _list(args.mode):
 
             def factory(fold, mode=mode):
                 lifter = MDVPoseLifter(root / fold.stem / "model.pt", args.device)
                 return LiftedTrialTransform(lifter.lift, source, mode=mode, cache_dir=OUTPUT_ROOT / "lifted", method=f"mdvpose_{args.dataset}_{fold.stem}")
 
-            payload = evaluate_folds(args.dataset, factory, folds_dir=args.folds_dir, extra_overrides=extra)
+            payload = evaluate_folds(args.dataset, factory, folds_dir=args.folds_dir, extra_overrides=extra, joints=joints)
             payload["method"] = {"name": "mdvpose", "mode": mode, "training": "released multi-view fine-tuning recipe from the MotionBERT H36M checkpoint, supervised on the fold's training subjects' reference joints (both views)", "epochs": args.epochs or CONFIG["epochs"], "selection": "best validation-subject MPJPE"}
-            out = write_summary(root / f"summary_{mode}.json", payload)
+            out = write_summary(root / _summary_name(mode, joints), payload)
             s = payload["summary"]
             print(f"[external/mdvpose] {args.dataset} {mode}: PA-MPJPE {s['pa_mpjpe_mean'] * 1000:.1f} ± {s['pa_mpjpe_sd'] * 1000:.1f} mm over {s['folds']} folds, joints {len(s['joint_names'])} -> {out}")
     return 0
@@ -263,15 +292,16 @@ def _run_videopose3d_trained(args: argparse.Namespace) -> int:
             print(f"[videopose3d] training {args.dataset} {fold.stem} on {len(fold_persons(fold, 'train'))} subjects (validation subjects logged only)")
             train(root / "inputs.npz", root / "index.json", fold_persons(fold, "train"), fold_persons(fold, "val"), out, device=args.device, epochs=args.epochs)
     if "evaluate" in stages:
+        joints = _joints(args)
         for mode in _list(args.mode):
 
             def factory(fold, mode=mode):
                 lifter = VideoPose3DTrainedLifter(root / fold.stem / "model.pt", args.device)
                 return LiftedTrialTransform(lifter.lift, source, mode=mode, cache_dir=OUTPUT_ROOT / "lifted", method=f"videopose3d_trained_{args.dataset}_{fold.stem}")
 
-            payload = evaluate_folds(args.dataset, factory, folds_dir=args.folds_dir, extra_overrides=extra)
+            payload = evaluate_folds(args.dataset, factory, folds_dir=args.folds_dir, extra_overrides=extra, joints=joints)
             payload["method"] = {"name": "videopose3d_trained", "mode": mode, "training": "released 243-frame recipe (run.py -e 80 -arc 3,3,3,3,3), supervised on the fold's training subjects' reference joints (both views), final epoch", "epochs": args.epochs or CONFIG["epochs"]}
-            out = write_summary(root / f"summary_{mode}.json", payload)
+            out = write_summary(root / _summary_name(mode, joints), payload)
             s = payload["summary"]
             print(f"[external/videopose3d_trained] {args.dataset} {mode}: PA-MPJPE {s['pa_mpjpe_mean'] * 1000:.1f} ± {s['pa_mpjpe_sd'] * 1000:.1f} mm over {s['folds']} folds, joints {len(s['joint_names'])} -> {out}")
     return 0
@@ -308,6 +338,7 @@ def make_parser() -> argparse.ArgumentParser:
     vp.add_argument("--device", default="cuda")
     vp.add_argument("--no-tta", action="store_true", help="disable the authors' flip test-time augmentation")
     vp.add_argument("--folds-dir", type=Path, default=None)
+    _joints_argument(vp)
     vp.add_argument("--override", nargs="*", default=None, help="extra Hydra data overrides")
     vt = sub.add_parser("videopose3d-trained", help="VideoPose3D trained per fold on the reference joints (supervised)")
     vt.add_argument("--dataset", required=True, choices=("freeman", "sportspose"))
@@ -318,6 +349,7 @@ def make_parser() -> argparse.ArgumentParser:
     vt.add_argument("--folds", nargs="*", default=None)
     vt.add_argument("--folds-dir", type=Path, default=None)
     vt.add_argument("--force", action="store_true")
+    _joints_argument(vt)
     vt.add_argument("--override", nargs="*", default=None)
     mp = sub.add_parser("metapose", help="official MetaPose: stage-1 solver + stage-2 network trained per fold")
     mp.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "sportspose"))
@@ -339,6 +371,7 @@ def make_parser() -> argparse.ArgumentParser:
     mp.add_argument("--s1-steps", type=int, default=100)
     mp.add_argument("--s1-batch", type=int, default=4096)
     mp.add_argument("--folds-dir", type=Path, default=None)
+    _joints_argument(mp)
     mp.add_argument("--override", nargs="*", default=None, help="extra Hydra data overrides (applied to prepare and evaluate)")
     cp = sub.add_parser("canonpose", help="CanonPose trained per fold with its released recipe")
     cp.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "sportspose"))
@@ -350,6 +383,7 @@ def make_parser() -> argparse.ArgumentParser:
     cp.add_argument("--folds", nargs="*", default=None, help="restrict training to these fold names")
     cp.add_argument("--folds-dir", type=Path, default=None)
     cp.add_argument("--force", action="store_true")
+    _joints_argument(cp)
     cp.add_argument("--override", nargs="*", default=None)
     mh = sub.add_parser("mhformer", help="MHFormer trained per fold on the reference joints (supervised)")
     mh.add_argument("--dataset", required=True, choices=("freeman", "sportspose"))
@@ -361,6 +395,7 @@ def make_parser() -> argparse.ArgumentParser:
     mh.add_argument("--folds", nargs="*", default=None)
     mh.add_argument("--folds-dir", type=Path, default=None)
     mh.add_argument("--force", action="store_true")
+    _joints_argument(mh)
     mh.add_argument("--override", nargs="*", default=None)
     md = sub.add_parser("mdvpose", help="MDVPose (MotionBERT multi-view fine-tuning) trained per fold (supervised)")
     md.add_argument("--dataset", required=True, choices=("freeman", "sportspose"))
@@ -372,7 +407,16 @@ def make_parser() -> argparse.ArgumentParser:
     md.add_argument("--folds", nargs="*", default=None)
     md.add_argument("--folds-dir", type=Path, default=None)
     md.add_argument("--force", action="store_true")
+    _joints_argument(md)
     md.add_argument("--override", nargs="*", default=None)
+    md_ = sub.add_parser("model", help="evaluate our model's fold checkpoints through this evaluator")
+    md_.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "sportspose"))
+    md_.add_argument("--run", type=Path, required=True)
+    md_.add_argument("--joints", default="comparison12")
+    md_.add_argument("--checkpoint", default="last", choices=("last", "best"))
+    md_.add_argument("--device", default="cuda")
+    md_.add_argument("--folds-dir", type=Path, default=None)
+    md_.add_argument("--override", nargs="*", default=None)
     rp = sub.add_parser("report", help="collect every summary_*.json into one table")
     rp.add_argument("--markdown", type=Path, default=None)
     rp.add_argument("--csv", type=Path, default=None)
@@ -398,6 +442,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_mhformer(args)
     if args.method == "mdvpose":
         return _run_mdvpose(args)
+    if args.method == "model":
+        from .model_rows import main as model_main
+
+        argv2 = ["--dataset", args.dataset, "--run", str(args.run), "--joints", args.joints, "--checkpoint", args.checkpoint, "--device", args.device]
+        if args.folds_dir:
+            argv2 += ["--folds-dir", str(args.folds_dir)]
+        if args.override:
+            argv2 += ["--override", *args.override]
+        return model_main(argv2)
     if args.method == "report":
         from .report import main as report_main
 
