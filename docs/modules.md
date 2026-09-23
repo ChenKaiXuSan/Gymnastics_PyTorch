@@ -12,7 +12,8 @@ The four pipeline stages are the top-level packages and the only entry points;
 | ④ | `fusion` | **The proposed model.** Cycle-aware dual-view fusion (transformer encoders, FiLM, cross-view reliability) trained with Lightning and configured with Hydra. | `python -m fusion train` |
 | support | `fusion.keypoints` | Shared 3D-keypoint representation: `PosePairTrial`, `SkeletonSpec`, canonical body frame, trunk/quality features, person cache. | – |
 | support | `fusion.baselines` | Deterministic fusion methods (incl. the calibration-free depth-aware rule) and classical baselines. | `python -m fusion deterministic` |
-| support | `fusion.external` | External learned baselines (TCN, SmoothNet, MetaPose-style, MUC-style) on the model's contract, retrained with the same protocol. | `python -m fusion train model=external_<name>` |
+| support | `fusion.external.model` | External architectures on the model's contract (TCN, SmoothNet, MetaPose-style, MUC-style), retrained with the same protocol. | `python -m fusion train model=external_<name>` |
+| support | `fusion.external.published` | Published methods run as released (CanonPose, MetaPose, MHFormer, MDVPose, VideoPose3D), trained per fold and scored by one evaluator. | `python -m fusion external-published` |
 | support | `fusion.benchmarks` | FreeMan, Unity and SportsPose benchmarks. | `python -m fusion benchmark-{freeman,freeman-train,unity,sportspose}` |
 | support | `fusion.analysis` | Metrics, comparisons, reports, cohort statistics. | `python -m fusion analyze`, `python -m fusion cohort-cycle` |
 | support | `common` | Canonical project paths and MHR70 metadata. | Imported by other packages |
@@ -34,6 +35,7 @@ The four pipeline stages are the top-level packages and the only entry points;
 | Directory | Purpose |
 |---|---|
 | `src/configs/` | Configuration tree, one sub-directory per stage plus `shared/` (skeleton, folds) and `archive/`. |
+| `src/fusion/external/third_party/` | Upstream baseline checkouts: git submodules (VideoPose3D, CanonPose, MHFormer, MDVPose) plus the vendored `metapose` (TensorFlow, patched; see its `VENDORED.md`). Run `git submodule update --init --recursive` after cloning. |
 | `tests/` | Automated verification of active code. |
 | `pegasus/` | NQSV job scripts for the cluster, named by stage (`fusion_*`, `archive_*`, `benchmark_*`); see `pegasus/README.md`. |
 | `paper/` | Manuscript sources (`sports_engineering/` is current; `image_and_vision_computing/`, `scientific_reports/` earlier submissions) and their generation scripts. |

@@ -343,6 +343,44 @@ reliability head, so pass `loss.reliability.weight=0`.
 | `external_metapose_mlp` | MetaPose-style per-frame aggregation MLP over the concatenated views (Usman et al., CVPR 2022) | bounded residual on the base rule |
 | `external_muc_weights` | MUC-style learned per-view per-joint weights instead of averaging (Zhu et al., AAAI 2025); plain-average base as published | weights only, no residual |
 
+### 3.2 Strict external baselines (`fusion/external/published`)
+
+The rows above re-implement published *architectures* inside this project's
+training loop. The rows here are the opposite discipline: the **authors' own
+code** runs on our data, is trained per fold with its own released recipe, and
+only the data and the scoring belong to this project
+(`python -m fusion external-published <method> --dataset <d> --stage <s>`).
+Public checkpoints are used only for clearly-marked appendix rows, never in
+the main table.
+
+| Method | Supervision | Datasets | Stages |
+|---|---|---|---|
+| `canonpose` | none (multi-view self-supervision) | gymnastics, freeman, sportspose | prepare, train, evaluate |
+| `metapose` | none (stage-1 optimisation, stage-2 network) | gymnastics, freeman, sportspose | prepare, s1, shards, train, predict, evaluate |
+| `mhformer` | 3D reference | freeman, sportspose | prepare, train, evaluate |
+| `mdvpose` | 3D reference (MotionBERT fine-tune) | freeman, sportspose | prepare, train, evaluate |
+| `videopose3d-trained` | 3D reference | freeman, sportspose | prepare, train, evaluate |
+| `videopose3d` | released H36M weights (appendix) | all | evaluate |
+| `model` | ours, for the same evaluator | all | `--run <sweep dir>` |
+
+Every method reads the SAM3D 2D keypoints of both views
+(`--stage keypoints2d` builds that cache), predicts its own skeleton, and is
+returned as a `PosePairTrial` on the same frames, so the folds, the phase
+windows and the per-frame PA-MPJPE are the ones of §1.5. Because each method
+covers a different subset of the 20 major joints, the comparison table is
+computed on their intersection with `--joints comparison12` (shoulders,
+elbows, wrists, hips, knees, ankles) — our own checkpoints included, through
+the `model` subcommand. `python -m fusion external-published report` tabulates
+every `summary_*.json`; results and per-method caveats are in
+`docs/research/strict_external_baselines_2026-09-21.md`.
+
+Third-party code lives in `src/fusion/external/third_party/` (four git
+submodules plus the vendored `metapose`), weights under `local/checkpoints`,
+outputs under `local/runs/external_published/`. Cluster launchers:
+`pegasus/external_published_qsub.sh` (one method / stage / dataset),
+`pegasus/external_trained_qsub.sh` (per-fold training) and
+`pegasus/comparison_joints_qsub.sh` (re-scoring on the comparison joints).
+
 ## 4. Commands
 
 ```bash

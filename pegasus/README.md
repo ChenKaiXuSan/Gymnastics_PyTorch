@@ -45,6 +45,17 @@ plus one point per hour waited (`sstat -f <request>` shows the breakdown);
 | `fusion_train_qsub.sh` | one run with the dataset's default split (`DATA`, `RUN_NAME`, ...) |
 | `submit_fusion_transfer.sh <ckpt> <protocol> [sweep]` | evaluate one checkpoint on every fold of a target protocol (zero-shot transfer, `test_only=true`) |
 
+## External baselines (`fusion.external.published`)
+
+| script | purpose |
+|---|---|
+| `external_published_qsub.sh` | one stage of one method on one dataset (`STAGE`, `DATASET`, optional `MODE`, `LOSS`) |
+| `external_trained_qsub.sh` | per-fold training of a supervised baseline (`METHOD`, `DATASET`, `FOLD`) |
+| `comparison_joints_qsub.sh` | re-score a finished method on the comparison joint set (`CMD="<args> --joints comparison12"`, `::` for spaces) |
+
+These jobs run the upstream checkouts in `src/fusion/external/third_party/`
+in place; see `docs/cycle_aware_fusion.md` §3.2.
+
 ## Archived rotation-aware model and FreeMan benchmark
 
 | script | purpose |

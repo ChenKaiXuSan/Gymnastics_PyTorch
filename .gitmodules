@@ -4,12 +4,16 @@
 [submodule "src/fusion/external/third_party/VideoPose3D"]
 	path = src/fusion/external/third_party/VideoPose3D
 	url = https://github.com/facebookresearch/VideoPose3D.git
+	ignore = untracked
 [submodule "src/fusion/external/third_party/CanonPose"]
 	path = src/fusion/external/third_party/CanonPose
 	url = https://github.com/bastianwandt/CanonPose.git
+	ignore = untracked
 [submodule "src/fusion/external/third_party/MHFormer"]
 	path = src/fusion/external/third_party/MHFormer
 	url = https://github.com/Vegetebird/MHFormer.git
+	ignore = untracked
 [submodule "src/fusion/external/third_party/MDVPose"]
 	path = src/fusion/external/third_party/MDVPose
 	url = https://github.com/iGame-Lab/MDVPose.git
+	ignore = untracked

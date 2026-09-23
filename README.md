@@ -27,7 +27,8 @@ src/
 ├── fusion/             # ④ the proposed cycle-aware fusion network   python -m fusion train
 │   ├── keypoints/      #    shared 3D-keypoint representation (trial schema, skeleton, body frame, cache)
 │   ├── baselines/      #    deterministic matrix + classical baselines   python -m fusion deterministic
-│   ├── external/       #    external learned baselines (TCN, SmoothNet, MetaPose-, MUC-style) trained with the same protocol
+│   ├── external/       #    external baselines: model.py = published architectures on our contract (python -m fusion train model=external_*)
+│   │                   #                       published/ = the authors' own code, trained per fold (python -m fusion external-published)
 │   ├── benchmarks/     #    FreeMan / Unity / SportsPose                 python -m fusion benchmark-*
 │   ├── analysis/       #    metrics, reports, cohort statistics          python -m fusion analyze | cohort-cycle
 │   └── archive/        #    frozen paper model (rotation_aware)          python -m fusion rotation-aware
@@ -57,9 +58,20 @@ Neither cluster environment has the package installed, so set
 `PYTHONPATH=src` there (the job scripts do this). The data root is resolved by
 `src/common/paths.py` (see [Data and local assets](#data-and-local-assets)).
 
-SAM-3D-Body is pinned as a submodule below `src/pose_estimation/third_party/`.
-Project code imports it through the adapter in `pose_estimation`; upstream
-source is not duplicated in the installed package.
+### Third-party checkouts
+
+All upstream source is referenced, never copied into the package:
+
+| Path | Contents |
+|---|---|
+| `src/pose_estimation/third_party/sam-3d-body` | SAM-3D-Body, pinned as a submodule; imported through the adapter in `pose_estimation`. |
+| `src/fusion/external/third_party/{VideoPose3D,CanonPose,MHFormer,MDVPose}` | The published baselines, pinned as submodules and trained in place by `python -m fusion external-published`. |
+| `src/fusion/external/third_party/metapose` | MetaPose, vendored rather than pinned (TensorFlow, local patches); see its `VENDORED.md`. |
+
+`git submodule update --init --recursive` (above) fetches all of them. The
+baseline submodules are configured with `ignore = untracked`, so the
+checkpoints and caches written inside them during a run do not show up as
+changes of this repository. Baseline weights live under `local/checkpoints`.
 
 ## Commands
 
