@@ -71,8 +71,16 @@ comparison JSONs.
   joints) has no checkpoints on disk, so it could not be re-scored here; it
   needs a re-run if the paper reports it.
 * No ablation on FreeMan: all rows are private-data only.
-* The 2026-09-20 note's proposed next experiment (`recovery_target:
-  reference`, i.e. a recovery target that differs from the two-view average,
-  using FreeMan's multi-view reference and never the private pseudo-GT) is
-  still not run. It is the only proposal on the table that could make the
-  learned components pay off on clean data.
+* The 2026-09-20 note's proposed next experiment, `loss.recovery.target =
+  reference` (the recovery target is the dataset's own 3D reference instead
+  of the label-free two-view rule, so it finally differs from the average),
+  **has been run on the public datasets** -- `freeman_rep_v1_1_refsup`
+  38.0 mm versus 41.8 for the label-free model, `fit3d_v1_1_refsup` 24.8,
+  `freeman_all40_v1_1_refsup` 48.7 (20 joints, fold means). So the learned
+  components do pay off once the target differs from the average, which is
+  the natural upper bound for this architecture. It is deliberately *not*
+  run on the private data (its only 3D is the evaluation reference, so the
+  run would be circular), and none of these rows is in the 12-joint
+  comparison protocol yet. Transferring the FreeMan reference-supervised
+  model to the private data zero-shot gives 25.5 mm, worse than the
+  label-free private model (18.4).
