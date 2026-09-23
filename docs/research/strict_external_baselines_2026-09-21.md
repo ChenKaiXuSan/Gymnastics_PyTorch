@@ -125,26 +125,55 @@ comparison12`), which on all 20 joints reproduces the sweep's own numbers.
 | *single-view rows:* CanonPose per view | none | 36.2 ± 1.4 | 62.9 ± 3.7 |
 | *single-view rows:* MHFormer / MDVPose / VideoPose3D per view | 3D reference | n/a | 50.6 / 45.0 / 52.5 |
 
-Per-fold values are in each `summary_*_12joints.json`. Ours vs each method
-(fold-wise difference, Wilcoxon on 5 folds -- p = 0.0625 is the floor at
-n = 5):
+Per-fold values are in each `summary_*_12joints.json`.
 
-| Comparison | Diff (mm) | Folds ours is better | p |
-|---|---:|---:|---:|
-| Gymnastics: MetaPose S1 - ours | +24.0 | 5/5 | 0.062 |
-| Gymnastics: CanonPose - ours | +8.7 | 5/5 | 0.062 |
-| FreeMan: MetaPose S1 - ours | +14.5 | 5/5 | 0.062 |
-| FreeMan: CanonPose - ours | +12.1 | 5/5 | 0.062 |
-| FreeMan: VideoPose3D-trained - ours | +4.9 | 5/5 | 0.062 |
-| FreeMan: MHFormer - ours | +2.2 | 4/5 | 0.125 |
-| FreeMan: MDVPose - ours | -1.6 | 0/5 | 0.062 |
+### Significance: paired over participants, not over folds
+
+A 5-fold Wilcoxon test floors at p = 0.0625, so fold-level statistics can
+never be significant however large the gap. The folds are subject-disjoint,
+so every participant is a held-out measurement of both methods and is the
+natural unit: 137 private participants, 37 FreeMan subjects. Each summary
+records a participant's joint-frame weighted error
+(`evaluate.evaluate_fold`), and `python -m fusion external-published compare`
+pairs two summaries over the participants they share -- mean difference,
+10 000-sample bootstrap 95 % CI, win rate, Wilcoxon signed-rank, Holm
+correction across the methods compared with one reference
+(`fusion/external/published/stats.py`). Results:
+`local/runs/external_published/stats/{gymnastics,freeman}_vs_external.json`.
+
+Gymnastics, 137 participants (positive difference = ours is better):
+
+| Method | Theirs | Ours | Diff (mm) | 95 % CI | Ours better | p (Holm) |
+|---|---:|---:|---:|---|---:|---:|
+| CanonPose | 28.2 | 19.5 | +8.74 | [+8.01, +9.48] | 136/137 | 9.4e-24 |
+| MetaPose S1 | 43.4 | 19.5 | +23.90 | [+22.35, +25.44] | 136/137 | 9.4e-24 |
+| MetaPose S2-ts | 75.6 | 19.5 | +56.13 | [+53.99, +58.30] | 137/137 | 9.4e-24 |
+
+FreeMan, 37 subjects:
+
+| Method | Supervision | Theirs | Ours | Diff (mm) | 95 % CI | Ours better | p (Holm) |
+|---|---|---:|---:|---:|---|---:|---:|
+| MDVPose | 3D reference | 39.8 | 40.6 | −0.82 | [−1.91, +0.25] | 16/37 | 0.12 |
+| MHFormer | 3D reference | 44.0 | 40.6 | +3.38 | [+1.92, +4.99] | 29/37 | 8.0e-05 |
+| VideoPose3D | 3D reference | 46.6 | 40.6 | +5.96 | [+4.30, +7.72] | 31/37 | 7.3e-08 |
+| CanonPose | none | 52.8 | 40.6 | +12.20 | [+10.65, +13.71] | 36/37 | 1.7e-10 |
+| MetaPose S1 | none | 54.4 | 40.6 | +13.76 | [+10.72, +16.64] | 36/37 | 1.2e-07 |
+| MetaPose S2-ts | none | 68.0 | 40.6 | +27.31 | [+23.90, +30.70] | 36/37 | 1.7e-10 |
+| VideoPose3D zero-shot (appendix) | — | 83.7 | 40.6 | +43.06 | [+39.05, +47.56] | 37/37 | 1.0e-10 |
+
+Participant-level means differ slightly from the fold means of the table
+above (participant-weighted versus batch-weighted); the paper should quote
+the participant-level numbers, which are the ones the tests use.
 
 Reading: against every **label-free** method our model wins on both
-datasets and on every fold. Against the **reference-supervised** methods on
-FreeMan it still beats VideoPose3D (5/5) and MHFormer (4/5), and is 1.6 mm
-behind MDVPose, which fine-tunes a MotionBERT checkpoint pretrained on
-Human3.6M and is trained on the reference itself -- the honest reading is
-"on par with the supervised state of the art without using any 3D labels".
+datasets, on 136-137 of 137 participants and 36 of 37 subjects
+(p_Holm < 1e-9). Against the **reference-supervised** methods on FreeMan it
+is significantly better than VideoPose3D (+5.96 mm, 31/37, p_Holm 7e-08) and
+MHFormer (+3.38 mm, 29/37, p_Holm 8e-05), and **statistically tied** with
+MDVPose (−0.82 mm, CI crosses zero, 16/37, p = 0.12), which fine-tunes a
+MotionBERT checkpoint pretrained on Human3.6M and is trained on the
+reference itself -- i.e. on par with the supervised state of the art without
+using any 3D labels.
 On the private data the supervised rows do not exist: its only 3D is the
 triangulated pseudo-reference, which is derived from the same two views and
 is the evaluation reference, so training on it would be circular.
