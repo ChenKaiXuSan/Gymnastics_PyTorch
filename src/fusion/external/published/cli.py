@@ -416,6 +416,7 @@ def make_parser() -> argparse.ArgumentParser:
     md_.add_argument("--run", type=Path, required=True)
     md_.add_argument("--joints", default="comparison12")
     md_.add_argument("--checkpoint", default="last", choices=("last", "best"))
+    md_.add_argument("--variant", default="model", help="model | base | rule | face | side")
     md_.add_argument("--device", default="cuda")
     md_.add_argument("--folds-dir", type=Path, default=None)
     md_.add_argument("--override", nargs="*", default=None)
@@ -454,7 +455,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.method == "model":
         from .model_rows import main as model_main
 
-        argv2 = ["--dataset", args.dataset, "--run", str(args.run), "--joints", args.joints, "--checkpoint", args.checkpoint, "--device", args.device]
+        argv2 = ["--dataset", args.dataset, "--run", str(args.run), "--joints", args.joints, "--checkpoint", args.checkpoint, "--device", args.device, "--variant", args.variant]
         if args.folds_dir:
             argv2 += ["--folds-dir", str(args.folds_dir)]
         if args.override:

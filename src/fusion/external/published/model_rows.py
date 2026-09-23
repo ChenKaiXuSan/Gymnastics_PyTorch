@@ -52,20 +52,43 @@ def load_module(checkpoint: Path, device: str = "cuda"):
     return module
 
 
-def model_predictor(module, device: str = "cuda"):
-    """``batch -> (fused pose, valid)`` on the CPU, like the evaluator's other predictions."""
+VARIANTS = ("model", "base", "rule", "face", "side")
+
+
+def model_predictor(module, device: str = "cuda", variant: str = "model"):
+    """``batch -> (pose, valid)`` on the CPU, like the evaluator's other predictions.
+
+    Variants (the quantities the Lightning module also logs):
+        model  the fused output,
+        base   its closed-form base pose with the *learned* reliability weights,
+        rule   the same closed form with equal weights -- the learning-free rule,
+        face / side  the two input views.
+    """
+    if variant not in VARIANTS:
+        raise ValueError(f"variant must be one of {VARIANTS}")
     target = torch.device(device if torch.cuda.is_available() or device == "cpu" else "cpu")
 
     def predict(batch: dict[str, Any]) -> tuple[torch.Tensor, torch.Tensor]:
+        if variant == "face":
+            return batch["pose_a"], batch["valid_a"]
+        if variant == "side":
+            return batch["pose_b"], batch["valid_b"]
         moved = {k: (v.to(target) if torch.is_tensor(v) else v) for k, v in batch.items()}
         with torch.no_grad():
             output = module(moved)
-        return output.pose.float().cpu(), output.valid.cpu()
+            if variant == "rule":
+                frame_mask = moved["frame_mask"][..., None]
+                half = torch.full_like(moved["pose_a"][..., :1], 0.5)
+                pose = module.model.fuse_base(moved["pose_a"], moved["pose_b"], half, half, moved["valid_a"] & frame_mask, moved["valid_b"] & frame_mask, moved.get("depth_a"), moved.get("depth_b"))
+                pose = pose[0] if isinstance(pose, tuple) else pose
+            else:
+                pose = output.pose if variant == "model" else output.base_pose
+        return pose.float().cpu(), output.valid.cpu()
 
     return predict
 
 
-def evaluate_run(dataset: str, run_dir: Path, *, joints: Sequence[str] | None = None, which: str = "last", device: str = "cuda", folds_dir: Path | None = None, extra_overrides: Sequence[str] = ()) -> dict[str, Any]:
+def evaluate_run(dataset: str, run_dir: Path, *, joints: Sequence[str] | None = None, which: str = "last", device: str = "cuda", folds_dir: Path | None = None, extra_overrides: Sequence[str] = (), variant: str = "model") -> dict[str, Any]:
     from .evaluate import evaluate_folds
 
     modules: dict[str, Any] = {}
@@ -73,16 +96,17 @@ def evaluate_run(dataset: str, run_dir: Path, *, joints: Sequence[str] | None = 
     def predictor_factory(fold: Path):
         if fold.stem not in modules:
             modules[fold.stem] = load_module(fold_checkpoint(Path(run_dir), fold.stem, which=which), device)
-        return model_predictor(modules[fold.stem], device)
+        return model_predictor(modules[fold.stem], device, variant)
 
     payload = evaluate_folds(dataset, lambda fold: None, folds_dir=folds_dir, extra_overrides=extra_overrides, joints=joints, predictor_factory=predictor_factory)
-    payload["method"] = {"name": "cycle_aware_model", "run": str(run_dir), "checkpoint": which}
+    payload["method"] = {"name": f"cycle_aware_{variant}", "run": str(run_dir), "checkpoint": which, "variant": variant}
     return payload
 
 
-def output_path(run_dir: Path, joints: Sequence[str] | None) -> Path:
-    name = "summary_model_all_joints.json" if not joints else f"summary_model_{len(list(joints))}joints.json"
-    return PROJECT_ROOT / "local" / "runs" / "external_published" / "model" / Path(run_dir).name / name
+def output_path(run_dir: Path, joints: Sequence[str] | None, variant: str = "model") -> Path:
+    suffix = "all_joints" if not joints else f"{len(list(joints))}joints"
+    root = "model" if variant == "model" else "internal"
+    return PROJECT_ROOT / "local" / "runs" / "external_published" / root / Path(run_dir).name / f"summary_{variant}_{suffix}.json"
 
 
 def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - thin CLI
@@ -95,6 +119,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - thin C
     parser.add_argument("--run", type=Path, required=True, help="sweep directory with fold_XX/checkpoints")
     parser.add_argument("--joints", default="comparison12", help="'comparison12', 'all', or comma/plus-separated joint names")
     parser.add_argument("--checkpoint", default="last", choices=("last", "best"))
+    parser.add_argument("--variant", default="model", choices=VARIANTS, help="model | base (learned weights) | rule (equal weights) | face | side")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--folds-dir", type=Path, default=None)
     parser.add_argument("--override", nargs="*", default=None)
@@ -105,9 +130,9 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - thin C
         joints = list(COMPARISON_JOINTS)
     else:
         joints = [j for j in args.joints.replace("+", ",").split(",") if j]
-    payload = evaluate_run(args.dataset, args.run, joints=joints, which=args.checkpoint, device=args.device, folds_dir=args.folds_dir, extra_overrides=list(args.override or []))
-    out = write_summary(output_path(args.run, joints), payload)
+    payload = evaluate_run(args.dataset, args.run, joints=joints, which=args.checkpoint, device=args.device, folds_dir=args.folds_dir, extra_overrides=list(args.override or []), variant=args.variant)
+    out = write_summary(output_path(args.run, joints, args.variant), payload)
     s = payload["summary"]
-    print(f"[model] {args.dataset} {Path(args.run).name} ({args.checkpoint}): PA-MPJPE {s['pa_mpjpe_mean'] * 1000:.1f} ± {s['pa_mpjpe_sd'] * 1000:.1f} mm over {s['folds']} folds, joints {len(s['joint_names'])} -> {out}")
+    print(f"[{args.variant}] {args.dataset} {Path(args.run).name} ({args.checkpoint}): PA-MPJPE {s['pa_mpjpe_mean'] * 1000:.1f} ± {s['pa_mpjpe_sd'] * 1000:.1f} mm over {s['folds']} folds, joints {len(s['joint_names'])} -> {out}")
     print("  per fold: " + ", ".join(f"{1000 * f['pa_mpjpe']:.1f}" for f in payload["folds"]))
     return 0
