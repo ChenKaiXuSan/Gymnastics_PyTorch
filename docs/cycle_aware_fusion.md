@@ -37,7 +37,7 @@ in `cycle_alignment` (`cycle_alignment/cycles.py`) and writes record files
 | private | `python -m cycle_alignment align` (boundaries) + `python -m cycle_alignment cycles private` (middles) | `local/runs/split_cycle/person_<id>/alignment_record_<id>.json` |
 | FreeMan | `python -m cycle_alignment cycles freeman` | `local/runs/cycle_records/freeman/subject_NN/<session>.json` |
 | Unity | `python -m cycle_alignment cycles unity` | `local/runs/cycle_records/unity/subject_<seq>/<seq>.json` |
-| SportsPose | `python -m cycle_alignment cycles sportspose` | `local/runs/cycle_records/sportspose/subject_<S>/<day>_<activity>.json` (one clip = one cycle, middle detected) |
+| Fit3D | `python -m cycle_alignment cycles fit3d` | `local/runs/cycle_records/fit3d/subject_<s>/<action>.json` (bounds = the release's `rep_ann.json` repetitions, middle detected) |
 
 One shared definition is used everywhere: the right-wrist azimuth in the
 pelvis body frame (smoothed, unwrapped) starts a cycle each time it crosses
@@ -286,7 +286,7 @@ docstring.
 | Private gymnastics | `data/gymnastics.py` | person id | `alignment_record_<id>.json` (`require_cycle_mids`); consecutive cycles concatenated | triangulated pseudo-reference matched by face/side frame pairs |
 | FreeMan | `data/freeman.py` | subject number | `cycle_records/freeman` (`require_cycle_records`) | `keypoints3d_optim` scaled to metres, COCO17 → MHR70 positions |
 | Unity | `data/unity.py` | sequence id | `cycle_records/unity` (`require_cycle_records`) | native Unity22 joints → MHR70 positions |
-| SportsPose | `data/sportspose.py` | S-id (24 people) | `cycle_records/sportspose`: the ~5 trials of one action on one day are concatenated and each trial is one cycle | markerless multi-view COCO17 (metres) → MHR70 positions |
+| Fit3D | `data/fit3d.py` | subject id (8 people with a reference) | `cycle_records/fit3d`: the repetitions annotated in `rep_ann.json` (296 of 376 sequences, 1526 cycles) | multi-view fitted 25-joint reference (metres) → 14 MHR70 positions |
 | Synthetic | `data/synthetic.py` | generated | exact | generating motion |
 
 The private adapter uses the rotation-aware person cache by default
@@ -294,8 +294,9 @@ The private adapter uses the rotation-aware person cache by default
 `src/configs/shared/folds/paper_137_a6_split.json`. FreeMan reads the SAM3D
 cache of the zero-shot benchmark (`local/runs/freeman_benchmark_cluster`);
 Unity reads the benchmark manifest plus `local/runs/unity_benchmark/sam3d`.
-SportsPose reads `local/runs/sportspose_benchmark/{selected_views.json,sam3d}`
-produced by `python -m fusion benchmark-sportspose {select-views,infer}`: per
+Fit3D reads `local/runs/fit3d_benchmark/selected_views.json`
+produced by `python -m fusion benchmark-fit3d select-views` and the external
+per-video SAM3D cache: per
 subject and sequence (day + activity) the camera facing the subject is view A
 and the camera ~90° from it is view B, mirroring the private face/side pair.
 FreeMan keeps only the repetitive action classes by default
@@ -355,11 +356,11 @@ the main table.
 
 | Method | Supervision | Datasets | Stages |
 |---|---|---|---|
-| `canonpose` | none (multi-view self-supervision) | gymnastics, freeman, sportspose | prepare, train, evaluate |
-| `metapose` | none (stage-1 optimisation, stage-2 network) | gymnastics, freeman, sportspose | prepare, s1, shards, train, predict, evaluate |
-| `mhformer` | 3D reference | freeman, sportspose | prepare, train, evaluate |
-| `mdvpose` | 3D reference (MotionBERT fine-tune) | freeman, sportspose | prepare, train, evaluate |
-| `videopose3d-trained` | 3D reference | freeman, sportspose | prepare, train, evaluate |
+| `canonpose` | none (multi-view self-supervision) | gymnastics, freeman, fit3d | prepare, train, evaluate |
+| `metapose` | none (stage-1 optimisation, stage-2 network) | gymnastics, freeman, fit3d | prepare, s1, shards, train, predict, evaluate |
+| `mhformer` | 3D reference | freeman, fit3d | prepare, train, evaluate |
+| `mdvpose` | 3D reference (MotionBERT fine-tune) | freeman, fit3d | prepare, train, evaluate |
+| `videopose3d-trained` | 3D reference | freeman, fit3d | prepare, train, evaluate |
 | `videopose3d` | released H36M weights (appendix) | all | evaluate |
 | `model` | ours, for the same evaluator | all | `--run <sweep dir>` |
 
@@ -398,11 +399,11 @@ python -m fusion train data=gymnastics trainer.max_epochs=50
 python -m cycle_alignment cycles private
 python -m cycle_alignment cycles freeman
 python -m cycle_alignment cycles unity
-python -m cycle_alignment cycles sportspose   # after `python -m fusion benchmark-sportspose infer`
+python -m cycle_alignment cycles fit3d       # repetition records (bounds from rep_ann.json)
 python -m cycle_alignment cycles index
 
-# SportsPose, 5 subject-disjoint folds (trials of one action as cycles).
-python -m fusion train data=sportspose data.fold_json=src/configs/fusion/folds/sportspose/fold_01.json
+# Fit3D, 5 subject-disjoint folds (annotated repetitions as cycles).
+python -m fusion train data=fit3d data.fold_json=src/configs/fusion/folds/fit3d/fold_01.json
 
 # FreeMan (subject-disjoint) on a subject subset.
 python -m fusion train data=freeman 'data.options.subjects=[1,2,3,4,5,6]'

@@ -21,11 +21,11 @@ from typing import Callable, Protocol
 
 import numpy as np
 
-from common.paths import DERIVED_ROOT, PROJECT_ROOT, SAM3D_RESULTS_ROOT, SPORTSPOSE_ROOT
+from common.paths import DERIVED_ROOT, FIT3D_ROOT, PROJECT_ROOT, SAM3D_RESULTS_ROOT
 from fusion.keypoints.schema import PosePairTrial
 
 from .fuse import procrustes_average
-from .keypoints2d import DEFAULT_CACHE_ROOT, View2D, freeman_view, gymnastics_view, sportspose_view
+from .keypoints2d import DEFAULT_CACHE_ROOT, View2D, fit3d_view, freeman_view, gymnastics_view
 from .mapping import fill_missing_joints, h36m17_to_mhr70, mhr70_to_coco17_2d
 
 Lifter = Callable[[np.ndarray, int, int], np.ndarray]
@@ -87,45 +87,35 @@ class FreeManViewSource:
         return tuple(cv2.Rodrigues(np.asarray(cameras[v].rotation, dtype=np.float64))[0] for v in (view_a, view_b))  # type: ignore[return-value]
 
 
-class SportsPoseViewSource:
-    """SportsPose: the external per-video cache on the trial's clips and selected views."""
+class Fit3DViewSource:
+    """Fit3D: the external per-video cache on the sequence's two selected cameras."""
 
-    def __init__(self, *, derived_root: Path = DERIVED_ROOT / "sam3d_sportspose", dataset_root: Path = SPORTSPOSE_ROOT) -> None:
-        self.derived_root, self.dataset_root = Path(derived_root), Path(dataset_root)
+    def __init__(self, *, derived_root: Path | None = None, dataset_root: Path | None = None, split: str = "train") -> None:
+        self.derived_root = Path(derived_root) if derived_root is not None else DERIVED_ROOT / "sam3d_fit3d"
+        self.dataset_root = Path(dataset_root) if dataset_root is not None else FIT3D_ROOT
+        self.split = str(split)
+
+    def _sequence(self, trial: PosePairTrial):
+        from fusion.benchmarks.fit3d.dataset import discover_sequences
+
+        action = str(trial.source_metadata["action"])
+        sequences = discover_sequences(self.dataset_root, split=self.split, subjects=[trial.person_id], actions=[action])
+        if not sequences:
+            raise FileNotFoundError(f"fit3d sequence {trial.person_id}/{action} not found below {self.dataset_root}")
+        return sequences[0]
 
     def views(self, trial: PosePairTrial) -> tuple[View2D, View2D]:
-        from fusion.benchmarks.sportspose.dataset import discover_clips, load_calibration, load_timing
-
+        sequence = self._sequence(trial)
         meta = trial.source_metadata
-        clips = {c.clip_id: c for c in discover_clips(self.dataset_root, days=[meta["day"]], subjects=[trial.person_id], activities=[meta["activity"]])}
-        result = []
-        for view_id in (meta["view_a"], meta["view_b"]):
-            frames, points, valid, size = [], [], [], None
-            offset = 0
-            for clip_id, (start, end) in zip(meta["clips"], meta["clip_bounds"]):
-                clip = clips[clip_id]
-                cameras = load_calibration(clip.joints_path.parents[1])
-                camera = cameras[view_id]
-                timing = load_timing(clip)
-                n = end - start
-                stride = max(1, clip.frames // n) if n else 1
-                frame_ids = np.arange(0, clip.frames, stride, dtype=np.int64)[:n]
-                view = sportspose_view(self.derived_root, clip, camera, frame_ids, timing["video_index"][camera.index][frame_ids])
-                frames.append(np.arange(offset, offset + n, dtype=np.int64))
-                points.append(view.points)
-                valid.append(view.valid)
-                size = (view.width, view.height)
-                offset += n
-            result.append(View2D(frame_ids=np.concatenate(frames), points=np.concatenate(points), valid=np.concatenate(valid), width=size[0], height=size[1], name=f"sportspose/{meta['day']}/{trial.person_id}/{meta['activity']}/{view_id}"))
-        return result[0], result[1]
+        frame_ids = np.asarray(trial.face_map, dtype=np.int64)
+        return tuple(fit3d_view(self.derived_root, sequence, str(meta[key]), frame_ids, split=self.split) for key in ("view_a", "view_b"))  # type: ignore[return-value]
 
     def rotations(self, trial: PosePairTrial) -> tuple[np.ndarray, np.ndarray]:
-        from fusion.benchmarks.sportspose.dataset import discover_clips, load_calibration
+        from fusion.benchmarks.fit3d.dataset import load_camera
 
+        sequence = self._sequence(trial)
         meta = trial.source_metadata
-        clip = next(iter(discover_clips(self.dataset_root, days=[meta["day"]], subjects=[trial.person_id], activities=[meta["activity"]])))
-        cameras = load_calibration(clip.joints_path.parents[1])
-        return tuple(np.asarray(cameras[v].rotation, dtype=np.float64) for v in (meta["view_a"], meta["view_b"]))  # type: ignore[return-value]
+        return tuple(np.asarray(load_camera(sequence, str(meta[key])).rotation, dtype=np.float64) for key in ("view_a", "view_b"))  # type: ignore[return-value]
 
 
 def view_source(dataset: str, **options) -> ViewSource:
@@ -133,8 +123,8 @@ def view_source(dataset: str, **options) -> ViewSource:
         return GymnasticsViewSource(**options)
     if dataset == "freeman":
         return FreeManViewSource(Path(options.get("benchmark_root", PROJECT_ROOT / "local/runs/freeman_benchmark_cluster")))
-    if dataset == "sportspose":
-        return SportsPoseViewSource(**options)
+    if dataset == "fit3d":
+        return Fit3DViewSource(**options)
     raise ValueError(f"no published-method view source for dataset {dataset!r}")
 
 

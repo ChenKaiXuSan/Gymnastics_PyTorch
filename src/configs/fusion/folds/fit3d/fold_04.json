@@ -1,0 +1,41 @@
+{
+  "name": "fold_04",
+  "dataset": "fit3d",
+  "protocol": "subject_disjoint",
+  "seed": 0,
+  "repetitions_per_subject": {
+    "s03": 188,
+    "s04": 196,
+    "s05": 187,
+    "s07": 196,
+    "s08": 185,
+    "s09": 191,
+    "s10": 195,
+    "s11": 188
+  },
+  "weights": "repetitions",
+  "sessions_per_subject": {
+    "s03": 188,
+    "s04": 196,
+    "s05": 187,
+    "s07": 196,
+    "s08": 185,
+    "s09": 191,
+    "s10": 195,
+    "s11": 188
+  },
+  "train": [
+    "s04",
+    "s07",
+    "s08",
+    "s10"
+  ],
+  "val": [
+    "s03",
+    "s11"
+  ],
+  "test": [
+    "s05",
+    "s09"
+  ]
+}

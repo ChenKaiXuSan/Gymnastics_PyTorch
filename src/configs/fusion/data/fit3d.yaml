@@ -1,0 +1,27 @@
+# Fit3D exercises from the external SAM3D cache (fusion.data.fit3d).
+defaults:
+  - _common
+name: fit3d
+# Converted samples are cached here after the first run.
+cache_dir: local/runs/cycle_aware/sample_cache
+options:
+  dataset_root: ${oc.env:GYMNASTICS_PUBLIC_DATASETS_ROOT}/multiview_human/Fit3D
+  # View pairs written by `python -m fusion benchmark-fit3d select-views`.
+  benchmark_root: local/runs/fit3d_benchmark
+  # Per-video SAM3D-Body cache produced outside this repository.
+  sam3d_derived_root: ${oc.env:GYMNASTICS_DERIVED_ROOT}/sam3d_fit3d
+  # Only "train" carries joints3d_25 (the three test subjects have no reference).
+  split: train
+  # Keep every frame_stride-th 50 fps frame (1 = native rate).
+  frame_stride: 1
+  # Subjects / exercises to load (null = all; folds via data.fold_json).
+  subjects: null
+  actions: null
+  # Drop sequences with fewer annotated repetitions (2 = at least two cycles,
+  # which the cross-cycle statistics need; 296 of 376 sequences are annotated).
+  min_cycles: 2
+  # Records written by `python -m cycle_alignment cycles fit3d` (repetition
+  # bounds from rep_ann.json plus the turn-around middles).
+  cycle_records_root: local/runs/cycle_records/fit3d
+  # Error when a sequence has no record (records with zero cycles are fine).
+  require_cycle_records: true

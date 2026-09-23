@@ -7,7 +7,7 @@ Every absolute path the project depends on is defined here once.
   variable is unset, the first existing directory among the known machines is
   used and exported, so YAML files can interpolate
   ``${oc.env:GYMNASTICS_DATA_ROOT}`` without repeating a default path.
-* The public datasets (FreeMan, SportsPose, ...) live below
+* The public datasets (FreeMan, Fit3D, ...) live below
   ``GYMNASTICS_PUBLIC_DATASETS_ROOT`` (default: ``public_datasets`` next to the
   data root), exported the same way.
 """
@@ -57,7 +57,7 @@ PUBLIC_DATASETS_ROOT_ENV = "GYMNASTICS_PUBLIC_DATASETS_ROOT"
 PUBLIC_DATASETS_ROOT = Path(os.environ.get(PUBLIC_DATASETS_ROOT_ENV) or DATA_ROOT.parent / "public_datasets")
 os.environ.setdefault(PUBLIC_DATASETS_ROOT_ENV, str(PUBLIC_DATASETS_ROOT))
 FREEMAN_ROOT = PUBLIC_DATASETS_ROOT / "multiview_human" / "FreeMan"
-SPORTSPOSE_ROOT = PUBLIC_DATASETS_ROOT / "multiview_human" / "SportsPose"
+FIT3D_ROOT = PUBLIC_DATASETS_ROOT / "multiview_human" / "Fit3D"
 
 # Per-video SAM3D caches produced outside this repository's benchmark stages
 # (derived/normal_camera/sam3d_<dataset>/...), keyed by dataset name.

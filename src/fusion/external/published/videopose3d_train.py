@@ -2,7 +2,7 @@
 
 The zero-shot use of the released Human3.6M checkpoint lives in
 :mod:`videopose3d` (appendix only). This module trains the official temporal
-convolutional model per fold on FreeMan / SportsPose -- the datasets with an
+convolutional model per fold on FreeMan / Fit3D -- the datasets with an
 independent 3D reference -- exactly like :mod:`mhformer`: both views of the
 training subjects are monocular samples, the input is the SAM3D 2D in the
 Human3.6M-17 layout and the target is the reference rotated into the camera

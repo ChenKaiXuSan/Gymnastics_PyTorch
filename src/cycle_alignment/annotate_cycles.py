@@ -21,12 +21,12 @@ Sub-commands::
         Same for the continuous Unity sequences ->
         ``local/runs/cycle_records/unity/subject_<sequence>/<sequence>.json``.
 
-    python -m cycle_alignment cycles sportspose [--config src/configs/benchmarks/sportspose.yaml]
-        Trial-as-cycle records for SportsPose: every clip of one subject, day
-        and activity is one cycle on the concatenated timeline of
-        ``fusion.benchmarks.sportspose.trials``; only the middle (extremum of
-        the fused wrist azimuth inside the clip) is detected ->
-        ``local/runs/cycle_records/sportspose/subject_<S>/<day>_<activity>.json``.
+    python -m cycle_alignment cycles fit3d [--config src/configs/benchmarks/fit3d.yaml]
+        Repetition records for Fit3D. The cycle bounds are the dataset's own
+        ``rep_ann.json`` marks (ground truth, no detection); only the middle
+        (extremum of the fused wrist azimuth inside the repetition) is
+        detected ->
+        ``local/runs/cycle_records/fit3d/subject_<s>/<action>.json``.
 
     python -m cycle_alignment cycles index [--records-root local/runs/cycle_records]
         Collects everything into one tree: exports the private alignment
@@ -72,7 +72,7 @@ from cycle_alignment.cycles import (
     detect_cycles,
     hand_theta_unwrapped,
 )
-from common.paths import DATA_ROOT, FREEMAN_ROOT, PROJECT_ROOT, SPORTSPOSE_ROOT
+from common.paths import DATA_ROOT, FIT3D_ROOT, FREEMAN_ROOT, PROJECT_ROOT
 
 
 def _resolve(path: str | Path) -> Path:
@@ -353,47 +353,59 @@ def run_unity(args: argparse.Namespace) -> int:
     return 0
 
 
-def run_sportspose(args: argparse.Namespace) -> int:
-    from fusion.benchmarks.sportspose.cli import load_config, read_selected_views
-    from fusion.benchmarks.sportspose.dataset import discover_clips, group_clips
-    from fusion.benchmarks.sportspose.trials import build_sequence_trial, load_clip_predictions
+def run_fit3d(args: argparse.Namespace) -> int:
+    from fusion.benchmarks.fit3d.cli import load_config, read_selected_views
+    from fusion.benchmarks.fit3d.dataset import discover_sequences, load_repetitions, repetition_bounds
+    from fusion.benchmarks.fit3d.trials import load_sequence, scale_bounds
 
     config = load_config(args.config)
-    paths = config["paths"]
-    cache_root = _resolve(str(paths["sam3d_cache_root"]))
-    derived_root = _resolve(str(paths["sam3d_derived_root"])) if paths.get("sam3d_derived_root") else None
-    if derived_root is not None and not derived_root.is_dir():
-        derived_root = None
+    paths, dataset = config["paths"], dict(config.get("dataset") or {})
+    dataset_root = _resolve(str(paths["dataset_root"]))
+    derived_root = _resolve(str(paths["sam3d_derived_root"]))
     views = read_selected_views(_resolve(str(paths["views_path"])))
-    dataset = dict(config.get("dataset") or {})
-    frame_stride = int(dataset.get("frame_stride", 3))
-    clips = discover_clips(_resolve(str(paths["dataset_root"])), days=dataset.get("days"), subjects=args.subjects or dataset.get("subjects"), activities=dataset.get("activities"))
+    split = str(dataset.get("split", "train"))
+    frame_stride = int(dataset.get("frame_stride", 1))
+    sequences = discover_sequences(dataset_root, split=split, subjects=args.subjects or dataset.get("subjects"), actions=args.actions or dataset.get("actions"))
     out_root = _resolve(args.out_root)
-    settings = DetectionSettings(smooth_window=int(args.smooth_window), theta_ref=None, theta_ref_mode="trial_as_cycle")
-    totals = {"sequences": 0, "cycles": 0, "skipped": 0}
-    for (subject_key, sequence_key), group in group_clips(clips).items():
-        selected = views.get((subject_key, sequence_key))
+    # The cycle bounds are annotations, so only the middles are detected.
+    settings = DetectionSettings(smooth_window=int(args.smooth_window), theta_ref=None, theta_ref_mode="rep_ann")
+    totals = {"sequences": 0, "with_cycles": 0, "cycles": 0, "skipped": 0}
+    for sequence in sequences:
+        selected = views.get((sequence.subject_key, sequence.sequence_key))
         if selected is None:
             totals["skipped"] += 1
             continue
         try:
-            predictions = [load_clip_predictions(clip, selected, cache_root=cache_root, derived_root=derived_root, frame_stride=frame_stride) for clip in group]
+            trial, _ = load_sequence(sequence, selected, derived_root, frame_stride=frame_stride, split=split)
         except FileNotFoundError:
-            print(f"  ✗ {subject_key}/{sequence_key}: SAM3D cache incomplete, skipped")
+            print(f"  x {sequence.subject_key}/{sequence.sequence_key}: SAM3D cache incomplete, skipped")
             totals["skipped"] += 1
             continue
-        trial, bounds, _ = build_sequence_trial(group, predictions, selected)
+        marks = load_repetitions(sequence.root).get(sequence.action, ())
+        bounds = scale_bounds(repetition_bounds(marks, sequence.frames), trial.face_map)
         theta = fused_wrist_theta(trial.face, trial.side, valid_a=trial.valid_face, valid_b=trial.valid_side, smooth_window=settings.smooth_window)
         spans = annotate_mid_points(theta, bounds)
-        path = cycle_record_path(out_root, subject_key, sequence_key)
-        write_cycle_record(path, dataset="sportspose", subject_id=subject_key, sequence_id=sequence_key, fps=trial.fps, frames=int(trial.face.shape[0]), spans=spans, detection=settings, views=(selected.view_a, selected.view_b), extra_metadata={"clips": [c.clip_id for c in group], "trial_as_cycle": True})
-        if not args.no_plot:
-            save_theta_plot(theta, trial.fps, spans, settings, path.with_name(f"{sequence_key}_theta_cycles.png"), f"sportspose {subject_key}/{sequence_key}: {len(spans)} clips")
+        path = cycle_record_path(out_root, sequence.subject_key, sequence.sequence_key)
+        write_cycle_record(
+            path,
+            dataset="fit3d",
+            subject_id=sequence.subject_key,
+            sequence_id=sequence.sequence_key,
+            fps=trial.fps,
+            frames=int(trial.face.shape[0]),
+            spans=spans,
+            detection=settings,
+            views=(selected.view_a, selected.view_b),
+            extra_metadata={"action": sequence.action, "cycle_source": "rep_ann", "repetition_marks": [int(m) for m in marks], "separation_deg": float(selected.separation_deg), "frame_stride": frame_stride},
+        )
+        if not args.no_plot and spans:
+            save_theta_plot(theta, trial.fps, spans, settings, path.with_name(f"{sequence.sequence_key}_theta_cycles.png"), f"fit3d {sequence.subject_key}/{sequence.sequence_key}: {len(spans)} repetitions")
         totals["sequences"] += 1
+        totals["with_cycles"] += int(bool(spans))
         totals["cycles"] += len(spans)
-        print(f"  {subject_key}/{sequence_key}: {len(spans)} clips as cycles")
+        print(f"  {sequence.subject_key}/{sequence.sequence_key}: {len(spans)} repetitions")
     (out_root / "summary.json").write_text(json.dumps({"settings": settings.to_dict(), **totals}, indent=2), encoding="utf-8")
-    print(f"[cycles/sportspose] source={'derived ' + str(derived_root) if derived_root else 'benchmark cache ' + str(cache_root)}; done: {totals}")
+    print(f"[cycles/fit3d] source={derived_root}; done: {totals}")
     return 0
 
 
@@ -488,9 +500,8 @@ form.
   frames, offset = `offset_side_to_face`). Re-export with `python -m cycle_alignment cycles index`.
 * `freeman/`, `unity/`: written directly by `python -m cycle_alignment cycles freeman|unity`;
   `frames` are the shared (synchronised) frame ids.
-* `sportspose/`: `python -m cycle_alignment cycles sportspose`; every clip (one trial of the
-  action) is one cycle on the concatenated per-subject/activity timeline, only the middle is
-  detected.
+* `fit3d/`: `python -m cycle_alignment cycles fit3d`; the cycle bounds are the release's own
+  `rep_ann.json` repetition marks (ground truth), only the middle is detected.
 
 ## Regeneration
 
@@ -498,7 +509,7 @@ form.
 python -m cycle_alignment cycles private   # adds mid to the 137 alignment records (~1 min/person)
 python -m cycle_alignment cycles freeman   # local/runs/cycle_records/freeman
 python -m cycle_alignment cycles unity     # local/runs/cycle_records/unity
-python -m cycle_alignment cycles sportspose  # local/runs/cycle_records/sportspose
+python -m cycle_alignment cycles fit3d      # local/runs/cycle_records/fit3d
 python -m cycle_alignment cycles index     # this tree + index.json + README.md
 ```
 
@@ -529,7 +540,7 @@ def run_index(args: argparse.Namespace) -> int:
             shutil.move(str(source), str(logs / name))
     # 3) stats + index
     datasets = {}
-    for name in ("gymnastics", "freeman", "unity", "sportspose"):
+    for name in ("gymnastics", "freeman", "unity", "fit3d"):
         root = records_root / name
         if root.is_dir():
             datasets[name] = _dataset_stats(root)
@@ -551,16 +562,17 @@ def run_index(args: argparse.Namespace) -> int:
             "keypoints_3d_sam3d": str(_resolve(args.unity_cache_root) / "{cam0,cam1}" / "<sample_id>.npz"),
             "keypoints_3d_reference": str(_resolve(args.unity_root) / "manifest.jsonl (keypoints_3d, world metres)"),
         },
-        "sportspose": {
-            "videos": str(SPORTSPOSE_ROOT / "videos" / "<day>" / "S<nn>" / "Video_<date>_<time>" / "CAM<k>.avi"),
-            "keypoints_3d_sam3d": str(_resolve(args.sportspose_cache_root) / "<day>" / "S<nn>" / "<activity>" / "<clip>" / "cam<k>.npz"),
-            "keypoints_3d_reference": str(SPORTSPOSE_ROOT / "data" / "<day>" / "S<nn>" / "<activity>" / "<clip>.npy (COCO17, metres)"),
-            "selected_views": str(_resolve(args.sportspose_views_path)),
+        "fit3d": {
+            "videos": str(FIT3D_ROOT / "train" / "s<nn>" / "videos" / "<camera>" / "<action>.mp4"),
+            "keypoints_3d_sam3d": str(_resolve(args.fit3d_cache_root) / "train" / "s<nn>" / "<camera>" / "<action>.npz"),
+            "keypoints_3d_reference": str(FIT3D_ROOT / "train" / "s<nn>" / "joints3d_25" / "<action>.json (25 joints, metres)"),
+            "repetitions": str(FIT3D_ROOT / "train" / "s<nn>" / "rep_ann.json"),
+            "selected_views": str(_resolve(args.fit3d_views_path)),
         },
     }
     index = {"generated": datetime.now().isoformat(timespec="seconds"), "datasets": datasets, "sources": sources}
     (records_root / "index.json").write_text(json.dumps(index, indent=2, ensure_ascii=False), encoding="utf-8")
-    truth = {"gymnastics": "`local/runs/split_cycle/.../alignment_record_<id>.json`", "freeman": "these files", "unity": "these files", "sportspose": "these files (one clip = one cycle)"}
+    truth = {"gymnastics": "`local/runs/split_cycle/.../alignment_record_<id>.json`", "freeman": "these files", "unity": "these files", "fit3d": "`rep_ann.json` of the release (these files carry the middles)"}
     rows = "\n".join(f"| {name} | {d['sequences']} | {d['with_cycles']} | {d['cycles']} | {truth[name]} |" for name, d in datasets.items())
     source_lines = []
     for name, entries in sources.items():
@@ -606,11 +618,12 @@ def build_parser() -> argparse.ArgumentParser:
     unity.add_argument("--fps", type=float, default=60.0)
     common(unity, public=True)
 
-    sportspose = sub.add_parser("sportspose", help="trial-as-cycle records for the SportsPose benchmark cache")
-    sportspose.add_argument("--config", type=Path, default=Path("src/configs/benchmarks/sportspose.yaml"))
-    sportspose.add_argument("--subjects", nargs="*", default=None, help="S00 S01 ... (applies to every day)")
-    common(sportspose, public=False)
-    sportspose.add_argument("--out-root", type=Path, default=None, help="record root (default: local/runs/cycle_records/sportspose)")
+    fit3d = sub.add_parser("fit3d", help="repetition records for Fit3D (bounds from rep_ann.json)")
+    fit3d.add_argument("--config", type=Path, default=Path("src/configs/benchmarks/fit3d.yaml"))
+    fit3d.add_argument("--subjects", nargs="*", default=None, help="s03 s04 ... (default: every subject of the config)")
+    fit3d.add_argument("--actions", nargs="*", default=None, help="exercise names (default: all)")
+    common(fit3d, public=False)
+    fit3d.add_argument("--out-root", type=Path, default=None, help="record root (default: local/runs/cycle_records/fit3d)")
 
     data_root = DATA_ROOT
     index = sub.add_parser("index", help="export private records, gather logs, write index.json and README.md")
@@ -623,15 +636,15 @@ def build_parser() -> argparse.ArgumentParser:
     index.add_argument("--unity-cache-root", type=Path, default=Path("local/runs/unity_benchmark/sam3d"))
     index.add_argument("--freeman-root", type=Path, default=Path(os.environ.get("FREEMAN_ROOT", str(FREEMAN_ROOT))))
     index.add_argument("--freeman-benchmark-root", type=Path, default=Path("local/runs/freeman_benchmark_cluster"))
-    index.add_argument("--sportspose-cache-root", type=Path, default=Path("local/runs/sportspose_benchmark/sam3d"))
-    index.add_argument("--sportspose-views-path", type=Path, default=Path("local/runs/sportspose_benchmark/selected_views.json"))
+    index.add_argument("--fit3d-cache-root", type=Path, default=Path(os.environ.get("GYMNASTICS_DERIVED_ROOT", "local/runs/fit3d_benchmark")) / "sam3d_fit3d")
+    index.add_argument("--fit3d-views-path", type=Path, default=Path("local/runs/fit3d_benchmark/selected_views.json"))
     return parser
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
-    if getattr(args, "out_root", None) is None and args.dataset in {"freeman", "unity", "sportspose"}:
+    if getattr(args, "out_root", None) is None and args.dataset in {"freeman", "unity", "fit3d"}:
         args.out_root = Path("local/runs/cycle_records") / args.dataset
     if args.dataset == "private":
         return run_private(args)
@@ -639,8 +652,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return run_freeman(args)
     if args.dataset == "unity":
         return run_unity(args)
-    if args.dataset == "sportspose":
-        return run_sportspose(args)
+    if args.dataset == "fit3d":
+        return run_fit3d(args)
     return run_index(args)
 
 

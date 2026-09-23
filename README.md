@@ -29,7 +29,7 @@ src/
 │   ├── baselines/      #    deterministic matrix + classical baselines   python -m fusion deterministic
 │   ├── external/       #    external baselines: model.py = published architectures on our contract (python -m fusion train model=external_*)
 │   │                   #                       published/ = the authors' own code, trained per fold (python -m fusion external-published)
-│   ├── benchmarks/     #    FreeMan / Unity / SportsPose                 python -m fusion benchmark-*
+│   ├── benchmarks/     #    FreeMan / Unity / Fit3D                      python -m fusion benchmark-*
 │   ├── analysis/       #    metrics, reports, cohort statistics          python -m fusion analyze | cohort-cycle
 │   └── archive/        #    frozen paper model (rotation_aware)          python -m fusion rotation-aware
 ├── common/             # shared library: paths, config helpers, MHR70 metadata, CLI dispatcher
@@ -222,7 +222,7 @@ src/fusion/
 ├── corruptions.py        joint/distal masks, noise, depth drift, frame dropouts
 ├── metrics.py            Procrustes / translation aligned MPJPE
 ├── data/                 base DataModule, windows, sample cache, and one adapter per
-│                         dataset (gymnastics, freeman, unity, sportspose) plus synthetic
+│                         dataset (gymnastics, freeman, unity, fit3d) plus synthetic
 ├── lightning_module.py   training / validation / test / predict steps
 └── train.py              Hydra entry point (`python -m fusion train`)
 src/configs/fusion/      Hydra groups: model, data, loss, corruption, trainer, optimizer, experiment
@@ -243,7 +243,7 @@ structure.
 | `gymnastics` | rotation-aware person cache or SAM3D + split-cycle records | `alignment_record_<id>.json` (`python -m cycle_alignment align`, middles via `python -m cycle_alignment cycles private`) | triangulated pseudo-reference |
 | `freeman` | zero-shot benchmark SAM3D cache | `local/runs/cycle_records/freeman` (`python -m cycle_alignment cycles freeman`) | `keypoints3d_optim` (COCO17) |
 | `unity` | Unity manifest + SAM3D camera cache | `local/runs/cycle_records/unity` (`python -m cycle_alignment cycles unity`) | native 3D (Unity22) |
-| `sportspose` | SportsPose benchmark SAM3D cache (`python -m fusion benchmark-sportspose`) | `local/runs/cycle_records/sportspose` (`python -m cycle_alignment cycles sportspose`, one trial = one cycle) | markerless multi-view 3D (COCO17) |
+| `fit3d` | Fit3D release + the external SAM3D cache (`python -m fusion benchmark-fit3d`) | `local/runs/cycle_records/fit3d` (`python -m cycle_alignment cycles fit3d`; bounds are the release's repetition annotations) | multi-view fitted 3D (25 joints, metres) |
 | `synthetic` | generated in memory | exact | generating motion |
 
 Cycle detection (cycle start = right-wrist azimuth crossing, middle =
@@ -255,7 +255,7 @@ training:
 python -m cycle_alignment cycles private      # adds "mid" to the 137 records
 python -m cycle_alignment cycles freeman      # local/runs/cycle_records/freeman
 python -m cycle_alignment cycles unity        # local/runs/cycle_records/unity
-python -m cycle_alignment cycles sportspose   # local/runs/cycle_records/sportspose
+python -m cycle_alignment cycles fit3d        # local/runs/cycle_records/fit3d
 python -m cycle_alignment cycles index        # unified tree + index.json + README.md
 ```
 
@@ -284,11 +284,10 @@ python -m fusion train data=freeman
 # Unity direction-transfer fold.
 python -m fusion train data=unity data.options.fold=right_to_left
 
-# SportsPose (prepare once: select-views + infer on the cluster, then the cycle records).
-python -m fusion benchmark-sportspose select-views
-bash pegasus/submit_sportspose_infer.sh
-python -m cycle_alignment cycles sportspose
-python -m fusion train data=sportspose data.fold_json=src/configs/fusion/folds/sportspose/fold_01.json
+# Fit3D (prepare once: select the view pair, then the repetition records).
+python -m fusion benchmark-fit3d select-views
+python -m cycle_alignment cycles fit3d
+python -m fusion train data=fit3d data.fold_json=src/configs/fusion/folds/fit3d/fold_01.json
 ```
 
 Outputs (resolved config, CSV logs, checkpoints, `result.json`) are written

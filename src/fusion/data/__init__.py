@@ -6,7 +6,7 @@ unified :class:`~fusion.sample.DualViewSample`:
     ``gymnastics``  private two-camera gymnastics recordings (cycles annotated)
     ``freeman``     public FreeMan release, two selected views per session
     ``unity``       synthetic Unity benchmark, two virtual cameras
-    ``sportspose``  public SportsPose release, trials of one action as cycles
+    ``fit3d``       public Fit3D release, repetitions of one exercise as cycles
 
 plus a ``synthetic`` DataModule that generates periodic motion for smoke
 tests and continuous integration.  Every DataModule derives from
@@ -58,11 +58,11 @@ def build_datamodule(config: Mapping[str, Any], *, trial_transform: Any = None) 
         from .unity import UnityDataModule
 
         return UnityDataModule(config, trial_transform=trial_transform)
-    if name == "sportspose":
-        from .sportspose import SportsPoseDataModule
+    if name == "fit3d":
+        from .fit3d import Fit3DDataModule
 
-        return SportsPoseDataModule(config, trial_transform=trial_transform)
-    raise ValueError(f"unknown dataset {name!r}; expected synthetic, gymnastics, freeman, unity or sportspose")
+        return Fit3DDataModule(config, trial_transform=trial_transform)
+    raise ValueError(f"unknown dataset {name!r}; expected synthetic, gymnastics, freeman, unity or fit3d")
 
 
 __all__ = [

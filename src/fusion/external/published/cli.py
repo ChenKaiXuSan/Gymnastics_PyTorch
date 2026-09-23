@@ -1,9 +1,9 @@
 """``python -m fusion external-published`` -- strict external baselines.
 
-    videopose3d   --dataset gymnastics|freeman|sportspose [--mode procrustes_average|per_view]
+    videopose3d   --dataset gymnastics|freeman|fit3d [--mode procrustes_average|per_view]
                   the released Human3.6M VideoPose3D checkpoint on the SAM3D 2D
                   keypoints of both views (zero-shot, appendix only)
-    videopose3d-trained  --dataset freeman|sportspose --stage prepare|train|evaluate|all
+    videopose3d-trained  --dataset freeman|fit3d --stage prepare|train|evaluate|all
                   VideoPose3D (243-frame release recipe, supervised) trained per fold
                   on the training subjects' reference joints, both views as monocular
                   samples; same records as MHFormer; see videopose3d_train.py
@@ -16,15 +16,15 @@
     canonpose     --dataset ... --stage prepare|train|evaluate|all   CanonPose trained
                   per fold with its released recipe on the training subjects' two-view
                   2D keypoints (self-supervised); see canonpose.py
-    mhformer      --dataset freeman|sportspose --stage prepare|train|evaluate|all
+    mhformer      --dataset freeman|fit3d --stage prepare|train|evaluate|all
                   MHFormer (supervised, 81-frame release configuration) trained per
                   fold on the training subjects' reference joints, both views as
                   monocular samples; no row for the private data (no independent
                   3D reference); see mhformer.py
-    mdvpose       --dataset freeman|sportspose --stage prepare|train|evaluate|all
+    mdvpose       --dataset freeman|fit3d --stage prepare|train|evaluate|all
                   MDVPose (MotionBERT fine-tuned with multi-view consistency,
                   supervised) trained per fold from the MotionBERT H36M checkpoint;
-                  FreeMan / SportsPose only; see mdvpose.py
+                  FreeMan / Fit3D only; see mdvpose.py
     model         --dataset ... --run <sweep dir> [--joints comparison12|all]
                   our own model's checkpoints through the same evaluator, so its
                   number is on the joints the external methods cover
@@ -317,7 +317,7 @@ def _run_keypoints2d(args: argparse.Namespace) -> int:
     from .keypoints2d import DEFAULT_CACHE_ROOT, write_manifest
 
     if args.dataset != "gymnastics":
-        raise SystemExit("keypoints2d caches are only needed for the private recordings; FreeMan and SportsPose read their benchmark caches directly")
+        raise SystemExit("keypoints2d caches are only needed for the private recordings; FreeMan and Fit3D read their benchmark caches directly")
     persons = args.persons or sorted((p.name for p in SAM3D_PERSON_ROOT.iterdir() if p.is_dir()), key=lambda s: (len(s), s))
     jobs = [(person, view) for person in persons for view in ("face", "side")]
     entries = []
@@ -334,7 +334,7 @@ def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m fusion external-published", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="method", required=True)
     vp = sub.add_parser("videopose3d", help="official VideoPose3D lifter, per view, Procrustes-averaged")
-    vp.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "sportspose"))
+    vp.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "fit3d"))
     vp.add_argument("--mode", default="procrustes_average", choices=("procrustes_average", "per_view"))
     vp.add_argument("--checkpoint", type=Path, default=None)
     vp.add_argument("--device", default="cuda")
@@ -343,7 +343,7 @@ def make_parser() -> argparse.ArgumentParser:
     _joints_argument(vp)
     vp.add_argument("--override", nargs="*", default=None, help="extra Hydra data overrides")
     vt = sub.add_parser("videopose3d-trained", help="VideoPose3D trained per fold on the reference joints (supervised)")
-    vt.add_argument("--dataset", required=True, choices=("freeman", "sportspose"))
+    vt.add_argument("--dataset", required=True, choices=("freeman", "fit3d"))
     vt.add_argument("--stage", default="all", choices=("prepare", "train", "evaluate", "all"))
     vt.add_argument("--mode", default="procrustes_average", help="comma- or plus-separated: procrustes_average, per_view")
     vt.add_argument("--epochs", type=int, default=None, help="override the released 80 epochs")
@@ -354,7 +354,7 @@ def make_parser() -> argparse.ArgumentParser:
     _joints_argument(vt)
     vt.add_argument("--override", nargs="*", default=None)
     mp = sub.add_parser("metapose", help="official MetaPose: stage-1 solver + stage-2 network trained per fold")
-    mp.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "sportspose"))
+    mp.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "fit3d"))
     mp.add_argument("--stage", default="all", choices=("prepare", "s1", "shards", "train", "predict", "s2", "evaluate", "all"), help="all = prepare, s1, shards, train, evaluate; predict = export from a saved best checkpoint; s2 = released checkpoint (zero-shot)")
     mp.add_argument("--checkpoint-stages", type=int, default=1, help="predict: number of stage models in the saved checkpoint")
     mp.add_argument("--workers", type=int, default=8, help="record shard writer processes")
@@ -376,7 +376,7 @@ def make_parser() -> argparse.ArgumentParser:
     _joints_argument(mp)
     mp.add_argument("--override", nargs="*", default=None, help="extra Hydra data overrides (applied to prepare and evaluate)")
     cp = sub.add_parser("canonpose", help="CanonPose trained per fold with its released recipe")
-    cp.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "sportspose"))
+    cp.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "fit3d"))
     cp.add_argument("--stage", default="all", choices=("prepare", "train", "evaluate", "all"))
     cp.add_argument("--mode", default="canonical_average", help="comma-separated: canonical_average, procrustes_average, per_view")
     cp.add_argument("--epochs", type=int, default=None, help="override the released 100 epochs")
@@ -388,7 +388,7 @@ def make_parser() -> argparse.ArgumentParser:
     _joints_argument(cp)
     cp.add_argument("--override", nargs="*", default=None)
     mh = sub.add_parser("mhformer", help="MHFormer trained per fold on the reference joints (supervised)")
-    mh.add_argument("--dataset", required=True, choices=("freeman", "sportspose"))
+    mh.add_argument("--dataset", required=True, choices=("freeman", "fit3d"))
     mh.add_argument("--stage", default="all", choices=("prepare", "train", "evaluate", "all"))
     mh.add_argument("--mode", default="procrustes_average", help="comma-separated: procrustes_average, per_view")
     mh.add_argument("--frames", type=int, default=None, help="receptive field (released: 81 here; 351 = 4x the cost)")
@@ -400,7 +400,7 @@ def make_parser() -> argparse.ArgumentParser:
     _joints_argument(mh)
     mh.add_argument("--override", nargs="*", default=None)
     md = sub.add_parser("mdvpose", help="MDVPose (MotionBERT multi-view fine-tuning) trained per fold (supervised)")
-    md.add_argument("--dataset", required=True, choices=("freeman", "sportspose"))
+    md.add_argument("--dataset", required=True, choices=("freeman", "fit3d"))
     md.add_argument("--stage", default="all", choices=("prepare", "train", "evaluate", "all"))
     md.add_argument("--mode", default="procrustes_average", help="comma-separated: procrustes_average, per_view")
     md.add_argument("--epochs", type=int, default=None, help="override the released 60 epochs")
@@ -412,7 +412,7 @@ def make_parser() -> argparse.ArgumentParser:
     _joints_argument(md)
     md.add_argument("--override", nargs="*", default=None)
     md_ = sub.add_parser("model", help="evaluate our model's fold checkpoints through this evaluator")
-    md_.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "sportspose"))
+    md_.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "fit3d"))
     md_.add_argument("--run", type=Path, required=True)
     md_.add_argument("--joints", default="comparison12")
     md_.add_argument("--checkpoint", default="last", choices=("last", "best"))

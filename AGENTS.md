@@ -64,8 +64,8 @@ python -m cycle_alignment align
 python -m cycle_alignment cycles private
 python -m cycle_alignment cycles freeman
 python -m cycle_alignment cycles unity
-python -m cycle_alignment cycles sportspose   # after `python -m fusion benchmark-sportspose infer`
-python -m cycle_alignment cycles index      # local/runs/cycle_records/{gymnastics,freeman,unity,sportspose} + index.json
+python -m cycle_alignment cycles fit3d       # repetition records (bounds from the release's rep_ann.json)
+python -m cycle_alignment cycles index      # local/runs/cycle_records/{gymnastics,freeman,unity,fit3d} + index.json
 
 # Triangulate SAM3D face/side 2D keypoints into pseudo-GT 3D joints.
 python -m pseudo_gt triangulate
@@ -101,7 +101,7 @@ configuration tree `configs/`:
 | support | `src/fusion/baselines/` | Deterministic comparison matrix and classical baselines every model is compared against (incl. the calibration-free depth-aware rule `avg_body_depthaware`). | `python -m fusion deterministic` |
 | support | `src/fusion/external/model.py` | External *architectures* re-implemented on the model's input/output contract (VideoPose3D-style TCN, SmoothNet, MetaPose-style MLP, MUC-style weights) and trained with the same folds, windows and losses. | `python -m fusion train model=external_<name>` |
 | support | `src/fusion/external/published/` | Strict external baselines: the **authors' own code** (CanonPose, MetaPose, MHFormer, MDVPose, VideoPose3D) trained per fold on our data and scored by one evaluator; no public-checkpoint zero-shot rows in the main table. Third-party checkouts in `external/third_party/` (four git submodules plus the vendored `metapose`). | `python -m fusion external-published <method> --dataset ... --stage ...` |
-| support | `src/fusion/benchmarks/` | FreeMan, Unity and SportsPose public benchmarks (adapters, view selection, SAM3D caches, zero-shot and trained evaluation). | `python -m fusion benchmark-{freeman,freeman-train,unity,sportspose}` |
+| support | `src/fusion/benchmarks/` | FreeMan, Unity and Fit3D public benchmarks (adapters, view selection, SAM3D caches, zero-shot and trained evaluation). | `python -m fusion benchmark-{freeman,freeman-train,unity,fit3d}` |
 | support | `src/fusion/analysis/` | Metrics, reports, cohort/repeated-cycle statistics, paper result tables. | `python -m fusion analyze`, `python -m fusion cohort-cycle` |
 | support | `src/common/` | Project paths, config helpers, MHR70 metadata, the shared CLI dispatcher. Library only, no entry point. | – |
 | config | `src/configs/` | `pose_estimation/`, `pseudo_gt/`, `fusion/` (Hydra tree of the model), `shared/` (MHR70 skeleton spec, fold files), `benchmarks/`, `analysis/`, `archive/` (old-model configs). | – |

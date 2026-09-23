@@ -121,7 +121,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--subjects-from", type=Path, default=Path("local/runs/split_cycle"), help="directory with person_<id> sub-directories")
     parser.add_argument("--student-mapping", type=Path, default=None, help="student_id_mapping.csv for cohort stratification")
     parser.add_argument("--freeman-manifests", type=Path, default=None, help="FreeMan benchmark manifests dir: subjects = every subject_NN_sessions.json, weights = session counts")
-    parser.add_argument("--sportspose-root", type=Path, default=None, help="SportsPose release root: subjects = the S-ids of data/*/S??, stratified by indoor/outdoor presence")
+    parser.add_argument("--fit3d-root", type=Path, default=None, help="Fit3D release root: subjects = train/s?? (the ones with joints3d_25), weights = annotated repetitions")
     parser.add_argument("--out", type=Path, default=Path("src/configs/fusion/folds/gymnastics"))
     parser.add_argument("--k", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
@@ -134,22 +134,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             subject = f"{int(payload['subject_id']):02d}"
             subjects.append(subject)
             weights[subject] = float(len(payload.get("sessions", [])))
-    elif args.sportspose_root is not None:
-        days_of: dict[str, set[str]] = {}
-        for day in sorted(p for p in (args.sportspose_root / "data").iterdir() if p.is_dir()):
-            for sub in day.iterdir():
-                if sub.is_dir() and (sub / "calib.pkl").is_file():
-                    days_of.setdefault(sub.name, set()).add(day.name)
-        subjects = sorted(days_of)
+    elif args.fit3d_root is not None:
+        subjects, weights = [], {}
+        for subject_dir in sorted(p for p in (args.fit3d_root / "train").iterdir() if p.is_dir()):
+            if not (subject_dir / "joints3d_25").is_dir():
+                continue  # test subjects carry no reference
+            reps = json.loads((subject_dir / "rep_ann.json").read_text(encoding="utf-8")) if (subject_dir / "rep_ann.json").is_file() else {}
+            subjects.append(subject_dir.name)
+            weights[subject_dir.name] = float(sum(max(len(marks) - 1, 0) for marks in reps.values()))
     else:
         subjects = sorted((p.name.split("_", 1)[1] for p in args.subjects_from.glob("person_*") if p.is_dir()), key=lambda s: (len(s), s))
     stratify = None
     extra: dict[str, object] = {"seed": args.seed}
-    if args.sportspose_root is not None:
-        stratify = lambda s: "+".join(sorted(days_of[s]))  # noqa: E731  (indoors / outdoors / both)
-        extra["days_per_subject"] = {s: sorted(days_of[s]) for s in subjects}
+    if args.fit3d_root is not None:
+        extra["repetitions_per_subject"] = {s: int(weights[s]) for s in subjects}
     if weights is not None:
-        extra["weights"] = "sessions"
+        extra["weights"] = "repetitions" if args.fit3d_root is not None else "sessions"
         extra["sessions_per_subject"] = {s: int(w) for s, w in weights.items()}
     if args.student_mapping is not None:
         students = _student_ids(args.student_mapping)

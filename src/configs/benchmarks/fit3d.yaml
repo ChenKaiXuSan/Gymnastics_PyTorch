@@ -1,0 +1,23 @@
+# Fit3D benchmark: release layout, SAM3D cache and view selection.
+paths:
+  dataset_root: ${oc.env:GYMNASTICS_PUBLIC_DATASETS_ROOT}/multiview_human/Fit3D
+  # Per-video SAM3D-Body cache produced outside this repository
+  # (<root>/<split>/<subject>/<camera>/<action>.npz, every camera and frame).
+  sam3d_derived_root: ${oc.env:GYMNASTICS_DERIVED_ROOT}/sam3d_fit3d
+  output_root: local/runs/fit3d_benchmark
+  views_path: local/runs/fit3d_benchmark/selected_views.json
+
+dataset:
+  # Only "train" carries joints3d_25; the three test subjects have no reference.
+  split: train
+  # null = every subject / exercise of the split.
+  subjects: null
+  actions: null
+
+pairing:
+  # View A is the camera closest to the direction the subject faces, view B the
+  # camera closest to this separation from it. The four cameras sit at about
+  # +-25 and +-157 degrees, so the selected pair is normally 132 degrees apart.
+  target_separation_deg: 90.0
+  # Index of the vertical world axis (Fit3D is z-up).
+  world_up_axis: 2

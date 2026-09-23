@@ -14,7 +14,7 @@ The four pipeline stages are the top-level packages and the only entry points;
 | support | `fusion.baselines` | Deterministic fusion methods (incl. the calibration-free depth-aware rule) and classical baselines. | `python -m fusion deterministic` |
 | support | `fusion.external.model` | External architectures on the model's contract (TCN, SmoothNet, MetaPose-style, MUC-style), retrained with the same protocol. | `python -m fusion train model=external_<name>` |
 | support | `fusion.external.published` | Published methods run as released (CanonPose, MetaPose, MHFormer, MDVPose, VideoPose3D), trained per fold and scored by one evaluator. | `python -m fusion external-published` |
-| support | `fusion.benchmarks` | FreeMan, Unity and SportsPose benchmarks. | `python -m fusion benchmark-{freeman,freeman-train,unity,sportspose}` |
+| support | `fusion.benchmarks` | FreeMan, Unity and Fit3D benchmarks. | `python -m fusion benchmark-{freeman,freeman-train,unity,fit3d}` |
 | support | `fusion.analysis` | Metrics, comparisons, reports, cohort statistics. | `python -m fusion analyze`, `python -m fusion cohort-cycle` |
 | support | `common` | Canonical project paths and MHR70 metadata. | Imported by other packages |
 | archive | `fusion.archive.rotation_aware` | Frozen paper model (2026-09-19); kept for reproducing published tables. | `python -m fusion rotation-aware` |

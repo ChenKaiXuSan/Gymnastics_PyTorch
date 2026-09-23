@@ -17,7 +17,7 @@ from typing import Any
 from common.paths import PROJECT_ROOT
 
 OUTPUT_ROOT = PROJECT_ROOT / "local" / "runs" / "external_published"
-DATASETS = ("gymnastics", "freeman", "sportspose")
+DATASETS = ("gymnastics", "freeman", "fit3d")
 ZERO_SHOT = {("videopose3d", "procrustes_average"), ("videopose3d", "per_view"), ("metapose", "s2_released")}
 
 

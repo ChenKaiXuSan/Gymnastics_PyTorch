@@ -27,7 +27,7 @@ from fusion.metrics import per_joint_error
 FOLD_DIRS = {
     "gymnastics": "src/configs/fusion/folds/gymnastics",
     "freeman": "src/configs/fusion/folds/freeman_all40",
-    "sportspose": "src/configs/fusion/folds/sportspose",
+    "fit3d": "src/configs/fusion/folds/fit3d",
 }
 
 
@@ -67,7 +67,7 @@ def evaluate_fold(dataset: str, fold_json: Path, transform: Callable[[PosePairTr
     """Per-frame PA-MPJPE of the prediction over the fold's test windows.
 
     Args:
-        dataset: ``gymnastics``, ``freeman`` or ``sportspose``.
+        dataset: ``gymnastics``, ``freeman`` or ``fit3d``.
         fold_json: The fold file (its test subjects are scored).
         transform: Trial transform that inserts the method's poses, or ``None``.
         extra_overrides: Extra Hydra data overrides.

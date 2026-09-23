@@ -5,7 +5,7 @@ Pretraining with Procrustes Alignment" fine-tunes the single-view MotionBERT
 lifter (DSTformer, 243-frame clips) on the target multi-view dataset with the
 MotionBERT 3D losses plus a Procrustes multi-view consistency term, one
 uncalibrated camera per batch item. It is a supervised baseline (3D MPJPE is
-the main loss), so it is trained on FreeMan / SportsPose only, per fold on
+the main loss), so it is trained on FreeMan / Fit3D only, per fold on
 the training subjects' two views, and evaluated on the held-out subjects.
 
 What is the authors' and what is ours:

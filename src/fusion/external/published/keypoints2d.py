@@ -11,7 +11,7 @@ has:
                  view below ``local/runs/external_published/keypoints2d``.
     freeman      ``prediction.npz`` of the benchmark cache (``points2d``); the
                  release videos are portrait 1080x1920.
-    sportspose   the external per-video cache (rank-0 person, upright frame).
+    fit3d        the external per-video cache (rank-0 person, 900x900 frames).
 
 Every loader returns :class:`View2D` with the keypoints indexed by video frame.
 """
@@ -124,15 +124,23 @@ def freeman_view(benchmark_root: Path, subject_id: int, session_id: str, view_id
     return View2D(frame_ids=frame_ids, points=points, valid=valid, width=FREEMAN_FRAME_SIZE[0], height=FREEMAN_FRAME_SIZE[1], name=f"freeman/{int(subject_id):02d}/{session_id}/{view_id}")
 
 
-# ----------------------------------------------------------------------------- sportspose
-def sportspose_view(derived_root: Path, clip, camera, frame_ids: np.ndarray, video_frames: np.ndarray) -> View2D:
-    """2D keypoints of one SportsPose clip view from the external per-video cache (upright frame)."""
-    from fusion.benchmarks.sportspose.sam3d import load_derived_prediction
+# ----------------------------------------------------------------------------- fit3d
+FIT3D_FRAME_SIZE = (900, 900)
 
-    prediction = load_derived_prediction(Path(derived_root), clip, camera, frame_ids, video_frames)
-    upright_portrait = int(camera.rot90_clockwise) % 2 == 1
-    width, height = (1216, 1936) if upright_portrait else (1936, 1216)
-    return View2D(frame_ids=np.asarray(prediction.frame_ids, dtype=np.int64), points=np.asarray(prediction.points_2d, dtype=np.float32), valid=np.asarray(prediction.valid_2d, dtype=bool), width=width, height=height, name=f"sportspose/{clip.day}/{clip.subject}/{clip.clip_id}/{camera.view_id}")
+
+def fit3d_view(derived_root: Path, sequence, camera: str, frame_ids: np.ndarray, *, split: str = "train") -> View2D:
+    """2D keypoints of one Fit3D camera from the external per-video cache."""
+    from fusion.benchmarks.fit3d.sam3d import load_prediction
+
+    prediction = load_prediction(Path(derived_root), sequence, camera, frame_ids, split=split)
+    return View2D(
+        frame_ids=np.asarray(prediction.frame_ids, dtype=np.int64),
+        points=np.asarray(prediction.points_2d, dtype=np.float32),
+        valid=np.asarray(prediction.valid_2d, dtype=bool),
+        width=FIT3D_FRAME_SIZE[0],
+        height=FIT3D_FRAME_SIZE[1],
+        name=f"fit3d/{sequence.subject}/{sequence.action}/{camera}",
+    )
 
 
 def write_manifest(cache_root: Path, dataset: str, entries: list[dict]) -> Path:

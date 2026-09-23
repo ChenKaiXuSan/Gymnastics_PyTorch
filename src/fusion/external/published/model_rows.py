@@ -91,7 +91,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - thin C
     from .evaluate import COMPARISON_JOINTS, write_summary
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "sportspose"))
+    parser.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "fit3d"))
     parser.add_argument("--run", type=Path, required=True, help="sweep directory with fold_XX/checkpoints")
     parser.add_argument("--joints", default="comparison12", help="'comparison12', 'all', or comma/plus-separated joint names")
     parser.add_argument("--checkpoint", default="last", choices=("last", "best"))

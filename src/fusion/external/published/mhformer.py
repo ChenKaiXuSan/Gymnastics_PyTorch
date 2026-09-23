@@ -4,7 +4,7 @@ MHFormer is a monocular video lifter: a window of 2D detections in, the 3D
 pose of the centre frame in camera coordinates (root-relative) out, trained
 with the MPJPE to 3D ground truth. It is a *supervised* baseline, so it is
 trained only on the datasets that carry an independent 3D reference (FreeMan,
-SportsPose): per fold, on the training subjects' two views (each view is a
+Fit3D): per fold, on the training subjects' two views (each view is a
 monocular sample), with the reference joints rotated into each camera, and
 evaluated on the held-out subjects. The private recordings have no such
 reference, so there is no MHFormer row for them.

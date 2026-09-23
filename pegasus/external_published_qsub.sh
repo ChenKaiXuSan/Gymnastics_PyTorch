@@ -6,7 +6,7 @@
 #   qsub -v STAGE=videopose3d,DATASET=gymnastics,MODE=per_view pegasus/external_published_qsub.sh
 #
 # STAGE    keypoints2d | videopose3d            (required)
-# DATASET  gymnastics | freeman | sportspose    (required)
+# DATASET  gymnastics | freeman | fit3d    (required)
 # MODE     procrustes_average (default) | per_view      (videopose3d only)
 # EXTRA    extra arguments appended to the command
 # REPO     checkout to run (default: the main working tree)
@@ -23,7 +23,7 @@ set -u
 REPO="${REPO:-/work/HP260146/chenkaixu/Gymnastics_PyTorch}"
 cd "$REPO" || exit 1
 : "${STAGE:?STAGE (keypoints2d|videopose3d) must be passed via qsub -v}"
-: "${DATASET:?DATASET (gymnastics|freeman|sportspose) must be passed via qsub -v}"
+: "${DATASET:?DATASET (gymnastics|freeman|fit3d) must be passed via qsub -v}"
 MODE="${MODE:-procrustes_average}"
 
 export PYTHONPATH="$REPO/src"

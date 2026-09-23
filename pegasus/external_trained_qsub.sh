@@ -5,7 +5,7 @@
 #   qsub -v METHOD=canonpose,DATASET=gymnastics,STAGE=all pegasus/external_trained_qsub.sh
 #
 # METHOD   canonpose | metapose | mhformer | mdvpose | videopose3d-trained   (required)
-# DATASET  gymnastics | freeman | sportspose   (required)
+# DATASET  gymnastics | freeman | fit3d   (required)
 # STAGE    all (default) | prepare | train | evaluate   (canonpose)
 #          all | prepare | s1 | train | evaluate          (metapose)
 #          several stages run in order when "::"-separated, e.g. STAGE=prepare::s1
