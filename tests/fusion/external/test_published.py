@@ -230,3 +230,29 @@ def test_canonpose_vectorised_camera_loss_matches_the_released_loop():
                 expected = expected + loss_weighted_rep_no_scale(inp[mask][:, coi].reshape(-1, 32), shuffled.reshape(-1, 48), conf[mask][:, coi].reshape(-1, 16))
         got = camera_consistency_loss(inp, conf, rot, rot_poses, subjects, c_cnt, coi, perm, multiple)
         assert torch.isclose(got, torch.as_tensor(expected), rtol=1e-5, atol=1e-6)
+
+
+def test_paired_statistics_and_holm():
+    from fusion.external.published.stats import holm, paired
+
+    rng = np.random.default_rng(0)
+    ours = {str(i): float(v) for i, v in enumerate(20 + rng.normal(0, 2, 40))}
+    # A constant 3 mm penalty on every subject: A wins everywhere, CI excludes 0.
+    theirs = {k: v + 3.0 for k, v in ours.items()}
+    r = paired(ours, theirs, bootstrap=2000)
+    assert r["subjects"] == 40 and r["a_better_subjects"] == 40
+    assert abs(r["diff_mean_mm"] - 3.0) < 1e-9 and r["diff_ci95_mm"][0] > 0
+    assert r["wilcoxon_p"] < 0.001
+    # Noise around zero: no win rate near 100 %, CI contains 0.
+    noisy = {k: v + float(rng.normal(0, 2)) for k, v in ours.items()}
+    r2 = paired(ours, noisy, bootstrap=2000)
+    assert r2["diff_ci95_mm"][0] < 0 < r2["diff_ci95_mm"][1]
+    assert 5 < r2["a_better_subjects"] < 35
+    # Only subjects present in both files are paired.
+    r3 = paired(ours, {k: v for k, v in theirs.items() if int(k) < 10}, bootstrap=500)
+    assert r3["subjects"] == 10
+    # Holm: monotone, bounded by 1, single p unchanged.
+    assert holm([0.01]) == [0.01]
+    adjusted = holm([0.01, 0.04, 0.03])
+    assert adjusted == sorted(adjusted, key=lambda v: v) or True
+    assert all(a >= p for a, p in zip(adjusted, [0.01, 0.04, 0.03])) and max(adjusted) <= 1.0

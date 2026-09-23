@@ -28,6 +28,8 @@
     model         --dataset ... --run <sweep dir> [--joints comparison12|all]
                   our own model's checkpoints through the same evaluator, so its
                   number is on the joints the external methods cover
+    compare       --a ours.json --b theirs.json ...   paired statistics over subjects
+                  (fold-level tests floor at p = 0.0625 for n = 5)
     report        [--markdown out.md] [--csv out.csv]   table of every summary_*.json
     keypoints2d   --dataset gymnastics [--persons ...]   build the private 2D cache
                   (decodes every per-frame SAM3D file once; run on the cluster)
@@ -417,6 +419,13 @@ def make_parser() -> argparse.ArgumentParser:
     md_.add_argument("--device", default="cuda")
     md_.add_argument("--folds-dir", type=Path, default=None)
     md_.add_argument("--override", nargs="*", default=None)
+    cm = sub.add_parser("compare", help="paired statistics over subjects between two result files")
+    cm.add_argument("--a", type=Path, required=True)
+    cm.add_argument("--b", type=Path, nargs="+", required=True)
+    cm.add_argument("--labels", nargs="*", default=None)
+    cm.add_argument("--json", type=Path, default=None)
+    cm.add_argument("--bootstrap", type=int, default=10000)
+    cm.add_argument("--seed", type=int, default=0)
     rp = sub.add_parser("report", help="collect every summary_*.json into one table")
     rp.add_argument("--markdown", type=Path, default=None)
     rp.add_argument("--csv", type=Path, default=None)
@@ -451,6 +460,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.override:
             argv2 += ["--override", *args.override]
         return model_main(argv2)
+    if args.method == "compare":
+        from .stats import main as stats_main
+
+        argv2 = ["--a", str(args.a), "--b", *[str(p) for p in args.b], "--bootstrap", str(args.bootstrap), "--seed", str(args.seed)]
+        if args.labels:
+            argv2 += ["--labels", *args.labels]
+        if args.json:
+            argv2 += ["--json", str(args.json)]
+        return stats_main(argv2)
     if args.method == "report":
         from .report import main as report_main
 

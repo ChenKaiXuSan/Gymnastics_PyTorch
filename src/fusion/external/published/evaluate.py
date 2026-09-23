@@ -96,6 +96,10 @@ def evaluate_fold(dataset: str, fold_json: Path, transform: Callable[[PosePairTr
     total, weight = 0.0, 0
     joints_used: set[int] = set()
     windows = 0
+    # Per subject: the joint-frame weighted error over that subject's windows,
+    # the unit paired statistics across subjects need (the fold metric above is
+    # the batch-weighted mean of per-batch means, as the Lightning module logs it).
+    per_subject: dict[str, list[float]] = {}
     with torch.no_grad():
         for batch in datamodule.test_dataloader():
             frame_mask = batch["frame_mask"][..., None]
@@ -110,6 +114,13 @@ def evaluate_fold(dataset: str, fold_json: Path, transform: Callable[[PosePairTr
             weight += size
             windows += size
             joints_used.update(int(j) for j in torch.nonzero(mask.any(dim=(0, 1))).flatten().tolist())
+            window_sum = torch.where(mask, errors, torch.zeros_like(errors)).sum(dim=(1, 2))
+            window_count = mask.sum(dim=(1, 2))
+            for subject, error_sum, count in zip(batch["subject_id"], window_sum.tolist(), window_count.tolist()):
+                entry = per_subject.setdefault(str(subject), [0.0, 0.0, 0])
+                entry[0] += float(error_sum)
+                entry[1] += float(count)
+                entry[2] += 1
     return {
         "fold": fold_json.stem,
         "pa_mpjpe": total / max(weight, 1),
@@ -117,6 +128,7 @@ def evaluate_fold(dataset: str, fold_json: Path, transform: Callable[[PosePairTr
         "test_subjects": list(datamodule.split.test),
         "joints_evaluated": sorted(joints_used),
         "joint_names": [datamodule.skeleton.joint_names[j] for j in sorted(joints_used)],
+        "per_subject": {subject: {"pa_mpjpe": entry[0] / entry[1], "entries": int(entry[1]), "windows": entry[2]} for subject, entry in sorted(per_subject.items()) if entry[1] > 0},
     }
 
 
@@ -133,9 +145,11 @@ def evaluate_folds(dataset: str, transform_factory: Callable[[Path], Callable[[P
     folds = fold_files(dataset, folds_dir)
     results = [evaluate_fold(dataset, fold, transform_factory(fold), extra_overrides=extra_overrides, joints=joints, predictor=predictor_factory(fold) if predictor_factory else None) for fold in folds]
     values = [r["pa_mpjpe"] for r in results]
+    subjects = {subject: values for result in results for subject, values in result["per_subject"].items()}
     return {
         "dataset": dataset,
         "folds": results,
+        "per_subject": dict(sorted(subjects.items(), key=lambda kv: (len(kv[0]), kv[0]))),
         "summary": {"pa_mpjpe_mean": statistics.fmean(values), "pa_mpjpe_sd": statistics.pstdev(values) if len(values) > 1 else 0.0, "folds": len(values), "joint_names": results[0]["joint_names"], "joint_subset": list(joints) if joints else None},
     }
 
