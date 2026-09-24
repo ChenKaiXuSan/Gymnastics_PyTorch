@@ -1,13 +1,12 @@
 """Two analyses the millimetre table cannot answer.
 
 **Stratified error** -- where does the learned model beat its closed-form
-rule? The comparison is run per window and split by conditions that are
-visible without the reference: how much of the two views' 2D input is
-missing (occlusion proxy), whether the window sits at a turn-around
-(the phase extremes) or in mid-swing, the cohort (elderly / student on the
-private data) and the action group (FreeMan). The learned parts currently
-lose on clean averages, so the question is whether a hard stratum exists
-where they win.
+rule? The comparison is run per frame and split by conditions that are
+visible without the reference: how much of the two views' input is missing
+(occlusion proxy), whether the frame sits at a turn-around (phase extremes)
+or in mid-swing, how fast the body moves, and the cohort (elderly / student
+on the private data). The learned parts lose on clean averages, so the
+question is whether a hard stratum exists where they win.
 
 **Measurement error** -- the application measures trunk rotation, not
 millimetres. For each cycle the range of motion and the peak angular
@@ -39,36 +38,48 @@ from fusion.metrics import per_joint_error
 COHORT_ELDERLY_MIN = 58  # private ids: 1-57 students, 58-137 elderly (src/configs/shared/folds)
 
 
-def window_errors(pose: torch.Tensor, reference: torch.Tensor, usable: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    """``([B] mean error, [B] valid)`` with the Procrustes alignment of the metric."""
+def frame_errors(pose: torch.Tensor, reference: torch.Tensor, usable: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """``([B, T] mean error, [B, T] valid)``: the metric aligns each frame separately."""
     errors, mask = per_joint_error(pose, reference, usable, align="procrustes")
-    count = mask.sum(dim=(1, 2))
-    total = torch.where(mask, errors, torch.zeros_like(errors)).sum(dim=(1, 2))
+    count = mask.sum(dim=-1)
+    total = torch.where(mask, errors, torch.zeros_like(errors)).sum(dim=-1)
     return total / count.clamp_min(1), count > 0
 
 
-def strata_of(batch: dict[str, Any], dataset: str) -> dict[str, list[str]]:
-    """Per-window strata labels that never look at the reference."""
+def frame_strata(batch: dict[str, Any], dataset: str) -> dict[str, list[list[str]]]:
+    """Per-frame strata labels (``[B][T]``) that never look at the reference.
+
+    The window-level version of this was useless: a window spans two whole
+    cycles, so every window averages to the same phase and the same input
+    coverage. These labels are per frame.
+    """
     frame_mask = batch["frame_mask"]
-    valid = (batch["valid_a"] & frame_mask[..., None]).float().sum(dim=(1, 2)) + (batch["valid_b"] & frame_mask[..., None]).float().sum(dim=(1, 2))
-    total = 2 * frame_mask.float().sum(dim=1) * batch["valid_a"].shape[-1]
-    observed = (valid / total.clamp_min(1)).tolist()
-    labels: dict[str, list[str]] = {}
-    labels["observed_input"] = ["<90 %" if v < 0.9 else ("90-97 %" if v < 0.97 else ">=97 %") for v in observed]
-    # Phase: |phase - 0.5| small = mid-swing, near 0/1 = turn-around (phase is the cycle coordinate).
+    batch_size, frames = frame_mask.shape
+    labels: dict[str, list[list[str]]] = {}
+    joints = batch["valid_a"].shape[-1]
+    observed = (batch["valid_a"].float().sum(-1) + batch["valid_b"].float().sum(-1)) / (2 * joints)
+    labels["observed_input"] = [["<80 %" if v < 0.8 else ("80-95 %" if v < 0.95 else ">=95 %") for v in row] for row in observed.tolist()]
     phase = batch.get("phase")
     if phase is not None:
-        centre = (phase[..., 0] if phase.dim() == 3 else phase)
-        distance = (centre - 0.5).abs()
-        mean_distance = torch.where(frame_mask, distance, torch.zeros_like(distance)).sum(dim=1) / frame_mask.float().sum(dim=1).clamp_min(1)
-        labels["phase_region"] = ["turn-around" if float(v) > 0.3 else ("mid-swing" if float(v) < 0.2 else "mixed") for v in mean_distance]
+        centre = phase[..., 0] if phase.dim() == 3 else phase
+        # phase is the cycle coordinate in [0, 1): 0 and 1 are the turn-arounds, 0.5 mid-swing.
+        distance = torch.minimum(centre % 1.0, 1.0 - (centre % 1.0))
+        labels["phase_region"] = [["turn-around" if v < 0.15 else ("mid-swing" if v > 0.35 else "between") for v in row] for row in distance.tolist()]
+    speed = None
+    delta_t = batch.get("delta_t")
+    if delta_t is not None:
+        motion = torch.zeros_like(frame_mask, dtype=torch.float32)
+        motion[:, 1:] = torch.linalg.vector_norm(batch["pose_a"][:, 1:] - batch["pose_a"][:, :-1], dim=-1).mean(-1) / delta_t[:, 1:].clamp_min(1e-4)
+        speed = motion
+        quantiles = torch.quantile(motion[frame_mask].flatten(), torch.tensor([0.33, 0.66])) if bool(frame_mask.any()) else torch.tensor([0.0, 0.0])
+        labels["speed"] = [["slow" if v < float(quantiles[0]) else ("fast" if v > float(quantiles[1]) else "medium") for v in row] for row in speed.tolist()]
     if dataset == "gymnastics":
-        labels["cohort"] = ["elderly" if int(s) >= COHORT_ELDERLY_MIN else "student" for s in batch["subject_id"]]
+        labels["cohort"] = [[("elderly" if int(s) >= COHORT_ELDERLY_MIN else "student")] * frames for s in batch["subject_id"]]
     return labels
 
 
 def stratified(dataset: str, run_dir: Path, *, joints: Sequence[str] | None, device: str = "cuda", folds_dir: Path | None = None, extra: Sequence[str] = ()) -> dict[str, Any]:
-    """Model minus rule, per window, grouped by stratum."""
+    """Model minus rule, per frame, grouped by stratum."""
     from omegaconf import OmegaConf
 
     from fusion.data import build_datamodule
@@ -91,29 +102,31 @@ def stratified(dataset: str, run_dir: Path, *, joints: Sequence[str] | None, dev
             subset = torch.zeros(len(names), dtype=torch.bool)
             subset[[names.index(n) for n in joints]] = True
         for batch in datamodule.test_dataloader():
-            frame_mask = batch["frame_mask"][..., None]
+            frame_mask = batch["frame_mask"]
             reference, reference_valid = batch["reference"], batch["reference_valid"]
             model_pose, model_valid = predict_model(batch)
             rule_pose, rule_valid = predict_rule(batch)
-            usable = reference_valid & model_valid & rule_valid & frame_mask
+            usable = reference_valid & model_valid & rule_valid & frame_mask[..., None]
             if subset is not None:
                 usable = usable & subset
-            model_error, ok_m = window_errors(model_pose, reference, usable)
-            rule_error, ok_r = window_errors(rule_pose, reference, usable)
-            ok = ok_m & ok_r
-            for name, labels in strata_of(batch, dataset).items():
-                for index, label in enumerate(labels):
-                    if bool(ok[index]):
-                        groups[(name, label)].append((float(model_error[index]), float(rule_error[index])))
+            model_error, ok_m = frame_errors(model_pose, reference, usable)
+            rule_error, ok_r = frame_errors(rule_pose, reference, usable)
+            ok = (ok_m & ok_r & frame_mask).tolist()
+            model_list, rule_list = model_error.tolist(), rule_error.tolist()
+            for name, labels in frame_strata(batch, dataset).items():
+                for b, row in enumerate(labels):
+                    for t, label in enumerate(row):
+                        if ok[b][t]:
+                            groups[(name, label)].append((model_list[b][t], rule_list[b][t]))
     rows = []
     for (name, label), values in sorted(groups.items()):
         model_values = [1000 * v[0] for v in values]
         rule_values = [1000 * v[1] for v in values]
         differences = [r - m for m, r in zip(model_values, rule_values)]
         rows.append({
-            "stratum": name, "level": label, "windows": len(values),
+            "stratum": name, "level": label, "frames": len(values),
             "model_mm": statistics.fmean(model_values), "rule_mm": statistics.fmean(rule_values),
-            "diff_mm": statistics.fmean(differences), "model_better_windows": sum(1 for d in differences if d > 0),
+            "diff_mm": statistics.fmean(differences), "model_better_frames": sum(1 for d in differences if d > 0),
         })
     return {"dataset": dataset, "run": str(run_dir), "strata": rows}
 
@@ -187,7 +200,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - thin C
         (root / "strata.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(f"[analysis] {args.dataset} strata (model - rule, positive = model better):")
         for row in payload["strata"]:
-            print(f"   {row['stratum']:16s} {row['level']:12s} n={row['windows']:6d}  model {row['model_mm']:6.2f}  rule {row['rule_mm']:6.2f}  diff {row['diff_mm']:+5.2f}  model better {row['model_better_windows']}/{row['windows']}")
+            print(f"   {row['stratum']:16s} {row['level']:12s} n={row['frames']:7d}  model {row['model_mm']:6.2f}  rule {row['rule_mm']:6.2f}  diff {row['diff_mm']:+5.2f}  model better {row['model_better_frames']}/{row['frames']}")
     if "measurement" in wanted:
         payload = measurement(args.dataset, args.run, device=args.device, folds_dir=args.folds_dir, extra=list(args.override or []))
         (root / "measurement.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
