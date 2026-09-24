@@ -28,6 +28,7 @@
     model         --dataset ... --run <sweep dir> [--joints comparison12|all]
                   our own model's checkpoints through the same evaluator, so its
                   number is on the joints the external methods cover
+    cost          parameters, inference time and what each method's recipe requires
     pseudo-reference build   triangulate FreeMan's two selected views into a
                   private-style pseudo-reference, to measure how much such a
                   reference flatters two-view fusion
@@ -429,6 +430,9 @@ def make_parser() -> argparse.ArgumentParser:
     md_.add_argument("--device", default="cuda")
     md_.add_argument("--folds-dir", type=Path, default=None)
     md_.add_argument("--override", nargs="*", default=None)
+    ct = sub.add_parser("cost", help="parameter counts, inference time and method requirements")
+    ct.add_argument("--device", default="cuda")
+    ct.add_argument("--repeats", type=int, default=20)
     pr = sub.add_parser("pseudo-reference", help="build FreeMan's two-view triangulated reference")
     pr.add_argument("action", choices=("build",))
     pr.add_argument("--benchmark-root", type=Path, default=None)
@@ -492,6 +496,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.override:
             argv2 += ["--override", *args.override]
         return model_main(argv2)
+    if args.method == "cost":
+        from .cost_table import main as cost_main
+
+        return cost_main(["--device", args.device, "--repeats", str(args.repeats)])
     if args.method == "pseudo-reference":
         from .pseudo_reference import main as pseudo_main
 
