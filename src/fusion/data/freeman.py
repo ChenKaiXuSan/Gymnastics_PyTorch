@@ -59,7 +59,8 @@ Session selection:
 Options (``data.options``):
     benchmark_root, subjects (list of ints), reference_scale_to_m,
     cycle_records_root, require_cycle_records, actions, action_table,
-    min_cycles, max_period_cv
+    min_cycles, max_period_cv, reference_source ("release" |
+    "two_view_triangulated"), pseudo_reference_root
 """
 
 from __future__ import annotations
@@ -140,6 +141,31 @@ class FreeManDataModule(DualViewDataModule):
         root = _resolve(self.config.options.get("benchmark_root", "local/runs/freeman_benchmark_cluster"))
         return sorted(int(path.stem.split("_")[1]) for path in (root / "manifests").glob("subject_*_sessions.json"))
 
+    @property
+    def _two_view_reference(self) -> bool:
+        """``options.reference_source`` = ``two_view_triangulated`` swaps the 8-camera reference
+        for one triangulated from the two selected views, the way the private dataset's
+        pseudo-reference is built (see ``fusion.external.published.pseudo_reference``)."""
+        source = str(self.config.options.get("reference_source", "release"))
+        if source not in {"release", "two_view_triangulated"}:
+            raise ValueError("freeman options.reference_source must be 'release' or 'two_view_triangulated'")
+        return source == "two_view_triangulated"
+
+    def _load_two_view_reference(self, trial) -> tuple[np.ndarray, np.ndarray] | None:
+        """The cached two-view triangulation of this session, sampled on the trial's frames."""
+        root = _resolve(self.config.options.get("pseudo_reference_root", "local/runs/external_published/pseudo_reference/freeman"))
+        path = root / f"{trial.trial_id}.npz"
+        if not path.is_file():
+            return None
+        payload = np.load(path)
+        frame_ids = np.asarray(payload["frame_ids"], dtype=np.int64)
+        wanted = np.asarray(trial.face_map, dtype=np.int64)
+        position = np.clip(np.searchsorted(frame_ids, wanted), 0, len(frame_ids) - 1)
+        hit = frame_ids[position] == wanted
+        points = np.where(hit[:, None, None], np.asarray(payload["keypoints3d"], dtype=np.float32)[position], 0.0)
+        valid = np.asarray(payload["valid"], dtype=bool)[position] & hit[:, None]
+        return coco17_to_mhr70(points, valid)
+
     def _load_reference(self, path: Path | None, frames: int) -> tuple[np.ndarray, np.ndarray] | None:
         if path is None or not Path(path).is_file():
             return None
@@ -203,7 +229,7 @@ class FreeManDataModule(DualViewDataModule):
                 trial = self._transform(trial)
                 reference = reference_valid = None
                 if self.config.attach_reference:
-                    loaded = self._load_reference(reference_path, trial.face.shape[0])
+                    loaded = self._load_two_view_reference(trial) if self._two_view_reference else self._load_reference(reference_path, trial.face.shape[0])
                     if loaded is not None:
                         reference, reference_valid = loaded
                 samples.append(

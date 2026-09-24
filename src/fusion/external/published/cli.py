@@ -28,6 +28,9 @@
     model         --dataset ... --run <sweep dir> [--joints comparison12|all]
                   our own model's checkpoints through the same evaluator, so its
                   number is on the joints the external methods cover
+    pseudo-reference build   triangulate FreeMan's two selected views into a
+                  private-style pseudo-reference, to measure how much such a
+                  reference flatters two-view fusion
     analysis      --dataset ... --run <sweep> [--what strata,measurement]
                   where the learned model beats its rule (strata that ignore the
                   reference) and trunk-rotation measurement error per cycle
@@ -426,6 +429,11 @@ def make_parser() -> argparse.ArgumentParser:
     md_.add_argument("--device", default="cuda")
     md_.add_argument("--folds-dir", type=Path, default=None)
     md_.add_argument("--override", nargs="*", default=None)
+    pr = sub.add_parser("pseudo-reference", help="build FreeMan's two-view triangulated reference")
+    pr.add_argument("action", choices=("build",))
+    pr.add_argument("--benchmark-root", type=Path, default=None)
+    pr.add_argument("--subjects", nargs="*", type=int, default=None)
+    pr.add_argument("--scale-to-m", type=float, default=0.01)
     an = sub.add_parser("analysis", help="stratified comparison and measurement-level errors")
     an.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "fit3d"))
     an.add_argument("--run", type=Path, required=True)
@@ -484,6 +492,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.override:
             argv2 += ["--override", *args.override]
         return model_main(argv2)
+    if args.method == "pseudo-reference":
+        from .pseudo_reference import main as pseudo_main
+
+        argv2 = [args.action, "--scale-to-m", str(args.scale_to_m)]
+        if args.benchmark_root:
+            argv2 += ["--benchmark-root", str(args.benchmark_root)]
+        if args.subjects:
+            argv2 += ["--subjects", *[str(s) for s in args.subjects]]
+        return pseudo_main(argv2)
     if args.method == "analysis":
         from .analysis_rows import main as analysis_main
 
