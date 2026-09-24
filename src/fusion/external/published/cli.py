@@ -28,6 +28,9 @@
     model         --dataset ... --run <sweep dir> [--joints comparison12|all]
                   our own model's checkpoints through the same evaluator, so its
                   number is on the joints the external methods cover
+    corruption    --dataset ... --run <sweep> [--levels 0,0.5,1,2] [--variants model,rule]
+                  the learned model and its closed-form rule under increasing
+                  test-time corruption (evaluation only, no retraining)
     compare       --a ours.json --b theirs.json ...   paired statistics over subjects
                   (fold-level tests floor at p = 0.0625 for n = 5)
     report        [--markdown out.md] [--csv out.csv]   table of every summary_*.json
@@ -420,6 +423,15 @@ def make_parser() -> argparse.ArgumentParser:
     md_.add_argument("--device", default="cuda")
     md_.add_argument("--folds-dir", type=Path, default=None)
     md_.add_argument("--override", nargs="*", default=None)
+    cr = sub.add_parser("corruption", help="corruption-level sweep of a finished run")
+    cr.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "fit3d"))
+    cr.add_argument("--run", type=Path, required=True)
+    cr.add_argument("--levels", default="0,0.5,1,2")
+    cr.add_argument("--variants", default="model,rule")
+    cr.add_argument("--joints", default="comparison12")
+    cr.add_argument("--device", default="cuda")
+    cr.add_argument("--folds-dir", type=Path, default=None)
+    cr.add_argument("--override", nargs="*", default=None)
     cm = sub.add_parser("compare", help="paired statistics over subjects between two result files")
     cm.add_argument("--a", type=Path, required=True)
     cm.add_argument("--b", type=Path, nargs="+", required=True)
@@ -461,6 +473,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.override:
             argv2 += ["--override", *args.override]
         return model_main(argv2)
+    if args.method == "corruption":
+        from .corruption_sweep import main as corruption_main
+
+        argv2 = ["--dataset", args.dataset, "--run", str(args.run), "--levels", args.levels, "--variants", args.variants, "--joints", args.joints, "--device", args.device]
+        if args.folds_dir:
+            argv2 += ["--folds-dir", str(args.folds_dir)]
+        if args.override:
+            argv2 += ["--override", *args.override]
+        return corruption_main(argv2)
     if args.method == "compare":
         from .stats import main as stats_main
 
