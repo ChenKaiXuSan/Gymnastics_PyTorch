@@ -28,6 +28,9 @@
     model         --dataset ... --run <sweep dir> [--joints comparison12|all]
                   our own model's checkpoints through the same evaluator, so its
                   number is on the joints the external methods cover
+    analysis      --dataset ... --run <sweep> [--what strata,measurement]
+                  where the learned model beats its rule (strata that ignore the
+                  reference) and trunk-rotation measurement error per cycle
     corruption    --dataset ... --run <sweep> [--levels 0,0.5,1,2] [--variants model,rule]
                   the learned model and its closed-form rule under increasing
                   test-time corruption (evaluation only, no retraining)
@@ -423,6 +426,14 @@ def make_parser() -> argparse.ArgumentParser:
     md_.add_argument("--device", default="cuda")
     md_.add_argument("--folds-dir", type=Path, default=None)
     md_.add_argument("--override", nargs="*", default=None)
+    an = sub.add_parser("analysis", help="stratified comparison and measurement-level errors")
+    an.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "fit3d"))
+    an.add_argument("--run", type=Path, required=True)
+    an.add_argument("--what", default="strata,measurement")
+    an.add_argument("--joints", default="comparison12")
+    an.add_argument("--device", default="cuda")
+    an.add_argument("--folds-dir", type=Path, default=None)
+    an.add_argument("--override", nargs="*", default=None)
     cr = sub.add_parser("corruption", help="corruption-level sweep of a finished run")
     cr.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "fit3d"))
     cr.add_argument("--run", type=Path, required=True)
@@ -473,6 +484,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.override:
             argv2 += ["--override", *args.override]
         return model_main(argv2)
+    if args.method == "analysis":
+        from .analysis_rows import main as analysis_main
+
+        argv2 = ["--dataset", args.dataset, "--run", str(args.run), "--what", args.what, "--joints", args.joints, "--device", args.device]
+        if args.folds_dir:
+            argv2 += ["--folds-dir", str(args.folds_dir)]
+        if args.override:
+            argv2 += ["--override", *args.override]
+        return analysis_main(argv2)
     if args.method == "corruption":
         from .corruption_sweep import main as corruption_main
 
