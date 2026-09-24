@@ -122,8 +122,8 @@ comparison12`), which on all 20 joints reproduces the sweep's own numbers.
 | MHFormer-81 | 3D ref | n/a | 43.6 ± 5.5 | 27.2 ± 2.4 |
 | VideoPose3D-243 trained | 3D ref | n/a | 46.3 ± 5.8 | 27.1 ± 2.5 |
 | CanonPose | none | 28.0 ± 0.9 | 53.4 ± 4.3 | 103.9 ± 18.3 |
-| MetaPose stage 1 | none | 43.3 ± 0.9 | 55.9 ± 5.0 | pending |
-| MetaPose stage 2 (`ts`) | none | 75.5 ± 10.3 | 68.4 ± 1.5 | pending |
+| MetaPose stage 1 | none | 43.3 ± 0.9 | 55.9 ± 5.0 | 58.6 ± 4.0 |
+| MetaPose stage 2 (`ts`) | none | 75.5 ± 10.3 | 68.4 ± 1.5 | 66.6 ± 5.3 |
 | VideoPose3D H36M checkpoint, zero-shot (appendix) | -- | n/a | 83.8 ± 6.4 | 49.4 ± 2.4 |
 | Single view (face) | -- | 31.7 ± 1.0 | 48.6 ± 4.5 | 53.2 ± 4.0 |
 
@@ -175,6 +175,8 @@ below 0.07 with nine comparisons):
 | VideoPose3D-trained | 27.4 | 47.5 | -20.13 [-25.97, -14.16] | 0/8 | 7.8e-03 |
 | Ours, reference-supervised | 25.2 | 47.5 | -22.25 [-26.68, -17.96] | 0/8 | 7.8e-03 |
 | CanonPose | 99.6 | 47.5 | +52.08 [+37.25, +65.01] | 8/8 | 7.8e-03 |
+| MetaPose S1 | 58.3 | 47.5 | +10.78 [+9.60, +11.83] | 8/8 | 7.8e-03 |
+| MetaPose S2-ts | 66.8 | 47.5 | +19.31 [+16.67, +23.06] | 8/8 | 7.8e-03 |
 | VideoPose3D zero-shot | 49.5 | 47.5 | +1.97 [-1.53, +5.23] | 5/8 | 0.25 |
 | Closed-form rule | 47.4 | 47.5 | -0.08 [-0.18, +0.02] | 2/8 | 0.20 |
 
@@ -192,7 +194,8 @@ below 0.07 with nine comparisons):
    part of the error the two views disagree on, while a supervised lifter
    also learns the systematic SAM3D -> Fit3D skeleton offset that survives
    Procrustes alignment. The self-supervised setting cannot see that offset
-   by construction.
+   by construction. Within the label-free family the ranking is unchanged:
+   we beat MetaPose S1 by 10.8 mm and CanonPose by 52 mm on all 8 subjects.
 3. **The learned part does not pay for itself on clean data.** The
    closed-form rule is 1.4 mm better than the full model on the private
    data (17/137 subjects better, p_Holm 2e-21) and 0.3 mm better on FreeMan;
@@ -265,8 +268,8 @@ table must re-aggregate the model on those joints.
 * Gymnastics: CanonPose and MetaPose (S1, S2 `fwd`, S2 `ts`) evaluated.
 * FreeMan: all five methods evaluated; MetaPose S2 `fwd` not run (crashes
   inside cuSOLVER `gesvd` in stage 1, twice).
-* Fit3D: CanonPose, MHFormer, MDVPose, VideoPose3D (trained and zero-shot)
-  evaluated; MetaPose S1/S2-`ts` folds 1, 4, 5 still training.
+* Fit3D: complete -- CanonPose, MetaPose (S1 and S2-`ts`), MHFormer,
+  MDVPose, VideoPose3D (trained and zero-shot).
 * v1.1 ablations (gymnastics, 8 presets) and seeds 1-2 for both main sweeps
   are in `local/runs/cycle_aware/`; seed spread is 0.07 mm, an order of
   magnitude below the effects discussed above.
