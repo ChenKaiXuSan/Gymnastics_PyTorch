@@ -60,7 +60,9 @@ def fold_checkpoint(run_dir: Path, fold: str, *, which: str = "auto") -> Path:
         if not path.is_file():
             raise FileNotFoundError(f"{path} missing; use --checkpoint best")
         return path
-    candidates = sorted(p for p in directory.glob("*.ckpt") if p.name != "last.ckpt")
+    # Only the monitored files (``epochNNN-val_total*.ckpt``); ``final.ckpt`` and
+    # ``last.ckpt`` would otherwise sort into the selection.
+    candidates = sorted(directory.glob("epoch*-val_total*.ckpt"))
     if not candidates:
         raise FileNotFoundError(f"no monitored checkpoint in {directory}")
     return candidates[-1]

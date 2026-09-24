@@ -256,3 +256,25 @@ def test_paired_statistics_and_holm():
     adjusted = holm([0.01, 0.04, 0.03])
     assert adjusted == sorted(adjusted, key=lambda v: v) or True
     assert all(a >= p for a, p in zip(adjusted, [0.01, 0.04, 0.03])) and max(adjusted) <= 1.0
+
+
+def test_model_rows_score_the_reported_final_weights(tmp_path):
+    """``auto`` picks final.ckpt (the reported last epoch) and falls back to last.ckpt only for old runs."""
+    import pytest
+
+    from fusion.external.published.model_rows import fold_checkpoint
+
+    new = tmp_path / "new" / "fold_01" / "checkpoints"
+    old = tmp_path / "old" / "fold_01" / "checkpoints"
+    for directory in (new, old):
+        directory.mkdir(parents=True)
+        (directory / "last.ckpt").write_bytes(b"best-val copy")
+        (directory / "epoch012-val_total0.0300.ckpt").write_bytes(b"best-val")
+    (new / "final.ckpt").write_bytes(b"last epoch")
+    assert fold_checkpoint(tmp_path / "new", "fold_01").name == "final.ckpt"
+    assert fold_checkpoint(tmp_path / "old", "fold_01").name == "last.ckpt"
+    assert fold_checkpoint(tmp_path / "new", "fold_01", which="best").name.startswith("epoch012")
+    with pytest.raises(FileNotFoundError, match="predates"):
+        fold_checkpoint(tmp_path / "old", "fold_01", which="final")
+    with pytest.raises(ValueError):
+        fold_checkpoint(tmp_path / "new", "fold_01", which="latest")
