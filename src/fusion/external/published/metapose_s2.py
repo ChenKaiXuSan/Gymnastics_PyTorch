@@ -200,8 +200,13 @@ def trainable_rows(directory: Path) -> np.ndarray:
     """Frames with a sane stage-1 solution: usable, weak-perspective scales in [0.25, 4] and a non-collapsed pose.
 
     The batched solver occasionally ends in a degenerate optimum (a collapsed
-    pose with a huge scale; FreeMan: 1 of 710k frames); such targets are
-    excluded from stage-2 training, never from the test rows.
+    pose with a huge scale; FreeMan: 1 of 710k frames). Such frames are left
+    out of the records altogether -- also of the test split, because the
+    script's ``pmpjpe`` metric Procrustes-aligns every record and a constant
+    (neutral) pose makes ``align_aba`` divide by a zero norm; the resulting
+    NaN aborts the run inside cuSOLVER's ``gesvd`` ("info = 2"). Frames
+    without a record simply get no MetaPose prediction: the evaluation
+    transform marks them invalid.
     """
     s1 = np.load(directory / "s1.npz")
     usable = np.asarray(s1["usable"], dtype=bool)
@@ -212,7 +217,7 @@ def trainable_rows(directory: Path) -> np.ndarray:
 
 
 def write_shards(directory: Path, third_party: Path, *, workers: int = 8) -> Path:
-    """``shards/<person>/train`` (trainable frames) and ``shards/<person>/test`` (all frames, index order) for every subject."""
+    """``shards/<person>/{train,test}`` of the frames with a sane stage-1 solution, in index order."""
     usable = trainable_rows(directory)
     shards = directory / "shards"
     if shards.exists():
@@ -220,9 +225,10 @@ def write_shards(directory: Path, third_party: Path, *, workers: int = 8) -> Pat
     tasks, manifest = [], {}
     for person, start, stop in person_blocks(directory):
         rows = np.arange(start, stop, dtype=np.int64)
-        manifest[person] = {"start": start, "stop": stop, "train_rows": int(usable[rows].sum()), "test_rows": int(len(rows))}
-        tasks.append((str(directory), str(third_party), str(shards / person / "test"), rows))
-        tasks.append((str(directory), str(third_party), str(shards / person / "train"), rows[usable[rows]]))
+        kept = rows[usable[rows]]
+        manifest[person] = {"start": start, "stop": stop, "train_rows": int(len(kept)), "test_rows": int(len(kept)), "frames": int(len(rows))}
+        tasks.append((str(directory), str(third_party), str(shards / person / "test"), kept))
+        tasks.append((str(directory), str(third_party), str(shards / person / "train"), kept))
     # The writer is serial per shard; subjects are written in parallel processes (spawned: TensorFlow does not fork well).
     with ProcessPoolExecutor(max_workers=max(1, workers), mp_context=multiprocessing.get_context("spawn")) as pool:
         for out, count in pool.map(_write_shard, tasks):
@@ -258,6 +264,7 @@ def assemble_fold(directory: Path, third_party: Path, *, fold: str, train_person
     train_rows = train_rows[usable[train_rows]]
     test_persons = sorted(test_persons, key=lambda p: blocks[p][0])
     test_rows = np.concatenate([np.arange(*blocks[p]) for p in test_persons])
+    test_rows = test_rows[usable[test_rows]]  # the shards hold exactly these frames
     if len(train_rows) == 0 or len(test_rows) == 0:
         raise ValueError(f"{fold}: {len(train_rows)} training / {len(test_rows)} test frames")
     dataset_dir = directory / f"opt_{fold}"

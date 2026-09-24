@@ -11,10 +11,16 @@ the table comes out of the same code path.
     python -m fusion external-published model --dataset gymnastics \
         --run local/runs/cycle_aware/gymnastics_v1_1_5fold_seed0 [--joints comparison12]
 
-``--checkpoint last`` (default) matches what the sweep reports: ``run_fold``
-calls ``trainer.test`` without ``ckpt_path``, i.e. on the final-epoch
-weights that ``last.ckpt`` holds; ``--checkpoint best`` uses the
-``val/total`` checkpoint instead.
+``--checkpoint auto`` (default) scores the weights the sweep reports:
+``run_fold`` calls ``trainer.test`` on the module in memory, i.e. the last
+epoch, which runs since 2026-09-23 save as ``final.ckpt``. ``last.ckpt`` is
+NOT those weights -- Lightning refreshes it only on a monitored save, so it is
+the best ``val/total`` checkpoint (see
+``docs/research/checkpoint_reproducibility_2026-09-23.md``). ``auto`` falls
+back to ``last.ckpt`` for older runs without ``final.ckpt``; that is exact
+only when validation improved to the end (true for the label-free runs, best
+epoch 44-49 of 50) and the summary records which file was used.
+``--checkpoint final|last|best`` forces one.
 """
 
 from __future__ import annotations
@@ -27,11 +33,28 @@ import torch
 from common.paths import PROJECT_ROOT
 
 
-def fold_checkpoint(run_dir: Path, fold: str, *, which: str = "last") -> Path:
-    """The fold's checkpoint: ``last.ckpt`` (what the sweep tested) or the best ``val/total`` one."""
+CHECKPOINT_CHOICES = ("auto", "final", "last", "best")
+
+
+def fold_checkpoint(run_dir: Path, fold: str, *, which: str = "auto") -> Path:
+    """The fold's checkpoint (see the module docstring for what each file holds).
+
+    ``auto``: ``final.ckpt`` (the reported last-epoch weights) when present,
+    else ``last.ckpt``; ``final`` / ``last``: that file; ``best``: the
+    monitored ``epochNNN-val_total*.ckpt``.
+    """
+    if which not in CHECKPOINT_CHOICES:
+        raise ValueError(f"checkpoint must be one of {CHECKPOINT_CHOICES}")
     directory = Path(run_dir) / fold / "checkpoints"
     if not directory.is_dir():
         raise FileNotFoundError(f"no checkpoints for {fold} in {run_dir}")
+    if which == "auto":
+        which = "final" if (directory / "final.ckpt").is_file() else "last"
+    if which == "final":
+        path = directory / "final.ckpt"
+        if not path.is_file():
+            raise FileNotFoundError(f"{path} missing (run predates 2026-09-23); use --checkpoint last")
+        return path
     if which == "last":
         path = directory / "last.ckpt"
         if not path.is_file():
@@ -88,18 +111,21 @@ def model_predictor(module, device: str = "cuda", variant: str = "model"):
     return predict
 
 
-def evaluate_run(dataset: str, run_dir: Path, *, joints: Sequence[str] | None = None, which: str = "last", device: str = "cuda", folds_dir: Path | None = None, extra_overrides: Sequence[str] = (), variant: str = "model") -> dict[str, Any]:
+def evaluate_run(dataset: str, run_dir: Path, *, joints: Sequence[str] | None = None, which: str = "auto", device: str = "cuda", folds_dir: Path | None = None, extra_overrides: Sequence[str] = (), variant: str = "model") -> dict[str, Any]:
     from .evaluate import evaluate_folds
 
     modules: dict[str, Any] = {}
+    used: dict[str, str] = {}
 
     def predictor_factory(fold: Path):
         if fold.stem not in modules:
-            modules[fold.stem] = load_module(fold_checkpoint(Path(run_dir), fold.stem, which=which), device)
+            path = fold_checkpoint(Path(run_dir), fold.stem, which=which)
+            used[fold.stem] = path.name
+            modules[fold.stem] = load_module(path, device)
         return model_predictor(modules[fold.stem], device, variant)
 
     payload = evaluate_folds(dataset, lambda fold: None, folds_dir=folds_dir, extra_overrides=extra_overrides, joints=joints, predictor_factory=predictor_factory)
-    payload["method"] = {"name": f"cycle_aware_{variant}", "run": str(run_dir), "checkpoint": which, "variant": variant}
+    payload["method"] = {"name": f"cycle_aware_{variant}", "run": str(run_dir), "checkpoint": which, "checkpoint_files": used, "variant": variant}
     return payload
 
 
@@ -118,7 +144,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - thin C
     parser.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "fit3d"))
     parser.add_argument("--run", type=Path, required=True, help="sweep directory with fold_XX/checkpoints")
     parser.add_argument("--joints", default="comparison12", help="'comparison12', 'all', or comma/plus-separated joint names")
-    parser.add_argument("--checkpoint", default="last", choices=("last", "best"))
+    parser.add_argument("--checkpoint", default="auto", choices=CHECKPOINT_CHOICES)
     parser.add_argument("--variant", default="model", choices=VARIANTS, help="model | base (learned weights) | rule (equal weights) | face | side")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--folds-dir", type=Path, default=None)

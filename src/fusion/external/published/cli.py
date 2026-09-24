@@ -415,7 +415,7 @@ def make_parser() -> argparse.ArgumentParser:
     md_.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "fit3d"))
     md_.add_argument("--run", type=Path, required=True)
     md_.add_argument("--joints", default="comparison12")
-    md_.add_argument("--checkpoint", default="last", choices=("last", "best"))
+    md_.add_argument("--checkpoint", default="auto", choices=("auto", "final", "last", "best"), help="auto = final.ckpt (the reported last-epoch weights) when present, else last.ckpt")
     md_.add_argument("--variant", default="model", help="model | base | rule | face | side")
     md_.add_argument("--device", default="cuda")
     md_.add_argument("--folds-dir", type=Path, default=None)
