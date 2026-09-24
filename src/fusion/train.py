@@ -102,6 +102,16 @@ def build_trainer(cfg: DictConfig, run_dir: Path) -> pl.Trainer:
         # The metric name contains a slash; without auto_insert_metric_name=False
         # Lightning would turn it into a sub-directory.
         callbacks.append(ModelCheckpoint(dirpath=str(run_dir / "checkpoints"), filename="epoch{epoch:03d}-val_total{val/total:.4f}", auto_insert_metric_name=False, monitor="val/total", mode="min", save_last=True, save_top_k=1))
+        # ``final.ckpt`` holds the weights this run REPORTS: ``trainer.test`` runs on
+        # the module in memory, i.e. the last epoch, and ``last.ckpt`` is not those
+        # weights -- Lightning only refreshes it when a monitored save happens
+        # (ModelCheckpoint.on_validation_end), so with save_top_k=1 it is a copy of
+        # the best-val checkpoint. That is a different model whenever validation
+        # stops improving early, which is what reference-supervised runs do
+        # (their validation replays the corruption, so ``val/total`` selects for
+        # robustness, not accuracy). Without this callback a checkpoint cannot
+        # reproduce the run's own test numbers.
+        callbacks.append(ModelCheckpoint(dirpath=str(run_dir / "checkpoints"), filename="final", auto_insert_metric_name=False, monitor=None, every_n_epochs=1, save_top_k=1, enable_version_counter=False))
         callbacks.append(LearningRateMonitor(logging_interval="step"))
     logger = CSVLogger(save_dir=str(run_dir), name="logs")
     return pl.Trainer(

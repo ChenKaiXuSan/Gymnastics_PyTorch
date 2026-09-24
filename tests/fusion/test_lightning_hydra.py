@@ -122,3 +122,22 @@ def test_weighted_folds_balance_volume():
     volumes = [sum(weights[s] for s in fold["test"]) for fold in folds]
     assert max(volumes) - min(volumes) < 0.15 * max(volumes)
     assert sorted(s for fold in folds for s in fold["test"]) == subjects
+
+
+def test_trainer_saves_the_reported_final_epoch_weights(tmp_path):
+    """The run reports the last epoch (``trainer.test`` uses the module in memory),
+    so a checkpoint of exactly those weights must exist: ``last.ckpt`` is not it
+    (Lightning refreshes it only on a monitored save)."""
+    from pytorch_lightning.callbacks import ModelCheckpoint
+
+    from fusion.train import build_trainer, compose_config
+
+    trainer = build_trainer(compose_config(["experiment=smoke"]), tmp_path)
+    checkpoints = [c for c in trainer.callbacks if isinstance(c, ModelCheckpoint)]
+    monitored = [c for c in checkpoints if c.monitor is not None]
+    unmonitored = [c for c in checkpoints if c.monitor is None]
+    assert len(monitored) == 1 and monitored[0].monitor == "val/total" and monitored[0].save_last
+    # monitor=None saves every epoch and overwrites, so the file is the last epoch.
+    assert len(unmonitored) == 1
+    final = unmonitored[0]
+    assert final.filename == "final" and final.save_top_k == 1 and final._every_n_epochs == 1
