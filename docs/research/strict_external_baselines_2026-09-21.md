@@ -453,7 +453,58 @@ reliability weight at 0) are the Hydra defaults; v1.1 is `model=v1_1
 loss=v3` (since the archive: `model=archive/v1_1 loss=archive/v3`). v1.2 runs: private data and FreeMan = the `*_v1_1_equal_reliability_5fold_seed0`
 sweeps (identical training: with the head off `L_rel` has no gradient);
 Fit3D = `fit3d_v1_2_5fold_seed0` (2026-09-25). Module ablations of v1.2 on the
-private data: `gymnastics_v1_2_<preset>_5fold_seed0` (scoring pending).
+private data: `gymnastics_v1_2_<preset>_5fold_seed0` (results below).
+
+## Final model v1.2: Fit3D and module ablations (2026-09-25)
+
+12 comparison joints, 5 folds, seed 0.
+
+Corruption sweep of the final model on every dataset (fold means, mm; the
+private and FreeMan v1.2 rows are the `*_v1_1_equal_reliability_*` sweeps):
+
+| Dataset | Variant | Level 0 | 0.5 | 1 | 2 |
+|---|---|---:|---:|---:|---:|
+| Gymnastics | Rule | **18.0** | **18.7** | 21.4 | 30.1 |
+| | v1.1 (archived) | 19.3 | 20.3 | 23.3 | 30.0 |
+| | **v1.2** | 18.2 | **18.7** | **20.5** | **26.4** |
+| FreeMan | Rule | **41.0** | -- | 42.7 | 47.9 |
+| | v1.1 (archived) | 41.4 | -- | 43.5 | 46.8 |
+| | **v1.2** | **41.0** | -- | **42.0** | **45.3** |
+| Fit3D | Rule | **47.6** | 48.0 | 49.0 | 53.2 |
+| | v1.1 (archived) | 47.7 | 48.1 | 49.3 | 52.7 |
+| | **v1.2** | 47.7 | **47.9** | **48.7** | **51.6** |
+
+Fit3D (8 subjects, so the smallest attainable Wilcoxon p is 0.0078): v1.2 ties
+the rule on clean data (-0.04 mm, 2/8 subjects better, p 0.31) and beats both
+the rule and v1.1 on 8/8 subjects at levels 1 and 2 (rule +0.38 / +1.58 mm,
+v1.1 +0.66 / +1.17 mm, p 0.0078). The same pattern holds on all three
+datasets.
+
+Module ablations of v1.2 on the private data (`gymnastics_v1_2_<preset>_5fold_seed0`),
+paired over the 137 subjects (subject means, so v1.2 reads 18.29 rather than
+the 18.2 fold mean). Difference = ablation minus v1.2, so positive means the
+component helps. Holm correction over the 18 tests:
+
+| Removed | Clean | Level 1 | Level 2 | v1.2 better (level 2) | p_Holm (level 2) |
+|---|---:|---:|---:|---:|---:|
+| Motion branches + FiLM (pose only) | +0.20 | +0.34 | **+0.64** | 129/137 | 1e-21 |
+| FiLM | +0.18 | +0.30 | **+0.58** | 126/137 | 2e-20 |
+| Cross-view attention | +0.11 | +0.25 | **+0.48** | 122/137 | 3e-20 |
+| Long-motion branch | +0.04 | +0.09 | +0.27 | 108/137 | 8e-15 |
+| Short-motion branch | +0.07 | +0.06 | +0.12 | 102/137 | 1e-6 |
+| Phase encoding | +0.03 | +0.02 | +0.02 | 75/137 | 0.24 (n.s.) |
+
+Absolute errors for v1.2: 18.29 clean, 20.68 at level 1, 26.57 at level 2.
+The residual itself is not in the table: v1.2 without it is the rule
+(18.0 / 21.4 / 30.1).
+
+Reading: with the reliability head gone, every encoder component except the
+phase encoding now helps. The effect is significant, small on clean data
+(0.03-0.20 mm) and roughly three times larger at level 2 (up to 0.64 mm),
+which is consistent with the residual acting as a corruption-recovery term.
+This reverses the v1.1 ablation, where removing FiLM or the motion branches
+*improved* the clean error: in v1.1 the encoder also fed the harmful
+reliability weights.
 
 ## Status (2026-09-25)
 
