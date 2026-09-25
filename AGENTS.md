@@ -124,7 +124,9 @@ FreeMan 8-camera reference (alpha 0.75–0.875 flat), never on the private
 triangulated reference, which is built from the same image-plane coordinates
 and rewards this rule far beyond its true gain (see
 `docs/cycle_aware_fusion.md` §1.5). The learned model (`python -m fusion train`,
-architecture v1.1) uses the same rule as its base pose. Everything below
+architecture v1.2, `model=v1_2 loss=v4`) uses the same rule as its base
+pose with equal view weights and adds only a bounded learned residual
+(v1.1, with learned reliability weights, is `model=v1_1 loss=v3`). Everything below
 describes the `avg_body_current` pipeline the rule shares.
 
 The previous preferred fusion method was:

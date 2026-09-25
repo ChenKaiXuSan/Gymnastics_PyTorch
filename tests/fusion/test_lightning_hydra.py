@@ -141,3 +141,23 @@ def test_trainer_saves_the_reported_final_epoch_weights(tmp_path):
     assert len(unmonitored) == 1
     final = unmonitored[0]
     assert final.filename == "final" and final.save_top_k == 1 and final._every_n_epochs == 1
+
+
+def test_default_is_architecture_v1_2_and_v1_1_stays_reproducible():
+    cfg = compose_config([])
+    assert cfg.model.name == "v1_2" and not cfg.model.reliability.enabled and cfg.loss.reliability.weight == 0.0
+    model = build_module(compose_config(["experiment=smoke"])).model
+    assert model.config.architecture_version == "1.2" and not model.reliability.enabled
+    old = compose_config(["model=v1_1", "loss=v3"])
+    assert old.model.reliability.enabled and old.loss.reliability.weight == 0.02
+    assert build_module(compose_config(["experiment=smoke", "model=v1_1", "loss=v3", "samples_per_cycle=8", "model.hidden_dim=16", "model.num_heads=2"])).model.config.architecture_version == "1.1"
+    # Apart from the name and the reliability switch, v1_2 is v1_1; v4 is v3 without L_rel.
+    new_model, old_model = OmegaConf.to_container(cfg.model), OmegaConf.to_container(old.model)
+    for key in ("name", "reliability"):
+        new_model.pop(key), old_model.pop(key)
+    assert new_model == old_model
+    new_loss, old_loss = OmegaConf.to_container(cfg.loss), OmegaConf.to_container(old.loss)
+    new_loss.pop("reliability"), old_loss.pop("reliability")
+    assert new_loss == old_loss
+    # The v1.0 base ablation keeps the loss it was published with.
+    assert compose_config(["experiment=v1_0_base"]).loss.reliability.weight == 0.02

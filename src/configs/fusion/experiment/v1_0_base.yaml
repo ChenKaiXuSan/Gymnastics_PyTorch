@@ -1,6 +1,8 @@
 # @package _global_
 # Ablation: architecture v1.0 base (no depth prior, depth_alpha = 0) with the
-# current loss, to isolate the contribution of the v1.1 base rule.
+# v3 loss, to isolate the contribution of the v1.1 base rule (pinned to v3 when
+# the default moved to v1.2 / loss v4, so the comparison stays the published one).
 defaults:
   - override /model: v1
+  - override /loss: v3
 run_name: ${data.name}_${model.name}_base_ablation_seed${seed}

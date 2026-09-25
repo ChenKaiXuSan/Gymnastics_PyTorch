@@ -1,0 +1,53 @@
+# Version-4 objectives (architecture v1.2, 2026-09-25; src/fusion/losses.py):
+#   L = L_rec + 0.01 * L_res
+#
+# v3 without the reliability term.  v1.2 has no learned reliability head, so
+# L_rel would have no gradient path; its weight is 0 here so the config states
+# the objective that is actually optimised.  Everything else is v3:
+#   * L_rec: smooth-L1 recovery toward the equal-weight depth-aware rule on the
+#     CLEAN views (pseudo target, consensus distance 0.15); on synthetically
+#     corrupted joints it is the recovery target the residual learns;
+#   * L_res: L1 leash on the residual (Delta_P -> 0 on clean joints).
+# Cross-cycle, periodicity and symmetry terms stay at 0 (logged as metrics).
+# For FreeMan/Fit3D reference supervision use experiment=reference_supervised.
+
+recovery:
+  weight: 1.0
+  kind: smooth_l1
+  # pseudo: base rule on the clean views (label-free); reference: attached
+  # reference pose where available (needs data.train_with_reference=true).
+  target: pseudo
+  beta: 0.05
+  consensus_distance: 0.15
+
+reliability:
+  # Off: v1.2 has no learned reliability head (v3 used 0.02).
+  weight: 0.0
+
+residual:
+  weight: 0.01
+  norm: l1
+
+# Version-2 terms, off (kept as logged metrics).
+cycle:
+  weight: 0.0
+  kind: smooth_l1
+  beta: 0.05
+  external_reference: true
+  dead_zone:
+    enabled: true
+    method: mad
+    scale: 1.0
+    minimum: 0.0
+    maximum: null
+periodicity:
+  weight: 0.0
+  type: contrastive
+  temperature: 0.1
+  negative_phase_margin: 0.25
+symmetry:
+  weight: 0.0
+position_priors:
+  periodicity_weight: 0.0
+  bone_symmetry_weight: 0.0
+  half_symmetry_weight: 0.0

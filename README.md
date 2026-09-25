@@ -155,7 +155,7 @@ python -m fusion benchmark-freeman run
 Downloaded archives, extracted subject workspaces, predictions, and reports all
 remain under ignored `local/` paths.
 
-## Cycle-aware dual-view fusion (Architecture v1.1)
+## Cycle-aware dual-view fusion (Architecture v1.2)
 
 `fusion` is a second, self-contained learned fusion
 model that treats the repeated-cycle structure of the recorded motion as a
@@ -170,10 +170,12 @@ Two uncalibrated monocular 3D pose estimates of the same person (View A/B)
 fail at different joints and different times. The base pose combines the two
 views with a calibration-free geometric prior (v1.1: each view's precision is
 discounted along its own camera-depth axis, obtained from the view's own
-canonicalisation), and the model learns, without any 3D labels, *how much to
-trust each view for every joint at every time step* on top of that prior and
-applies a small bounded correction, using local motion (velocity) and
-cycle-scale motion (phase, periodic recurrence) as the evidence.
+canonicalisation), and the model learns, without any 3D labels, a small
+bounded correction on top of that prior, using local motion (velocity) and
+cycle-scale motion (phase, periodic recurrence) as the evidence. Since v1.2
+(2026-09-25) both views get equal weight: the v1.1 head that learned *how
+much to trust each view for every joint at every time step* lost to equal
+weights and is switched off (`model=v1_1 loss=v3` restores it).
 
 ### Architecture
 
@@ -194,11 +196,12 @@ Motion-Guided A/B
       ↓
 Bidirectional Cross-Attention  H_A <-> H_B (same frame, over joints)
       ↓
-Joint-Wise Reliability         [w_A, w_B] = softmax(R),  w_A + w_B = 1
+(Joint-Wise Reliability)       v1.1 only; v1.2: w_A = w_B = 1/2
       ↓
-Weighted Pose Fusion           P_base = w_A · P_A + w_B · P_B   (original inputs)
+Depth-Aware Pose Fusion        Λ_v = w_v (I − α d_v d_vᵀ),  P_base = (Λ_A+Λ_B)⁻¹(Λ_A P_A + Λ_B P_B)
+                               (original inputs, α = 0.8 fixed; zero parameters in v1.2)
       ↓
-Residual Refinement            P_hat = P_base + ΔP  (bounded)
+Residual Refinement            P_hat = P_base + ΔP,  ΔP = 0.25 tanh(MLP([½(C_A+C_B) ; |C_A−C_B| ; P_base]))
       ↓
 Final 3D Pose
 ```

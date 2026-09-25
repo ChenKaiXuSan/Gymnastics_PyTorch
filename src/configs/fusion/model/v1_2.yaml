@@ -1,0 +1,76 @@
+# Architecture v1.2 (2026-09-25) of the cycle-aware dual-view fusion model.
+# Identical to v1.1 except that the learned reliability head is switched off:
+# both views get weight 1/2 (a view invalid at a joint gets 0), so
+#   P_base = (W_A + W_B)^-1 (W_A P_A + W_B P_B),  W_v = I - depth_alpha d_v d_v^T
+# is exactly the closed-form rule `avg_body_depthaware` (zero parameters), and
+# the only learned output is the bounded residual
+#   P = P_base + 0.25 tanh(MLP([(C_A + C_B)/2 ; |C_A - C_B| ; P_base])).
+# Why: the learned weights lost to equal weights at every test-time corruption
+# level on the private data and FreeMan, while the residual is what beats the
+# rule under corruption (docs/research/strict_external_baselines_2026-09-21.md,
+# "Where the learned part helps").  Same code as v1.1; train with loss/v4.
+# Reproduce v1.1 with model=v1_1 loss=v3.
+name: v1_2
+# Common skeleton: "mhr70" (70 joints) or "mhr70_major" (20 major joints).
+skeleton: mhr70_major
+# Feature width D shared by every branch.
+hidden_dim: 128
+num_heads: 4
+# Feed-forward width relative to hidden_dim.
+mlp_ratio: 2.0
+dropout: 0.0
+samples_per_cycle: ${samples_per_cycle}
+# First-sample velocity: "replicate" (copy v[1]) or "zero".
+velocity_boundary: replicate
+
+spatial:
+  # Transformer blocks over joints (Pose Branch).
+  layers: 2
+
+short_motion:
+  enabled: true
+  layers: 2
+  # Fraction of one phase-normalized motion cycle visible to the short branch.
+  cycle_ratio: 0.25
+
+long_motion:
+  enabled: true
+  layers: 2
+  # Number of complete motion cycles used as long-range temporal context
+  # (defines the training window together with samples_per_cycle).
+  num_cycles: ${num_cycles}
+
+phase_encoding:
+  # Adds sin(2*pi*h*phi), cos(2*pi*h*phi) for h = 1..harmonics.
+  enabled: true
+  harmonics: 1
+
+film:
+  enabled: true
+  # Optional tanh bound on gamma; null = unbounded.
+  gamma_bound: null
+
+cross_view:
+  enabled: true
+  layers: 1
+
+reliability:
+  # v1.2: equal weights (up to validity). true restores the v1.1 learned head.
+  enabled: false
+
+residual:
+  enabled: true
+  # Bound on |Delta_P| per axis in canonical units (torso lengths); null = unbounded.
+  max_delta: 0.25
+
+fusion:
+  # Fraction of each view's precision removed along its own depth axis, [0, 1).
+  # 0.8 was selected on the FreeMan reference and re-checked on 2026-09-25:
+  # FreeMan optimum 0.75 (0.02 mm better), Fit3D optimum 0.95 (0.45 mm better);
+  # a per-joint alpha is worse on both and does not transfer.  It is a fixed
+  # prior, never learned, and must not be tuned on the private triangulated
+  # reference (which rewards alpha -> 1 by construction).
+  depth_alpha: 0.8
+  # Eigenvalue floor of the unit-weight precision sum: caps depth_alpha per
+  # frame when the two optical axes are nearly parallel.
+  min_precision: 0.5

@@ -1,4 +1,4 @@
-# Cycle-Aware Dual-View 3D Pose Fusion (Architecture v1.1)
+# Cycle-Aware Dual-View 3D Pose Fusion (Architecture v1.2)
 
 `fusion` fuses two independent monocular 3D pose
 estimates of one person (View A = face camera, View B = side camera on the
@@ -80,6 +80,18 @@ applied to each view:
 | Depth-aware fusion (v1.1) | `Λ_v = w_v · (I − α d_v d_vᵀ)`, `P_base = (Λ_A + Λ_B)⁻¹ (Λ_A P_A + Λ_B P_B)` on the **original** inputs | `modules/weighted_fusion.py` |
 | Residual | `ΔP = max_delta · tanh(MLP([w_A C_A + w_B C_B ; |C_A − C_B| ; P_base]))`, `P_hat = P_base + ΔP` | `modules/residual_refinement.py` |
 
+**Architecture v1.2 (2026-09-25, default `model=v1_2 loss=v4`).** The
+reliability row above is switched off (`model.reliability.enabled=false`;
+same code): both views get weight 1/2 (the only valid view gets 1), so
+`P_base` is exactly the closed-form rule `avg_body_depthaware` with zero
+learned parameters, and the residual head reads `(C_A + C_B) / 2`. The only
+learned output is the bounded residual `ΔP`. The learned weights lost to
+equal weights at every test-time corruption level on the private data and
+FreeMan, while equal weights + residual tie the rule on clean data and beat
+it under corruption on almost every subject
+(`docs/research/strict_external_baselines_2026-09-21.md`, "Where the learned
+part helps"). v1.1 remains available as `model=v1_1 loss=v3`.
+
 **Base rule (v1.1, 2026-09-20).** Architecture v1.0 used the scalar convex
 fusion `P_base = w_A · P_A + w_B · P_B`, one weight per joint and time step
 shared by x, y and z. The identifiability probes showed that the dominant
@@ -132,7 +144,12 @@ Properties enforced by tests (`tests/fusion`):
 * Swapping the views swaps the outputs (symmetry).
 * Every parameter receives a gradient in a full forward/backward pass.
 
-### 1.4 Objectives (version 3, default `loss=v3`)
+### 1.4 Objectives (version 3; default `loss=v4` = version 3 without `L_rel`)
+
+Version 4 (`loss/v4.yaml`, default with architecture v1.2) sets
+`reliability.weight = 0`: without a learned reliability head `L_rel` has no
+gradient path, so the objective is `L_rec + 0.01 · L_res`. The description
+below is version 3, which v1.1 uses.
 
 Three terms (`losses.py`, `src/configs/fusion/loss/v3.yaml`), following the
 division of labour established by the identifiability probes: the per-axis
@@ -309,10 +326,11 @@ FreeMan keeps only the repetitive action classes by default
 ```
 src/configs/fusion/
 ├── config.yaml              root: samples_per_cycle, num_cycles, seed, run_name, output_root
-├── model/v1_1.yaml          architecture v1.1 (default) and ablation switches; model/v1.yaml = v1.0 base
+├── model/v1_2.yaml          architecture v1.2 (default: equal weights + residual) and ablation switches
+├── model/v1_1.yaml          architecture v1.1 (learned reliability weights); model/v1.yaml = v1.0 base
 ├── model/external_*.yaml    external learned baselines (fusion/external): tcn, smoothnet, metapose_mlp, muc_weights
 ├── data/{synthetic,gymnastics,freeman,unity}.yaml   (+ _common.yaml)
-├── loss/{v3,v2,v1_recovery}.yaml   v3 = default
+├── loss/{v4,v3,v2,v1_recovery}.yaml   v4 = default (v3 without L_rel)
 ├── corruption/{default,none}.yaml
 ├── trainer/{default,debug}.yaml
 ├── optimizer/default.yaml

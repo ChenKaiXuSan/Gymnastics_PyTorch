@@ -258,8 +258,11 @@ class CycleAwareModelConfig:
 
     @property
     def architecture_version(self) -> str:
-        """``"1.1"`` with the depth-aware base, ``"1.0"`` when ``fusion.depth_alpha == 0``."""
-        return ARCHITECTURE_VERSION if float(self.fusion.depth_alpha) > 0 else "1.0"
+        """``"1.0"`` when ``fusion.depth_alpha == 0``; with the depth-aware base
+        ``"1.1"`` (learned reliability weights) or ``"1.2"`` (equal weights)."""
+        if float(self.fusion.depth_alpha) <= 0:
+            return "1.0"
+        return ARCHITECTURE_VERSION if self.reliability.enabled else "1.2"
 
     @property
     def window_length(self) -> int | None:
