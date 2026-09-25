@@ -58,6 +58,18 @@ COMPARISON_JOINTS: tuple[str, ...] = (
 Predictor = Callable[[dict[str, Any]], tuple[torch.Tensor, torch.Tensor]]
 
 
+def reference_tag(extra_overrides: Sequence[str] = ()) -> str:
+    """Filename suffix identifying a non-default evaluation reference.
+
+    A run against FreeMan's two-view triangulated pseudo-reference must not
+    overwrite the same method's result against the release reference.
+    """
+    for override in extra_overrides:
+        if "reference_source=" in override and "two_view_triangulated" in override:
+            return "_pseudoref"
+    return ""
+
+
 def view_a_predictor(batch: dict[str, Any]) -> tuple[torch.Tensor, torch.Tensor]:
     """The default prediction: view A, which the trial transform has replaced with the method's pose."""
     return batch["pose_a"], batch["valid_a"]

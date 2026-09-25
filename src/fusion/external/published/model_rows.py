@@ -131,10 +131,12 @@ def evaluate_run(dataset: str, run_dir: Path, *, joints: Sequence[str] | None = 
     return payload
 
 
-def output_path(run_dir: Path, joints: Sequence[str] | None, variant: str = "model") -> Path:
+def output_path(run_dir: Path, joints: Sequence[str] | None, variant: str = "model", extra_overrides: Sequence[str] = ()) -> Path:
+    from .evaluate import reference_tag
+
     suffix = "all_joints" if not joints else f"{len(list(joints))}joints"
     root = "model" if variant == "model" else "internal"
-    return PROJECT_ROOT / "local" / "runs" / "external_published" / root / Path(run_dir).name / f"summary_{variant}_{suffix}.json"
+    return PROJECT_ROOT / "local" / "runs" / "external_published" / root / Path(run_dir).name / f"summary_{variant}_{suffix}{reference_tag(extra_overrides)}.json"
 
 
 def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - thin CLI
@@ -159,7 +161,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - thin C
     else:
         joints = [j for j in args.joints.replace("+", ",").split(",") if j]
     payload = evaluate_run(args.dataset, args.run, joints=joints, which=args.checkpoint, device=args.device, folds_dir=args.folds_dir, extra_overrides=list(args.override or []), variant=args.variant)
-    out = write_summary(output_path(args.run, joints, args.variant), payload)
+    out = write_summary(output_path(args.run, joints, args.variant, list(args.override or [])), payload)
     s = payload["summary"]
     print(f"[{args.variant}] {args.dataset} {Path(args.run).name} ({args.checkpoint}): PA-MPJPE {s['pa_mpjpe_mean'] * 1000:.1f} ± {s['pa_mpjpe_sd'] * 1000:.1f} mm over {s['folds']} folds, joints {len(s['joint_names'])} -> {out}")
     print("  per fold: " + ", ".join(f"{1000 * f['pa_mpjpe']:.1f}" for f in payload["folds"]))

@@ -76,9 +76,12 @@ def _joints(args: argparse.Namespace) -> list[str] | None:
     return _list(value)
 
 
-def _summary_name(stem: str, joints: list[str] | None) -> str:
-    """A joint subset writes its own file so the method's own-joint summary survives."""
-    return f"summary_{stem}.json" if joints is None else f"summary_{stem}_{len(joints)}joints.json"
+def _summary_name(stem: str, joints: list[str] | None, extra: Sequence[str] = ()) -> str:
+    """A joint subset and a non-default reference each write their own file."""
+    from .evaluate import reference_tag
+
+    suffix = "" if joints is None else f"_{len(joints)}joints"
+    return f"summary_{stem}{suffix}{reference_tag(extra)}.json"
 
 
 def _joints_argument(parser: argparse.ArgumentParser) -> None:
@@ -101,7 +104,7 @@ def _run_videopose3d(args: argparse.Namespace) -> int:
     extra = list(args.override or [])
     payload = evaluate_folds(args.dataset, factory, folds_dir=args.folds_dir, extra_overrides=extra, joints=joints)
     payload["method"] = {"name": "videopose3d", "mode": args.mode, "checkpoint": str(args.checkpoint or "default"), "test_time_augmentation": not args.no_tta, "receptive_field": lifter.receptive_field}
-    out = write_summary(OUTPUT_ROOT / "videopose3d" / args.dataset / args.mode / _summary_name("zero_shot", joints).replace("summary_zero_shot.json", "summary.json"), payload)
+    out = write_summary(OUTPUT_ROOT / "videopose3d" / args.dataset / args.mode / _summary_name("zero_shot", joints, extra).replace("summary_zero_shot.json", "summary.json"), payload)
     s = payload["summary"]
     print(f"[external/videopose3d] {args.dataset} {args.mode}: PA-MPJPE {s['pa_mpjpe_mean'] * 1000:.1f} ± {s['pa_mpjpe_sd'] * 1000:.1f} mm over {s['folds']} folds, joints {len(s['joint_names'])} -> {out}")
     return 0
@@ -163,7 +166,7 @@ def _run_metapose(args: argparse.Namespace) -> int:
             method.update({"init": "videopose3d", "heatmaps": "single gaussian at the SAM3D keypoint (sigma 2 % of the box)"})
             payload = evaluate_folds(args.dataset, factory, folds_dir=args.folds_dir, extra_overrides=extra, joints=joints)
             payload["method"] = method
-            out = write_summary(directory / _summary_name(name, joints), payload)
+            out = write_summary(directory / _summary_name(name, joints, extra), payload)
             s = payload["summary"]
             print(f"[external/metapose] {args.dataset} {name}: PA-MPJPE {s['pa_mpjpe_mean'] * 1000:.1f} ± {s['pa_mpjpe_sd'] * 1000:.1f} mm over {s['folds']} folds, joints {len(s['joint_names'])} -> {out}")
     return 0
@@ -196,7 +199,7 @@ def _run_canonpose(args: argparse.Namespace) -> int:
         for mode in _list(args.mode):
             payload = evaluate_folds(args.dataset, lambda fold, mode=mode: CanonPoseTrialTransform(root / fold.stem / "lifter.pt", source, mode=mode, device=args.device), folds_dir=args.folds_dir, extra_overrides=extra, joints=joints)
             payload["method"] = {"name": "canonpose", "mode": mode, "training": "released recipe, self-supervised on the fold's training subjects", "epochs": args.epochs or "released default"}
-            out = write_summary(root / _summary_name(mode, joints), payload)
+            out = write_summary(root / _summary_name(mode, joints, extra), payload)
             s = payload["summary"]
             print(f"[external/canonpose] {args.dataset} {mode}: PA-MPJPE {s['pa_mpjpe_mean'] * 1000:.1f} ± {s['pa_mpjpe_sd'] * 1000:.1f} mm over {s['folds']} folds, joints {len(s['joint_names'])} -> {out}")
     return 0
@@ -235,7 +238,7 @@ def _run_mhformer(args: argparse.Namespace) -> int:
 
             payload = evaluate_folds(args.dataset, factory, folds_dir=args.folds_dir, extra_overrides=extra, joints=joints)
             payload["method"] = {"name": "mhformer", "mode": mode, "training": "released recipe, supervised on the fold's training subjects' reference joints (both views)", "frames": args.frames or CONFIG["frames"], "epochs": (args.epochs or CONFIG["nepoch"]) - 1, "selection": "best validation-subject MPJPE"}
-            out = write_summary(root / _summary_name(mode, joints), payload)
+            out = write_summary(root / _summary_name(mode, joints, extra), payload)
             s = payload["summary"]
             print(f"[external/mhformer] {args.dataset} {mode}: PA-MPJPE {s['pa_mpjpe_mean'] * 1000:.1f} ± {s['pa_mpjpe_sd'] * 1000:.1f} mm over {s['folds']} folds, joints {len(s['joint_names'])} -> {out}")
     return 0
@@ -274,7 +277,7 @@ def _run_mdvpose(args: argparse.Namespace) -> int:
 
             payload = evaluate_folds(args.dataset, factory, folds_dir=args.folds_dir, extra_overrides=extra, joints=joints)
             payload["method"] = {"name": "mdvpose", "mode": mode, "training": "released multi-view fine-tuning recipe from the MotionBERT H36M checkpoint, supervised on the fold's training subjects' reference joints (both views)", "epochs": args.epochs or CONFIG["epochs"], "selection": "best validation-subject MPJPE"}
-            out = write_summary(root / _summary_name(mode, joints), payload)
+            out = write_summary(root / _summary_name(mode, joints, extra), payload)
             s = payload["summary"]
             print(f"[external/mdvpose] {args.dataset} {mode}: PA-MPJPE {s['pa_mpjpe_mean'] * 1000:.1f} ± {s['pa_mpjpe_sd'] * 1000:.1f} mm over {s['folds']} folds, joints {len(s['joint_names'])} -> {out}")
     return 0
@@ -313,7 +316,7 @@ def _run_videopose3d_trained(args: argparse.Namespace) -> int:
 
             payload = evaluate_folds(args.dataset, factory, folds_dir=args.folds_dir, extra_overrides=extra, joints=joints)
             payload["method"] = {"name": "videopose3d_trained", "mode": mode, "training": "released 243-frame recipe (run.py -e 80 -arc 3,3,3,3,3), supervised on the fold's training subjects' reference joints (both views), final epoch", "epochs": args.epochs or CONFIG["epochs"]}
-            out = write_summary(root / _summary_name(mode, joints), payload)
+            out = write_summary(root / _summary_name(mode, joints, extra), payload)
             s = payload["summary"]
             print(f"[external/videopose3d_trained] {args.dataset} {mode}: PA-MPJPE {s['pa_mpjpe_mean'] * 1000:.1f} ± {s['pa_mpjpe_sd'] * 1000:.1f} mm over {s['folds']} folds, joints {len(s['joint_names'])} -> {out}")
     return 0
