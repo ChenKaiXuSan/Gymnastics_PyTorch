@@ -175,7 +175,9 @@ bounded correction on top of that prior, using local motion (velocity) and
 cycle-scale motion (phase, periodic recurrence) as the evidence. Since v1.2
 (2026-09-25) both views get equal weight: the v1.1 head that learned *how
 much to trust each view for every joint at every time step* lost to equal
-weights and is switched off (`model=v1_1 loss=v3` restores it).
+weights and is switched off (`model=archive/v1_1 loss=archive/v3` restores it).
+v1.2 is the final architecture; earlier configs are archived under
+`src/configs/fusion/*/archive/`.
 
 ### Architecture
 
@@ -296,11 +298,12 @@ python -m fusion train data=fit3d data.fold_json=src/configs/fusion/folds/fit3d/
 Outputs (resolved config, CSV logs, checkpoints, `result.json`) are written
 below `local/runs/cycle_aware/<run_name>`.
 
-Objectives (v2, default): leave-one-cycle-out cross-cycle pose target as the
-main supervision, corruption-labelled reliability, feature-level periodicity
-and half-cycle mirror symmetry, L1 residual regulariser; no target is built
-from the current window's own two views (`loss=v1_recovery` keeps the earlier
-recovery objective). See [docs/cycle_aware_fusion.md](docs/cycle_aware_fusion.md).
+Objectives (loss v4, final): smooth-L1 recovery toward the equal-weight
+depth-aware rule on the clean views (on synthetically corrupted joints this is
+the recovery target) plus an L1 leash on the residual, `L_rec + 0.01 L_res`.
+Earlier objectives (v1 recovery, v2 cross-cycle / periodicity / symmetry, v3
+with the reliability cross-entropy) are archived under
+`src/configs/fusion/loss/archive/`. See [docs/cycle_aware_fusion.md](docs/cycle_aware_fusion.md).
 
 Cross-validation (5 folds, single seed, 50 epochs is the fixed protocol):
 `folds_dir=src/configs/fusion/folds/gymnastics` runs the folds sequentially;
@@ -323,9 +326,12 @@ python -m fusion train data=gymnastics experiment=no_film
 python -m fusion train data=gymnastics model.cross_view.enabled=false
 ```
 
-Presets: `no_film`, `no_cross_view`, `no_short_motion`, `no_long_motion`,
-`no_phase`, `equal_reliability`, `no_residual`, `pose_only`, `full_skeleton`,
-`full_context` (long-term context = whole sequence). The long-term context is
+Module-ablation presets of the final v1.2 model: `no_film`, `no_cross_view`,
+`no_short_motion`, `no_long_motion`, `no_phase`, `pose_only`; plus
+`full_skeleton` and `full_context` (long-term context = whole sequence).
+`equal_reliability` and `no_residual` were v1.1 ablations and are archived
+(`experiment=archive/...`): v1.2 already has equal weights, and v1.2 without
+the residual is the closed-form rule. The long-term context is
 `num_cycles` (0.5, 1, 2, ... or `null` for the full sequence).
 
 ## Repository boundaries

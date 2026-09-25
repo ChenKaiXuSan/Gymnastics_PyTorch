@@ -2,6 +2,6 @@
 # Version-1 objectives (clean two-view recovery target) for reproducing the
 # earlier sweeps under the current code.
 defaults:
-  - override /model: v1
-  - override /loss: v1_recovery
+  - override /model: archive/v1
+  - override /loss: archive/v1_recovery
 run_name: ${data.name}_${model.name}_v1loss_seed${seed}

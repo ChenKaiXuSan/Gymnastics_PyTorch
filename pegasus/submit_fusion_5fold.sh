@@ -1,11 +1,11 @@
 #!/bin/bash
 # Submit the 5 cross-validation folds of one dataset as 5 gpu jobs.
 #
-#   bash pegasus/submit_fusion_5fold.sh gymnastics                 # sweep gymnastics_v1_5fold
+#   bash pegasus/submit_fusion_5fold.sh gymnastics                 # sweep gymnastics_v1_2_5fold_seed0 (final model)
 #   bash pegasus/submit_fusion_5fold.sh freeman                    # sweep freeman_v1_5fold (17-subject protocol)
 #   bash pegasus/submit_fusion_5fold.sh freeman_all40              # all 40 subjects, session-balanced folds
 #   bash pegasus/submit_fusion_5fold.sh fit3d                      # 8 Fit3D subjects, repetitions as cycles
-#   bash pegasus/submit_fusion_5fold.sh gymnastics no_film         # ablation preset -> gymnastics_v1_no_film_5fold
+#   bash pegasus/submit_fusion_5fold.sh gymnastics no_film         # ablation preset -> gymnastics_v1_2_no_film_5fold_seed0
 #   SEED=1 bash pegasus/submit_fusion_5fold.sh gymnastics          # other seed
 #   OVERRIDES="model.hidden_dim=256::loss.periodicity_weight=0" bash pegasus/submit_fusion_5fold.sh gymnastics
 #   ACCOUNT=SKIING bash pegasus/submit_fusion_5fold.sh gymnastics no_film     # SKIING budget, gpu queue
@@ -20,7 +20,10 @@ DATA="${1:?usage: submit_fusion_5fold.sh <gymnastics|freeman|freeman_all40|fit3d
 EXPERIMENT="${2:-}"
 SEED="${SEED:-0}"
 EPOCHS="${EPOCHS:-50}"
-SWEEP="${SWEEP:-${1}_v1${EXPERIMENT:+_$EXPERIMENT}_5fold${SEED:+_seed$SEED}}"
+# Default sweep name: <dataset>_v1_2[_<preset>]_5fold_seed<N>; "archive/x" presets -> <dataset>_archive_x_5fold_seed<N>.
+EXP_TAG="${EXPERIMENT//\//_}"
+case "$EXPERIMENT" in archive/*) VERSION_TAG="" ;; *) VERSION_TAG="_v1_2" ;; esac  # archived presets pin their own version
+SWEEP="${SWEEP:-${1}${VERSION_TAG}${EXP_TAG:+_$EXP_TAG}_5fold${SEED:+_seed$SEED}}"
 PROTOCOL="$DATA"
 case "$DATA" in
   gymnastics)    FOLDS_DIR="${FOLDS_DIR:-src/configs/fusion/folds/gymnastics}" ;;

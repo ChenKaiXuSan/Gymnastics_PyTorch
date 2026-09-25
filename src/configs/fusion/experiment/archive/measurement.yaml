@@ -3,7 +3,8 @@
 # on top of loss=v1_recovery; judged by ROM / peak-velocity retention. Found to
 # hurt every metric on the private data (2026-09-20); kept for the record.
 defaults:
-  - override /loss: v1_recovery
+  - override /model: archive/v1
+  - override /loss: archive/v1_recovery
 run_name: ${data.name}_${model.name}_measurement_seed${seed}
 loss:
   position_priors:

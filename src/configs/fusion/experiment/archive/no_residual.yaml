@@ -1,5 +1,8 @@
 # @package _global_
 # Ablation: no_residual.
+defaults:
+  - override /model: archive/v1_1
+  - override /loss: archive/v3
 run_name: ${data.name}_${model.name}_no_residual_seed${seed}
 model:
   residual:

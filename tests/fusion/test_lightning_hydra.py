@@ -148,9 +148,9 @@ def test_default_is_architecture_v1_2_and_v1_1_stays_reproducible():
     assert cfg.model.name == "v1_2" and not cfg.model.reliability.enabled and cfg.loss.reliability.weight == 0.0
     model = build_module(compose_config(["experiment=smoke"])).model
     assert model.config.architecture_version == "1.2" and not model.reliability.enabled
-    old = compose_config(["model=v1_1", "loss=v3"])
+    old = compose_config(["model=archive/v1_1", "loss=archive/v3"])
     assert old.model.reliability.enabled and old.loss.reliability.weight == 0.02
-    assert build_module(compose_config(["experiment=smoke", "model=v1_1", "loss=v3", "samples_per_cycle=8", "model.hidden_dim=16", "model.num_heads=2"])).model.config.architecture_version == "1.1"
+    assert build_module(compose_config(["experiment=smoke", "model=archive/v1_1", "loss=archive/v3", "samples_per_cycle=8", "model.hidden_dim=16", "model.num_heads=2"])).model.config.architecture_version == "1.1"
     # Apart from the name and the reliability switch, v1_2 is v1_1; v4 is v3 without L_rel.
     new_model, old_model = OmegaConf.to_container(cfg.model), OmegaConf.to_container(old.model)
     for key in ("name", "reliability"):
@@ -160,4 +160,17 @@ def test_default_is_architecture_v1_2_and_v1_1_stays_reproducible():
     new_loss.pop("reliability"), old_loss.pop("reliability")
     assert new_loss == old_loss
     # The v1.0 base ablation keeps the loss it was published with.
-    assert compose_config(["experiment=v1_0_base"]).loss.reliability.weight == 0.02
+    assert compose_config(["experiment=archive/v1_0_base"]).loss.reliability.weight == 0.02
+
+
+def test_archived_presets_compose_with_the_versions_they_ran_with():
+    pinned = {
+        "v1": ("v1", 0.0), "v2": ("v1", 0.0), "v1_0_base": ("v1", 0.0), "measurement": ("v1", 0.0),
+        "periodicity_contrastive": ("v1", 0.0), "periodicity_cosine": ("v1", 0.0), "reference_supervised_v1": ("v1", 0.0),
+        "equal_reliability": ("v1_1", 0.8), "no_residual": ("v1_1", 0.8), "reference_supervised_v3": ("v1_1", 0.8),
+    }
+    for preset, (model, alpha) in pinned.items():
+        cfg = compose_config([f"experiment=archive/{preset}"])
+        assert cfg.model.name == model and cfg.model.fusion.depth_alpha == alpha, preset
+    final = compose_config(["experiment=reference_supervised"])
+    assert final.model.name == "v1_2" and final.loss.recovery.target == "reference" and final.loss.reliability.weight == 0.0

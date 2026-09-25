@@ -295,8 +295,8 @@ def test_compute_losses_v2_end_to_end(tiny_config, tiny_batch, skeleton):
 
 
 def test_hydra_v2_default_and_v1_preset(tmp_path: Path):
-    # The v2 objectives (on the v1.0 base) are reproduced through experiment=v2.
-    cfg = compose_config(["experiment=[smoke,v2]", f"output_root={tmp_path}", "run_name=v2", "diagnostics.gradient_norm.enabled=true", "diagnostics.gradient_norm.interval=1"])
+    # The v2 objectives (on the v1.0 base) are reproduced through experiment=archive/v2.
+    cfg = compose_config(["experiment=[smoke,archive/v2]", f"output_root={tmp_path}", "run_name=v2", "diagnostics.gradient_norm.enabled=true", "diagnostics.gradient_norm.interval=1"])
     assert cfg.loss.cycle.weight == 1.0 and cfg.loss.reliability.weight == 0.02 and cfg.loss.recovery.weight == 0.0 and cfg.data.cycle_target.enabled and cfg.loss.periodicity.type == "contrastive"
     assert cfg.model.fusion.depth_alpha == 0.0 and cfg.data.cycle_target.consensus.method == "mean"
     result = run(cfg)
@@ -306,7 +306,7 @@ def test_hydra_v2_default_and_v1_preset(tmp_path: Path):
         assert f"test/diag/{name}" in metrics, name
     assert any(k.startswith("train/reliability_raw") for k in result["fit_metrics"])
     assert any(k.startswith("train/diag/grad_norm/reliability_head") for k in result["fit_metrics"])
-    v1 = compose_config(["experiment=v1", f"output_root={tmp_path}", "run_name=v1", "trainer=debug", "samples_per_cycle=8", "model.hidden_dim=16", "model.num_heads=2", "data.options.subjects=4", "data.options.frames=48", "data.options.period=12"])
+    v1 = compose_config(["experiment=archive/v1", f"output_root={tmp_path}", "run_name=v1", "trainer=debug", "samples_per_cycle=8", "model.hidden_dim=16", "model.num_heads=2", "data.options.subjects=4", "data.options.frames=48", "data.options.period=12"])
     assert v1.loss.recovery.weight == 1.0 and v1.loss.cycle.weight == 0.0 and v1.loss.residual.norm == "l2"
     run(v1)
     contrastive = compose_config(["experiment=smoke", "loss.periodicity.type=cosine", f"output_root={tmp_path}", "run_name=v2c"])

@@ -1,0 +1,15 @@
+# @package _global_
+# (v1 loss family) Reference-supervised recovery: the recovery target is the attached reference
+# pose (FreeMan multi-view references / Unity ground truth) brought into the
+# frame of the weighted base pose; the reliability head and the residual get a
+# real signal about which view is closer to the truth. Only for datasets whose
+# reference is independent of the inputs (not the private triangulation).
+defaults:
+  - override /model: archive/v1
+  - override /loss: archive/v1_recovery
+run_name: ${data.name}_${model.name}_reference_supervised_seed${seed}
+loss:
+  recovery:
+    target: reference
+data:
+  train_with_reference: true

@@ -436,7 +436,7 @@ plus the neck on FreeMan) take the source's global alpha.
    ordering follows each table's mean alpha, which is the pseudo-reference
    artefact again, not a transfer gain.
 
-## Architecture decision: v1.2 (proposed, 2026-09-25)
+## Architecture decision: v1.2 (final, 2026-09-25)
 
 v1.2 is **a model version, not a loss version**: v1.1 with
 `model.reliability.enabled=false`. No code changes. The reliability head is
@@ -450,8 +450,10 @@ robustness under damaged input.
 
 Configs since commit dd76abc: `model/v1_2.yaml` + `loss/v4.yaml` (v3 with the
 reliability weight at 0) are the Hydra defaults; v1.1 is `model=v1_1
-loss=v3`. Not done yet: the official 5-fold v1.2 runs on all three datasets
-(Fit3D has no `equal_reliability` run so far).
+loss=v3` (since the archive: `model=archive/v1_1 loss=archive/v3`). v1.2 runs: private data and FreeMan = the `*_v1_1_equal_reliability_5fold_seed0`
+sweeps (identical training: with the head off `L_rel` has no gradient);
+Fit3D = `fit3d_v1_2_5fold_seed0` (2026-09-25). Module ablations of v1.2 on the
+private data: `gymnastics_v1_2_<preset>_5fold_seed0` (scoring pending).
 
 ## Status (2026-09-25)
 

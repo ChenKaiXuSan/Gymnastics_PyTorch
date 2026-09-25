@@ -3,8 +3,8 @@
 # v2 sweeps (gymnastics_v2_5fold_seed0, freeman_all40_v2_5fold_seed0) under
 # the current code.
 defaults:
-  - override /model: v1
-  - override /loss: v2
+  - override /model: archive/v1
+  - override /loss: archive/v2
 run_name: ${data.name}_${model.name}_v2loss_seed${seed}
 data:
   cycle_target:

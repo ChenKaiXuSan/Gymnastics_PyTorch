@@ -1,11 +1,10 @@
 # @package _global_
-# (v1 loss family) Reference-supervised recovery: the recovery target is the attached reference
-# pose (FreeMan multi-view references / Unity ground truth) brought into the
-# frame of the weighted base pose; the reliability head and the residual get a
-# real signal about which view is closer to the truth. Only for datasets whose
-# reference is independent of the inputs (not the private triangulation).
-defaults:
-  - override /loss: v1_recovery
+# Reference-supervised variant of the final architecture (v1.2, loss v4):
+# the recovery target is the dataset's own 3D reference instead of the
+# label-free equal-weight rule on the clean views.  FreeMan / Fit3D only (the
+# private data has no independent reference; its triangulated pseudo-GT must
+# never be a training target).  Earlier variants: experiment=archive/reference_supervised_v3
+# (v1.1, loss v3) and experiment=archive/reference_supervised_v1 (v1.0, loss v1).
 run_name: ${data.name}_${model.name}_reference_supervised_seed${seed}
 loss:
   recovery:

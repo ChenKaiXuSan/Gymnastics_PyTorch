@@ -5,6 +5,9 @@
 #   python -m fusion train data=freeman experiment=no_film
 defaults:
   - _self_
+  # Final architecture (2026-09-25): model v1_2 + loss v4.  Earlier versions:
+  # model=archive/v1|archive/v1_1, loss=archive/v1_recovery|archive/v2|archive/v3,
+  # presets experiment=archive/<name> (see model/archive/README.md).
   - model: v1_2
   - data: synthetic
   - loss: v4

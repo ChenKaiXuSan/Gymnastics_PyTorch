@@ -80,7 +80,10 @@ applied to each view:
 | Depth-aware fusion (v1.1) | `Λ_v = w_v · (I − α d_v d_vᵀ)`, `P_base = (Λ_A + Λ_B)⁻¹ (Λ_A P_A + Λ_B P_B)` on the **original** inputs | `modules/weighted_fusion.py` |
 | Residual | `ΔP = max_delta · tanh(MLP([w_A C_A + w_B C_B ; |C_A − C_B| ; P_base]))`, `P_hat = P_base + ΔP` | `modules/residual_refinement.py` |
 
-**Architecture v1.2 (2026-09-25, default `model=v1_2 loss=v4`).** The
+**Architecture v1.2 (2026-09-25) is the final architecture** (default
+`model=v1_2 loss=v4`; every earlier model, loss and preset is archived under
+`src/configs/fusion/{model,loss,experiment}/archive/`, see
+`model/archive/README.md`). The
 reliability row above is switched off (`model.reliability.enabled=false`;
 same code): both views get weight 1/2 (the only valid view gets 1), so
 `P_base` is exactly the closed-form rule `avg_body_depthaware` with zero
@@ -90,7 +93,7 @@ equal weights at every test-time corruption level on the private data and
 FreeMan, while equal weights + residual tie the rule on clean data and beat
 it under corruption on almost every subject
 (`docs/research/strict_external_baselines_2026-09-21.md`, "Where the learned
-part helps"). v1.1 remains available as `model=v1_1 loss=v3`.
+part helps"). v1.1 is reproduced with `model=archive/v1_1 loss=archive/v3`.
 
 **Base rule (v1.1, 2026-09-20).** Architecture v1.0 used the scalar convex
 fusion `P_base = w_A · P_A + w_B · P_B`, one weight per joint and time step
@@ -114,8 +117,8 @@ P_base   = (Λ_A + Λ_B)⁻¹ (Λ_A P_A + Λ_B P_B) precision-weighted least squ
   drive a learned `α` back to 0. It must not be tuned on the private
   triangulated reference, which is built from the same image-plane
   coordinates and rewards `α → 1` by construction.
-* `α = 0` is bit-identical to v1.0 (`model=v1`, preset
-  `experiment=v1_0_base`); with `α = 1` and orthogonal cameras every
+* `α = 0` is bit-identical to v1.0 (`model=archive/v1`, preset
+  `experiment=archive/v1_0_base`); with `α = 1` and orthogonal cameras every
   coordinate would come from the view that measures it in the image plane.
 * `w_A + w_B = 1` and `α < 1` keep `Λ_A + Λ_B` invertible; a joint valid in
   one view only is returned exactly; for near-parallel optical axes `α` is
@@ -151,7 +154,7 @@ Version 4 (`loss/v4.yaml`, default with architecture v1.2) sets
 gradient path, so the objective is `L_rec + 0.01 · L_res`. The description
 below is version 3, which v1.1 uses.
 
-Three terms (`losses.py`, `src/configs/fusion/loss/v3.yaml`), following the
+Three terms (`losses.py`, `src/configs/fusion/loss/archive/v3.yaml`), following the
 division of labour established by the identifiability probes: the per-axis
 structure is a prior inside `P_base`, the loss only has to (a) not break it on
 clean data and (b) recover from single-view damage:
@@ -171,7 +174,8 @@ L = 1.0 · L_rec + 0.02 · L_rel + 0.01 · L_res
 * **`L_rel`**: cross-entropy on the reliability logits where corruption
   damaged exactly one view (label = the undamaged view).
 * **`L_res`**: L1 norm of `ΔP`.
-* FreeMan / Unity: `experiment=reference_supervised` replaces the clean-view
+* FreeMan / Fit3D: `experiment=reference_supervised` (final: v1.2 + loss v4;
+  v1.1: `experiment=archive/reference_supervised_v3`) replaces the clean-view
   target by the attached reference (`recovery.target = reference`); the
   private triangulated reference is never used for training.
 
@@ -182,7 +186,7 @@ they hurt on the private data (v2: 29.8 mm vs 27.5 average; measurement
 preset: 33.0 mm). `data.cycle_target.consensus.method = depth_aware` keeps the
 cross-cycle target consistent with the v1.1 base whenever it is enabled.
 
-**Version 2 (`experiment=v2`, `loss=v2` on `model=v1`)**, the previous
+**Version 2 (archived: `experiment=archive/v2`, `loss=archive/v2` on `model=archive/v1`)**, the previous
 default, used five terms:
 
 ```
@@ -217,7 +221,7 @@ L = 1.0 · L_cycle + 0.02 · L_rel + 0.1 · L_period + 0.1 · L_sym + 0.01 · L_
   next-cycle phases farther than `negative_phase_margin`, temperature `τ`; a
   constant feature scores `log(1 + |negatives|)` so the trivial solution is
   not optimal) or `type: cosine` (`1 − cos(F(φ, i), F(φ, i+1))`, preset
-  `experiment=periodicity_cosine`).  The 1000-step diagnostic on the private
+  `experiment=archive/periodicity_cosine`).  The 1000-step diagnostic on the private
   fold_01 (2026-09-20) showed the cosine version collapsing `F_motion`
   (same-phase, different-phase and random-joint similarity all 1.00,
   temporal variance 0.001) while the contrastive version keeps
@@ -242,11 +246,11 @@ residual magnitude and saturation (`|ΔP| ≥ 0.95 · max_delta`), reliability
 entropy / means / hard-selection fractions, and optional per-module gradient
 norms (`diagnostics.gradient_norm.enabled`, every `interval` steps).
 
-**Version 1 (`loss=v1_recovery`, preset `experiment=v1`)** keeps the earlier
+**Version 1 (archived: `loss=archive/v1_recovery`, preset `experiment=archive/v1`)** keeps the earlier
 recovery objective (`recovery.weight = 1`, position-level priors) for
 reproduction; `recovery.target = reference` (preset
-`experiment=reference_supervised`) is the reference-supervised variant.
-Position-level periodicity / half-cycle symmetry (`experiment=measurement`)
+`experiment=archive/reference_supervised_v1`) is the reference-supervised variant.
+Position-level periodicity / half-cycle symmetry (`experiment=archive/measurement`)
 hurt every metric on the private data.
 
 ### 1.5 Evaluation
@@ -326,15 +330,16 @@ FreeMan keeps only the repetitive action classes by default
 ```
 src/configs/fusion/
 ├── config.yaml              root: samples_per_cycle, num_cycles, seed, run_name, output_root
-├── model/v1_2.yaml          architecture v1.2 (default: equal weights + residual) and ablation switches
-├── model/v1_1.yaml          architecture v1.1 (learned reliability weights); model/v1.yaml = v1.0 base
+├── model/v1_2.yaml          FINAL architecture v1.2 (default: equal weights + residual) and ablation switches
+├── model/archive/           v1 (v1.0 base), v1_1 (learned reliability weights); README.md lists every archived config
 ├── model/external_*.yaml    external learned baselines (fusion/external): tcn, smoothnet, metapose_mlp, muc_weights
 ├── data/{synthetic,gymnastics,freeman,unity}.yaml   (+ _common.yaml)
-├── loss/{v4,v3,v2,v1_recovery}.yaml   v4 = default (v3 without L_rel)
+├── loss/v4.yaml             FINAL loss (L_rec + 0.01 L_res); loss/archive/{v3,v2,v1_recovery}.yaml
 ├── corruption/{default,none}.yaml
 ├── trainer/{default,debug}.yaml
 ├── optimizer/default.yaml
-└── experiment/*.yaml        @package _global_ presets (ablations, smoke)
+└── experiment/*.yaml        @package _global_ presets (module ablations, reference_supervised, smoke);
+                             experiment/archive/*.yaml = presets of earlier versions
 ```
 
 `samples_per_cycle` and `num_cycles` are defined once at the root and
@@ -351,9 +356,10 @@ their public checkpoints: each one is implemented on the model's own
 input/output contract (both canonical views, validity, phase, depth axes ->
 `PoseFusionOutput`), starts from the same closed-form base rule with equal
 weights, and is trained with the same folds, windows, corruption and
-objectives (`python -m fusion train model=external_<name>`; on FreeMan with
-`experiment=reference_supervised_v3`). The residual baselines have no
-reliability head, so pass `loss.reliability.weight=0`.
+objectives (`python -m fusion train model=external_<name>`; on FreeMan / Fit3D
+with `experiment=reference_supervised`). Loss v4 already has no reliability
+term; with the archived `experiment=archive/reference_supervised_v3` pass
+`loss.reliability.weight=0`, since the residual baselines have no reliability head.
 
 | Config | Architecture | Learned part |
 |---|---|---|

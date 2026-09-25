@@ -3,6 +3,6 @@
 # v3 loss, to isolate the contribution of the v1.1 base rule (pinned to v3 when
 # the default moved to v1.2 / loss v4, so the comparison stays the published one).
 defaults:
-  - override /model: v1
-  - override /loss: v3
+  - override /model: archive/v1
+  - override /loss: archive/v3
 run_name: ${data.name}_${model.name}_base_ablation_seed${seed}

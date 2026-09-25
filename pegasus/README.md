@@ -89,8 +89,9 @@ bash pegasus/submit_fusion_5fold.sh gymnastics
 bash pegasus/submit_fusion_5fold.sh freeman           # 17-subject protocol
 bash pegasus/submit_fusion_5fold.sh freeman_all40     # all 40 subjects
 
-# Ablations (one sweep per preset: no_film, no_cross_view, no_short_motion,
-# no_long_motion, no_phase, equal_reliability, no_residual, pose_only, full_skeleton, full_context).
+# Module ablations of the final v1.2 model (one sweep per preset: no_film, no_cross_view,
+# no_short_motion, no_long_motion, no_phase, pose_only, full_skeleton, full_context).
+# Archived v1.1 presets: bash pegasus/submit_fusion_5fold.sh gymnastics archive/no_residual
 bash pegasus/submit_fusion_5fold.sh gymnastics no_film
 
 # Single run on the fixed paper split (96/27/14).

@@ -126,7 +126,7 @@ and rewards this rule far beyond its true gain (see
 `docs/cycle_aware_fusion.md` §1.5). The learned model (`python -m fusion train`,
 architecture v1.2, `model=v1_2 loss=v4`) uses the same rule as its base
 pose with equal view weights and adds only a bounded learned residual
-(v1.1, with learned reliability weights, is `model=v1_1 loss=v3`). Everything below
+(v1.1, with learned reliability weights, is `model=archive/v1_1 loss=archive/v3`). Everything below
 describes the `avg_body_current` pipeline the rule shares.
 
 The previous preferred fusion method was:
@@ -224,6 +224,18 @@ biased and it is not a valid recommendation.
 | `$GYMNASTICS_DATA_ROOT/bak` | 140G | Backup data/results; flagged for deletion. |
 | `local/archive/classification_removed_2026-09-19/` | 33G | Archived outputs of the removed motion-classification task (`train/`, `total_5_class/`); see its README. Nothing in the pipeline reads them. |
 | `local/runs/calibration_vis` | 977M | Camera calibration parameters and visualizations. |
+
+## Final Architecture (2026-09-25)
+
+The cycle-aware model's final architecture is **v1.2** (`model/v1_2.yaml` +
+`loss/v4.yaml`, the Hydra defaults): equal view weights, the closed-form
+depth-aware base (alpha 0.8, fixed) and a bounded learned residual, trained
+with `L_rec + 0.01 L_res`. Every earlier model, loss and experiment preset is
+archived under `src/configs/fusion/{model,loss,experiment}/archive/` (listed in
+`src/configs/fusion/model/archive/README.md`) and is kept only to reproduce
+earlier runs; do not add experiments to it. Active presets are the module
+ablations, `reference_supervised`, `full_context`, `full_skeleton`,
+`robustness_eval`, `short_diagnostic` and `smoke`.
 
 ## Model Policy (2026-09-19)
 
