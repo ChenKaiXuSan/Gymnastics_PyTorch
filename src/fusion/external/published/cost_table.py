@@ -25,7 +25,7 @@ from common.paths import PROJECT_ROOT
 # What each method's *published* recipe requires, independent of our protocol.
 REQUIREMENTS: dict[str, dict[str, Any]] = {
     "ours (closed-form rule)": {"3d_labels": False, "calibration": False, "pretrained": False, "training": False},
-    "ours (v1.1 model)": {"3d_labels": False, "calibration": False, "pretrained": False, "training": "per fold, 50 epochs"},
+    "ours (model)": {"3d_labels": False, "calibration": False, "pretrained": False, "training": "per fold, 50 epochs"},
     "CanonPose": {"3d_labels": False, "calibration": False, "pretrained": False, "training": "per fold, 100 epochs"},
     "MetaPose (S1)": {"3d_labels": False, "calibration": False, "pretrained": "monocular lifter for the init", "training": False},
     "MetaPose (S2)": {"3d_labels": False, "calibration": False, "pretrained": "monocular lifter for the init", "training": "per fold, staged"},
@@ -85,7 +85,10 @@ def measure(device: str = "cuda", *, repeats: int = 20, frames: int = 128) -> li
         "phase_valid": torch.ones(1, frames, dtype=torch.bool, device=target), "frame_mask": torch.ones(1, frames, dtype=torch.bool, device=target),
     }
     with torch.no_grad():
-        add("ours (v1.1 model)", count_parameters(module.model), time_forward(lambda b: module(b), (batch,), repeats=repeats), frames)
+        # The default (final) architecture; a switched-off reliability head is built but never used.
+        used = count_parameters(module.model) - (0 if module.model.reliability.enabled else count_parameters(module.model.reliability))
+        add("ours (model)", used, time_forward(lambda b: module(b), (batch,), repeats=repeats), frames)
+        rows[-1]["method"] = f"ours (v{module.model.config.architecture_version} model)"
         half = torch.full_like(batch["pose_a"][..., :1], 0.5)
         rule_args = (batch["pose_a"], batch["pose_b"], half, half, batch["valid_a"], batch["valid_b"], None, None)
         add("ours (closed-form rule)", 0, time_forward(lambda *a: module.model.fuse_base(*a), rule_args, repeats=repeats), frames)

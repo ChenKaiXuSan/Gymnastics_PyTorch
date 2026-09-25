@@ -112,12 +112,16 @@ ours included: the model's fold checkpoints run through the same evaluator
 (`python -m fusion external-published model --run <sweep> --joints
 comparison12`), which on all 20 joints reproduces the sweep's own numbers.
 
+Updated on 2026-09-25 to the final architecture v1.2. The v1.2 rows for the
+private data and FreeMan are the `*_v1_1_equal_reliability_5fold_seed0` sweeps,
+whose training is identical to v1.2. v1.1 is kept as an archived row.
+
 | Method | Supervision | Gymnastics (137) | FreeMan-rep (37) | Fit3D (8) |
 |---|---|---:|---:|---:|
-| **Ours v1.1 (self-supervised)** | none | **19.3 ± 1.0** | **41.4 ± 6.2** | 47.7 ± 4.6 |
+| **Ours v1.2 (final, self-supervised)** | none | **18.2 ± 1.1** | **41.0 ± 6.2** | 47.7 ± 4.7 |
 | Ours, closed-form rule only (no learning) | none | 18.0 ± 1.0 | 41.0 ± 6.2 | 47.6 ± 4.8 |
-| Ours, base pose (learned weights) | none | 20.1 ± 1.0 | 41.5 ± 6.2 | 48.2 ± 4.6 |
-| Ours v1.1, reference-supervised (upper bound) | 3D ref | n/a | 37.3 ± 6.3 | 24.9 ± 3.2 |
+| Ours v1.1 (archived; learned view weights) | none | 19.3 ± 1.0 | 41.4 ± 6.2 | 47.7 ± 4.6 |
+| Ours v1.2, reference-supervised (upper bound) | 3D ref | n/a | 37.8 ± 6.2 | 25.1 ± 3.2 |
 | MDVPose | 3D ref | n/a | 39.8 ± 5.8 | **21.7 ± 2.2** |
 | MHFormer-81 | 3D ref | n/a | 43.6 ± 5.5 | 27.2 ± 2.4 |
 | VideoPose3D-243 trained | 3D ref | n/a | 46.3 ± 5.8 | 27.1 ± 2.5 |
@@ -133,79 +137,87 @@ evaluation reference, so training on it would be circular.
 
 ### Paired statistics over subjects
 
-Fold-level tests floor at p = 0.0625 for n = 5; the folds are
+Fold-level tests floor at p = 0.0625 for n = 5. The folds are
 subject-disjoint, so each subject is a held-out measurement of both methods
 (`python -m fusion external-published compare`, bootstrap CI over subjects,
-Wilcoxon signed-rank, Holm across the rows of one dataset; full output in
-`local/runs/external_published/stats/`). Positive difference = ours better.
+Wilcoxon signed-rank, Holm across the rows of one dataset). Full output is in
+`local/runs/external_published/stats/v1_2_*.json`; the v1.1 versions are the
+files without the prefix. Ours = v1.2; positive difference = ours better.
+Subject means differ slightly from the fold means above.
 
 Gymnastics, 137 participants:
 
 | Comparison | Theirs | Ours | Diff [95 % CI] | Ours better | p_Holm |
 |---|---:|---:|---|---:|---:|
-| Closed-form rule | 18.1 | 19.5 | -1.37 [-1.64, -1.12] | 17/137 | 2.2e-21 |
-| No-residual ablation | 18.3 | 19.5 | -1.20 [-1.44, -0.99] | 16/137 | 1.6e-21 |
-| Base pose (learned weights) | 20.3 | 19.5 | +0.80 [+0.67, +0.93] | 128/137 | 2.5e-22 |
-| CanonPose | 28.2 | 19.5 | +8.74 [+8.01, +9.48] | 136/137 | 2.5e-23 |
-| MetaPose S1 | 43.4 | 19.5 | +23.90 [+22.35, +25.44] | 136/137 | 2.5e-23 |
-| MetaPose S2-ts | 75.6 | 19.5 | +56.13 [+53.99, +58.30] | 137/137 | 2.5e-23 |
-| Face view | 31.9 | 19.5 | +12.46 [+11.86, +13.05] | 137/137 | 2.5e-23 |
+| Closed-form rule | 18.1 | 18.3 | -0.17 [-0.20, -0.15] | 16/137 | 1.0e-20 |
+| v1.1 (archived) | 19.5 | 18.3 | +1.19 [+0.95, +1.46] | 114/137 | 4.7e-19 |
+| CanonPose | 28.2 | 18.3 | +9.94 [+9.15, +10.73] | 137/137 | 2.2e-23 |
+| MetaPose S1 | 43.4 | 18.3 | +25.09 [+23.52, +26.65] | 136/137 | 2.2e-23 |
+| MetaPose S2-ts | 75.6 | 18.3 | +57.33 [+55.18, +59.50] | 137/137 | 2.2e-23 |
+| Face view | 31.9 | 18.3 | +13.65 [+13.01, +14.28] | 137/137 | 2.2e-23 |
+| Side view | 37.7 | 18.3 | +19.46 [+18.70, +20.24] | 137/137 | 2.2e-23 |
 
 FreeMan, 37 subjects:
 
 | Comparison | Theirs | Ours | Diff [95 % CI] | Ours better | p_Holm |
 |---|---:|---:|---|---:|---:|
-| MDVPose | 39.8 | 40.6 | -0.82 [-1.91, +0.25] | 16/37 | 0.12 |
-| MHFormer | 44.0 | 40.6 | +3.38 [+1.92, +4.99] | 29/37 | 1.6e-04 |
-| VideoPose3D-trained | 46.6 | 40.6 | +5.96 [+4.30, +7.72] | 31/37 | 1.3e-07 |
-| CanonPose | 52.8 | 40.6 | +12.20 [+10.65, +13.71] | 36/37 | 2.6e-10 |
-| MetaPose S1 | 54.4 | 40.6 | +13.76 [+10.72, +16.64] | 36/37 | 2.4e-07 |
-| MetaPose S2-ts | 68.0 | 40.6 | +27.31 [+23.90, +30.70] | 36/37 | 2.6e-10 |
-| VideoPose3D zero-shot | 83.7 | 40.6 | +43.06 [+39.05, +47.56] | 37/37 | 1.6e-10 |
-| Closed-form rule | 40.4 | 40.6 | -0.26 [-0.43, -0.11] | 11/37 | 9.2e-03 |
-| Ours, reference-supervised | 37.6 | 40.6 | -3.04 [-3.99, -1.99] | 7/37 | 1.9e-05 |
+| MDVPose | 39.8 | 40.3 | -0.52 [-1.56, +0.49] | 15/37 | 0.30 |
+| MHFormer | 44.0 | 40.3 | +3.68 [+2.25, +5.26] | 32/37 | 1.1e-05 |
+| VideoPose3D-trained | 46.6 | 40.3 | +6.26 [+4.65, +7.97] | 33/37 | 2.6e-08 |
+| CanonPose | 52.8 | 40.3 | +12.50 [+10.95, +14.01] | 36/37 | 2.9e-10 |
+| MetaPose S1 | 54.4 | 40.3 | +14.05 [+10.95, +16.97] | 36/37 | 2.4e-07 |
+| MetaPose S2-ts | 68.0 | 40.3 | +27.61 [+24.19, +31.02] | 36/37 | 2.9e-10 |
+| VideoPose3D zero-shot | 83.7 | 40.3 | +43.36 [+39.29, +47.97] | 37/37 | 1.6e-10 |
+| Closed-form rule | 40.4 | 40.3 | +0.04 [+0.01, +0.06] | 31/37 | 1.5e-04 |
+| v1.1 (archived) | 40.6 | 40.3 | +0.30 [+0.13, +0.48] | 26/37 | 3.8e-03 |
+| Ours v1.2, reference-supervised | 38.0 | 40.3 | -2.30 [-3.20, -1.32] | 7/37 | 7.4e-05 |
 
-Fit3D, 8 subjects (the Wilcoxon floor is 2/2^8 = 0.0078, so p_Holm cannot go
-below 0.07 with nine comparisons):
+Fit3D, 8 subjects. The Wilcoxon floor is 2/2^8 = 0.0078, so p_Holm cannot go
+below 0.086 with eleven comparisons; the raw p is given:
 
 | Comparison | Theirs | Ours | Diff [95 % CI] | Ours better | p |
 |---|---:|---:|---|---:|---:|
-| MDVPose | 22.1 | 47.5 | -25.41 [-31.17, -19.58] | 0/8 | 7.8e-03 |
-| MHFormer | 27.0 | 47.5 | -20.45 [-24.94, -15.67] | 0/8 | 7.8e-03 |
-| VideoPose3D-trained | 27.4 | 47.5 | -20.13 [-25.97, -14.16] | 0/8 | 7.8e-03 |
-| Ours, reference-supervised | 25.2 | 47.5 | -22.25 [-26.68, -17.96] | 0/8 | 7.8e-03 |
-| CanonPose | 99.6 | 47.5 | +52.08 [+37.25, +65.01] | 8/8 | 7.8e-03 |
-| MetaPose S1 | 58.3 | 47.5 | +10.78 [+9.60, +11.83] | 8/8 | 7.8e-03 |
-| MetaPose S2-ts | 66.8 | 47.5 | +19.31 [+16.67, +23.06] | 8/8 | 7.8e-03 |
-| VideoPose3D zero-shot | 49.5 | 47.5 | +1.97 [-1.53, +5.23] | 5/8 | 0.25 |
-| Closed-form rule | 47.4 | 47.5 | -0.08 [-0.18, +0.02] | 2/8 | 0.20 |
+| MDVPose | 22.1 | 47.5 | -25.37 [-31.16, -19.45] | 0/8 | 7.8e-03 |
+| MHFormer | 27.0 | 47.5 | -20.40 [-24.92, -15.59] | 0/8 | 7.8e-03 |
+| VideoPose3D-trained | 27.4 | 47.5 | -20.09 [-25.98, -14.08] | 0/8 | 7.8e-03 |
+| Ours v1.2, reference-supervised | 25.5 | 47.5 | -21.99 [-26.45, -17.56] | 0/8 | 7.8e-03 |
+| CanonPose | 99.6 | 47.5 | +52.12 [+37.36, +64.98] | 8/8 | 7.8e-03 |
+| MetaPose S1 | 58.3 | 47.5 | +10.82 [+9.69, +11.85] | 8/8 | 7.8e-03 |
+| MetaPose S2-ts | 66.8 | 47.5 | +19.35 [+16.69, +23.11] | 8/8 | 7.8e-03 |
+| VideoPose3D zero-shot | 49.5 | 47.5 | +2.01 [-1.52, +5.31] | 5/8 | 0.20 |
+| Closed-form rule | 47.4 | 47.5 | -0.04 [-0.10, +0.01] | 2/8 | 0.31 |
+| v1.1 (archived) | 47.5 | 47.5 | +0.04 [-0.06, +0.14] | 6/8 | 0.38 |
+
+Reference-supervised v1.2 against the supervised methods
+(`stats/v1_2_<dataset>_refsup_vs_supervised.json`): FreeMan beats MDVPose
++1.78 [+0.96, +2.58] (32/37, p_Holm 1.3e-4), MHFormer +5.98 (35/37) and
+VideoPose3D +8.57 (36/37). Fit3D loses to MDVPose -3.38 (1/8, p 0.016) and
+is ahead of MHFormer +1.59 and VideoPose3D +1.91 (6/8, n.s.).
 
 ### Reading
 
-1. **Against label-free methods we win everywhere and by a wide margin**:
+1. **Against label-free methods we win everywhere and by a wide margin.**
    CanonPose and both MetaPose variants lose on 136-137 of 137 private
-   participants and on 36/37 FreeMan subjects, p_Holm < 1e-9 throughout.
-2. **Against reference-supervised methods the picture depends on how far the
-   dataset's reference skeleton is from SAM3D's.** On FreeMan we beat
-   MHFormer and VideoPose3D and tie with MDVPose (CI crosses zero, 16/37).
-   On Fit3D every supervised method is 20-25 mm ahead -- but so is *our own
-   architecture trained with the reference* (24.9 vs 47.7). The two input
-   views alone are 53 mm, the closed form 47.6: fusion can only remove the
-   part of the error the two views disagree on, while a supervised lifter
-   also learns the systematic SAM3D -> Fit3D skeleton offset that survives
-   Procrustes alignment. The self-supervised setting cannot see that offset
-   by construction. Within the label-free family the ranking is unchanged:
-   we beat MetaPose S1 by 10.8 mm and CanonPose by 52 mm on all 8 subjects.
-3. **The learned part does not pay for itself on clean data.** The
-   closed-form rule is 1.4 mm better than the full model on the private
-   data (17/137 subjects better, p_Holm 2e-21) and 0.3 mm better on FreeMan;
-   the no-residual ablation matches the rule. The learned reliability
-   weights (base pose) *are* worse than equal weights, and the residual
-   recovers part of that but not all. The learned components currently
-   justify themselves only under corruption, and only without the learned
-   weights: see "Where the learned part helps" below (equal weights +
-   residual, v1.2, beats the rule at corruption levels 1-2 on almost every
-   subject).
+   participants, 36/37 FreeMan subjects and 8/8 Fit3D subjects
+   (p_Holm < 1e-6 on the first two).
+2. **Against reference-supervised methods the result depends on how far the
+   dataset's reference skeleton is from SAM3D's.** On FreeMan the
+   self-supervised v1.2 beats MHFormer and VideoPose3D and ties with MDVPose
+   (CI crosses zero, 15/37). Trained with the reference, it beats MDVPose
+   too (+1.8 mm, 32/37). On Fit3D every supervised method is 20-25 mm ahead,
+   and so is our own architecture trained with the reference (25.1 vs 47.7).
+   The two input views alone are 53 mm and the closed form is 47.6. Fusion can
+   only remove the part of the error the two views disagree on, while a
+   supervised lifter also learns the systematic SAM3D -> Fit3D skeleton
+   offset that survives Procrustes alignment. The self-supervised setting
+   cannot see that offset by construction.
+3. **On clean data v1.2 matches the closed-form rule.** It is 0.17 mm
+   behind on the private data, 0.04 mm ahead on FreeMan and within 0.04 mm
+   on Fit3D. It beats the archived v1.1 by 1.2 mm on the private data
+   (114/137) and 0.3 mm on FreeMan (26/37). The learned residual earns its
+   place under corruption, where v1.2 beats the rule on almost every subject
+   of all three datasets ("Where the learned part helps" and "Final model
+   v1.2" below).
 
 ## Per-method results on their own joint sets (12-14 joints)
 
@@ -303,37 +315,40 @@ robust. v1.2 ties the rule on clean data (-0.17 mm on the private data,
 
 ### Strata on real (uncorrupted) data
 
-`... analysis --what strata`, v1.1 against the rule, per frame; difference =
-rule minus model (positive = model better).
+`... analysis --what strata`, model against the rule, per frame. Difference =
+rule minus model (positive = model better). Updated to v1.2 on 2026-09-25;
+v1.1 in brackets.
 
 | Stratum | Gymnastics | FreeMan | Fit3D |
 |---|---:|---:|---:|
-| Observed input < 80 % | no frames | +1.9 (111 frames, both ~0.9 m) | +0.2 (432 frames) |
-| Observed input >= 95 % | -1.3 (all 65,024 frames) | -0.4 | -0.1 |
-| Turn-around / between / mid-swing | -1.1 / -1.5 / -1.4 | -0.5 / -0.4 / -0.3 | -0.0 / -0.1 / -0.1 |
-| Slow / medium / fast | -1.3 / -1.3 / -1.5 | -0.3 / -0.4 / -0.5 | -0.1 / -0.1 / -0.1 |
-| Elderly / students | -1.4 / -1.3 | -- | -- |
+| Observed input < 80 % | no frames | +4.0 (111 frames, both ~0.9 m) [+1.9] | +0.2 (432 frames) [+0.2] |
+| Observed input >= 95 % | -0.17 (all 65,024 frames) [-1.3] | +0.04 [-0.4] | -0.04 [-0.1] |
+| Turn-around / between / mid-swing | -0.16 / -0.19 / -0.15 | +0.05 / +0.04 / +0.04 | -0.02 / -0.04 / -0.05 |
+| Slow / medium / fast | -0.17 / -0.16 / -0.18 | +0.02 / +0.04 / +0.07 | -0.05 / -0.05 / -0.02 |
+| Elderly / students | -0.16 / -0.19 | -- | -- |
 
-SAM3D never abstains, so real data almost never has the degraded input the
-learned part was built for. The model is ahead only in the < 80 % observed
-stratum, which holds 111 FreeMan and 432 Fit3D frames.
+On real data v1.2 stays within 0.2 mm of the rule in every stratum (v1.1
+lost up to 1.5 mm). SAM3D never abstains, so real data almost never has the
+degraded input the learned part was built for. The model is ahead in the
+< 80 % observed stratum, which holds 111 FreeMan and 432 Fit3D frames.
 
 ### Measurement-level errors
 
 `... analysis --what measurement`: trunk twist (shoulder line vs hip line)
-per cycle. The table gives the range-of-motion error (degrees) and the
-peak angular-velocity error (degrees/s).
+per cycle. Each cell gives the range-of-motion error in degrees and the peak
+angular-velocity error in degrees/s. Updated to v1.2.
 
 | Variant | Gymnastics (1016 cycles) | FreeMan (4166) | Fit3D (1668) |
 |---|---:|---:|---:|
 | Face only | 3.36 / 69.0 | 7.08 / 72.8 | 4.84 / 38.6 |
 | Side only | 6.37 / 15.8 | 7.07 / 73.0 | 4.79 / 39.0 |
 | Rule | **2.70** / 22.4 | **6.79** / 73.3 | 4.84 / 34.5 |
-| v1.1 | 2.76 / 24.3 | **6.79** / 73.5 | 4.97 / **34.2** |
+| v1.2 | 2.74 / 28.2 | 6.80 / 73.7 | 4.94 / **34.0** |
+| v1.1 (archived) | 2.76 / 24.3 | 6.79 / 73.5 | 4.97 / 34.2 |
 
 Fusion lowers the ROM error compared with either view on the private data
 and FreeMan. Peak angular velocity is underestimated after fusion (ratio
-0.88-0.89 on the private data), because averaging two views smooths the
+0.85-0.89 on the private data), because averaging two views smooths the
 peak. The private column is scored against the triangulated pseudo-reference
 and shares its bias.
 
@@ -347,7 +362,8 @@ against both references (`data.options.reference_source`).
 | Method | Release reference | Two-view triangulated | Change |
 |---|---:|---:|---:|
 | Rule | 41.0 | **15.7** | -62 % |
-| v1.1 | 41.4 | 17.9 | -57 % |
+| v1.2 | 41.0 | 15.8 | -61 % |
+| v1.1 (archived) | 41.4 | 17.9 | -57 % |
 | Face only | 48.6 | 31.9 | -34 % |
 | MDVPose | **39.8** | 32.2 | -19 % |
 | CanonPose | 53.4 | 38.7 | -28 % |
@@ -365,7 +381,7 @@ reported only among label-free methods.
 | Method | Parameters | ms / frame | Temporal context | 3D labels | Calibration | Pretrained |
 |---|---:|---:|---:|---|---|---|
 | Ours, rule | 0 | 0.0006 | 128 | no | no | no |
-| Ours, v1.1 | 1.09 M | 0.066 | 128 | no | no | no |
+| Ours, v1.2 (final) | 1.05 M | 0.065 | 128 | no | no | no |
 | CanonPose | 10.6 M | 0.004 | 1 | no | no | no |
 | MetaPose S1 | 0 | iterative (100 Adam steps) | 1 | no | no | monocular init |
 | MHFormer-81 | 19.8 M | 5.0 | 81 | yes | camera-frame reference | no |
@@ -569,8 +585,11 @@ With a real target, learned weights can carry a little signal.
   results above. Code: `corruption_sweep.py`, `analysis_rows.py`,
   `pseudo_reference.py`, `cost_table.py`, `alpha_calibration.py`, all in
   `src/fusion/external/published/`.
-* Open: the official
-  three-dataset v1.2 runs, if v1.2 becomes the main model.
+* 2026-09-25 evening: the comparison table, paired statistics, strata,
+  measurement, pseudo-reference and cost rows are all on v1.2.
+* Every v1.2 run is done: main results, corruption sweeps and module
+  ablations on three datasets, plus the reference-supervised rows.
+* Optional, not run: external methods under test-time corruption.
 
 ## Status (2026-09-24)
 
