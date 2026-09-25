@@ -22,3 +22,9 @@ options:
   # varying more than this coefficient of variation (null = keep).
   min_cycles: 3
   max_period_cv: null
+  # "release" = the 8-camera markerless optimisation shipped with FreeMan.
+  # "two_view_triangulated" = the same two views the methods fuse, triangulated
+  # like the private dataset's pseudo-reference, to measure how much such a
+  # reference flatters two-view fusion (fusion.external.published.pseudo_reference).
+  reference_source: release
+  pseudo_reference_root: local/runs/external_published/pseudo_reference/freeman
