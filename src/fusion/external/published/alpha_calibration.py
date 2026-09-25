@@ -106,6 +106,8 @@ def select(curves: dict[float, tuple[np.ndarray, np.ndarray]]) -> tuple[float, n
     per_joint = np.array([curves[a][0] / np.maximum(curves[a][1], 1) for a in alphas])  # [A, J]
     global_alpha = alphas[int(np.argmin(totals))]
     joint_alpha = np.array([alphas[i] for i in np.argmin(per_joint, axis=0)])
+    # Joints the reference does not cover have no error at any alpha: they take the global value.
+    joint_alpha[np.ptp(per_joint, axis=0) == 0] = global_alpha
     return global_alpha, joint_alpha, {"alphas": alphas, "global_mm": (1000 * totals).tolist(), "per_joint_mm": (1000 * per_joint).tolist()}
 
 
@@ -153,7 +155,7 @@ def run(dataset: str, *, joints: Sequence[str] | None, tables: dict[str, np.ndar
         global_alpha, joint_alpha, curve_report = select(pooled)
         results["dataset_table"] = {"global_alpha": global_alpha, "joint_alpha": joint_alpha.tolist(), "curves": curve_report}
         print(f"[alpha] {dataset} dataset-wide: global alpha {global_alpha}, per joint {dict(zip(results['joint_names'], joint_alpha.tolist()))}", flush=True)
-    keys = [k for k in results["folds"][0] if k.startswith("test_")]
+    keys = [k for k, v in results["folds"][0].items() if k.startswith("test_") and isinstance(v, float)]
     results["summary"] = {k: {"mean": statistics.fmean(r[k] for r in results["folds"]), "sd": statistics.pstdev([r[k] for r in results["folds"]])} for k in keys}
     return results
 
@@ -173,7 +175,11 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - thin C
     tables: dict[str, np.ndarray] = {}
     for name in [t for t in args.tables.replace("+", ",").split(",") if t]:
         path = OUTPUT_ROOT / name / f"calibration_{args.joints}.json"
-        tables[name] = np.array(json.loads(path.read_text(encoding="utf-8"))["dataset_table"]["joint_alpha"], dtype=np.float32)
+        table = json.loads(path.read_text(encoding="utf-8"))["dataset_table"]
+        joint_alpha = np.array(table["joint_alpha"], dtype=np.float32)
+        # Tables written before the uncovered-joint fallback carry alpha 0 there; repair them on load.
+        joint_alpha[np.ptp(np.array(table["curves"]["per_joint_mm"]), axis=0) == 0] = table["global_alpha"]
+        tables[name] = joint_alpha
     results = run(args.dataset, joints=joints, tables=tables, folds_dir=args.folds_dir, extra=list(args.override or []), calibrate=not args.no_calibrate)
     out = OUTPUT_ROOT / args.dataset / (f"calibration_{args.joints}.json" if not args.no_calibrate else f"transfer_{args.joints}.json")
     out.parent.mkdir(parents=True, exist_ok=True)

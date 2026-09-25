@@ -202,8 +202,10 @@ below 0.07 with nine comparisons):
    the no-residual ablation matches the rule. The learned reliability
    weights (base pose) *are* worse than equal weights, and the residual
    recovers part of that but not all. The learned components currently
-   justify themselves only under corruption (20-joint sweep: model 23.0 vs
-   its base 29.5 mm), and even there the equal-weight rule scores 21.3.
+   justify themselves only under corruption, and only without the learned
+   weights: see "Where the learned part helps" below (equal weights +
+   residual, v1.2, beats the rule at corruption levels 1-2 on almost every
+   subject).
 
 ## Per-method results on their own joint sets (12-14 joints)
 
@@ -246,6 +248,205 @@ Reference rows for the same protocol come from `python -m fusion analyze`
 scored on the 12-14 major joints their skeleton covers, so the comparison
 table must re-aggregate the model on those joints.
 
+
+## Where the learned part helps (2026-09-25)
+
+All numbers in this section: 12 comparison joints, 5 folds, per-frame
+PA-MPJPE in mm, seed 0, unless stated. "Rule" is the closed-form
+equal-weight depth-aware fusion (alpha 0.8, zero parameters); "learned
+weights" is the v1.1 base pose `P_base` with the reliability head's weights;
+"v1.1" is the full model; "equal weights + residual" is v1.1 trained with
+`model.reliability.enabled=false` (runs `*_equal_reliability_*`, called
+**v1.2** below).
+
+### Test-time corruption sweep
+
+`python -m fusion external-published corruption` re-scores finished
+checkpoints with the training corruption switched on at test time. The level
+scales every corruption probability (level 1 = the training setting); the
+magnitudes stay fixed.
+
+| Dataset | Level | Rule | Learned weights | v1.1 | Learned weights, no residual | v1.2 |
+|---|---:|---:|---:|---:|---:|---:|
+| Gymnastics | 0 | **18.0** | 20.1 | 19.3 | 18.2 | 18.2 |
+| | 0.5 | **18.7** | 22.6 | 20.3 | 20.0 | **18.7** |
+| | 1 | 21.4 | 28.5 | 23.3 | 24.5 | **20.5** |
+| | 2 | 30.1 | 37.6 | 30.0 | 33.1 | **26.4** |
+| FreeMan | 0 | **41.0** | 41.5 | 41.4 | -- | **41.0** |
+| | 1 | 42.7 | 46.0 | 43.5 | -- | **42.0** |
+| | 2 | 47.9 | 52.6 | 46.8 | -- | **45.3** |
+
+Gymnastics ablations at level 1: v1.1 23.3, no cross-view 23.7, no FiLM
+22.9, no long motion 23.3, no short motion 23.3, no phase 23.3, pose branch
+only 22.8, no residual 24.5, v1.2 20.5. The encoder branches move the result
+by less than 0.9 mm. What matters is whether the weights are learned and
+whether the residual is present.
+
+Paired over subjects (subject means, so they differ slightly from the fold
+means above; difference = other minus v1.2, positive = v1.2 better; Wilcoxon
+with Holm correction over the 14 tests):
+
+| Dataset | Level | v1.2 vs rule | v1.2 better | p_Holm | v1.2 vs v1.1 | v1.2 better | p_Holm |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Gymnastics (137) | 0 | -0.17 | 16 | 5e-20 | +1.19 | 114 | 4e-18 |
+| | 0.5 | +0.04 | 78 | 0.08 | +1.67 | 129 | 5e-22 |
+| | 1 | +0.85 | 124 | 6e-20 | +2.77 | 136 | 4e-23 |
+| | 2 | +3.64 | 136 | 4e-23 | +3.57 | 137 | 4e-23 |
+| FreeMan (37) | 0 | +0.04 | 31 | 2e-4 | +0.30 | 26 | 4e-3 |
+| | 1 | +0.63 | 36 | 1e-9 | +1.23 | 35 | 6e-10 |
+| | 2 | +2.57 | 37 | 1e-10 | +1.32 | 36 | 2e-9 |
+
+Reading: the learned reliability weights are worse than equal weights at
+every level on both datasets. The residual is what makes the learned model
+robust. v1.2 ties the rule on clean data (-0.17 mm on the private data,
++0.04 mm on FreeMan) and beats it under corruption on almost every subject.
+
+### Strata on real (uncorrupted) data
+
+`... analysis --what strata`, v1.1 against the rule, per frame; difference =
+rule minus model (positive = model better).
+
+| Stratum | Gymnastics | FreeMan | Fit3D |
+|---|---:|---:|---:|
+| Observed input < 80 % | no frames | +1.9 (111 frames, both ~0.9 m) | +0.2 (432 frames) |
+| Observed input >= 95 % | -1.3 (all 65,024 frames) | -0.4 | -0.1 |
+| Turn-around / between / mid-swing | -1.1 / -1.5 / -1.4 | -0.5 / -0.4 / -0.3 | -0.0 / -0.1 / -0.1 |
+| Slow / medium / fast | -1.3 / -1.3 / -1.5 | -0.3 / -0.4 / -0.5 | -0.1 / -0.1 / -0.1 |
+| Elderly / students | -1.4 / -1.3 | -- | -- |
+
+SAM3D never abstains, so real data almost never has the degraded input the
+learned part was built for. The model is ahead only in the < 80 % observed
+stratum, which holds 111 FreeMan and 432 Fit3D frames.
+
+### Measurement-level errors
+
+`... analysis --what measurement`: trunk twist (shoulder line vs hip line)
+per cycle. The table gives the range-of-motion error (degrees) and the
+peak angular-velocity error (degrees/s).
+
+| Variant | Gymnastics (1016 cycles) | FreeMan (4166) | Fit3D (1668) |
+|---|---:|---:|---:|
+| Face only | 3.36 / 69.0 | 7.08 / 72.8 | 4.84 / 38.6 |
+| Side only | 6.37 / 15.8 | 7.07 / 73.0 | 4.79 / 39.0 |
+| Rule | **2.70** / 22.4 | **6.79** / 73.3 | 4.84 / 34.5 |
+| v1.1 | 2.76 / 24.3 | **6.79** / 73.5 | 4.97 / **34.2** |
+
+Fusion lowers the ROM error compared with either view on the private data
+and FreeMan. Peak angular velocity is underestimated after fusion (ratio
+0.88-0.89 on the private data), because averaging two views smooths the
+peak. The private column is scored against the triangulated pseudo-reference
+and shares its bias.
+
+### Bias of a two-view pseudo-reference (FreeMan)
+
+`python -m fusion external-published pseudo-reference build` triangulates
+the two selected FreeMan views with the released cameras (the same
+construction as the private reference). The same predictions are then scored
+against both references (`data.options.reference_source`).
+
+| Method | Release reference | Two-view triangulated | Change |
+|---|---:|---:|---:|
+| Rule | 41.0 | **15.7** | -62 % |
+| v1.1 | 41.4 | 17.9 | -57 % |
+| Face only | 48.6 | 31.9 | -34 % |
+| MDVPose | **39.8** | 32.2 | -19 % |
+| CanonPose | 53.4 | 38.7 | -28 % |
+
+The pseudo-reference rewards two-view fusion 3x more than a supervised
+lifter and flips the ranking: MDVPose leads against the release reference,
+and the rule leads by 16.5 mm against the pseudo-reference. Private-data
+margins between fusion and external methods are therefore inflated and are
+reported only among label-free methods.
+
+### Cost
+
+`... cost` (GPU timing from `local/runs/external_published/cost/cost_table.json`; temporal context = frames the method reads per output):
+
+| Method | Parameters | ms / frame | Temporal context | 3D labels | Calibration | Pretrained |
+|---|---:|---:|---:|---|---|---|
+| Ours, rule | 0 | 0.0006 | 128 | no | no | no |
+| Ours, v1.1 | 1.09 M | 0.066 | 128 | no | no | no |
+| CanonPose | 10.6 M | 0.004 | 1 | no | no | no |
+| MetaPose S1 | 0 | iterative (100 Adam steps) | 1 | no | no | monocular init |
+| MHFormer-81 | 19.8 M | 5.0 | 81 | yes | camera-frame reference | no |
+| MDVPose | 42.5 M | 0.074 | 243 | yes | camera-frame reference | MotionBERT H36M |
+| VideoPose3D-243 | 17.0 M | 0.62 | 243 | yes | camera-frame reference | no |
+
+## Depth discount alpha (2026-09-25)
+
+`python -m fusion external-published alpha --dataset <d> --joints all`
+(20 joints) sweeps the rule over alpha in {0, 0.3, 0.5, 0.6, 0.7, 0.75, 0.8,
+0.85, 0.875, 0.9, 0.95, 0.98}. alpha = 1 is excluded because the system
+becomes singular when the optical axes are not orthogonal. Outputs are in
+`local/runs/external_published/alpha/<dataset>/`.
+
+Pooled over all subjects:
+
+| alpha | 0 | 0.3 | 0.5 | 0.6 | 0.7 | 0.75 | **0.8** | 0.85 | 0.875 | 0.9 | 0.95 | 0.98 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| FreeMan | 43.03 | 41.91 | 41.20 | 40.92 | 40.73 | **40.70** | 40.72 | 40.81 | 40.90 | 41.01 | 41.32 | 41.59 |
+| Fit3D | 52.24 | 51.41 | 50.71 | 50.31 | 49.85 | 49.60 | 49.35 | 49.11 | 49.00 | 48.91 | **48.86** | 48.89 |
+| Gymnastics (diagnostic only) | 27.46 | 24.26 | 21.65 | 20.21 | 18.73 | 18.01 | 17.33 | 16.74 | 16.50 | 16.31 | **16.14** | 16.22 |
+
+Fold-wise calibration (alpha selected on each fold's validation subjects,
+scored on its test subjects; fold mean ± sd):
+
+| Setting | FreeMan | Fit3D |
+|---|---:|---:|
+| Plain average (alpha 0) | 43.68 ± 6.65 | 52.24 ± 3.23 |
+| Fixed alpha 0.8 | 41.41 ± 6.98 | 49.42 ± 3.53 |
+| alpha 0.98 | 42.27 ± 6.92 | 48.99 ± 3.65 |
+| One alpha from validation | 41.39 ± 6.98 (0.75 in every fold) | **48.97 ± 3.62** (0.9-0.95) |
+| Per-joint alpha from validation | 41.44 ± 6.98 | 49.35 ± 3.54 |
+
+Conclusions:
+
+1. **alpha = 0.8 stays fixed.** On FreeMan, which has an independent
+   reference, the curve is U-shaped with its minimum at 0.75, and 0.8 is
+   0.02 mm off. On Fit3D the best value (0.95) gains 0.45 mm (about 1 %),
+   which changes no ranking. Between 0.75 and 0.95 the error varies by
+   less than 0.5 mm on both datasets. Every existing result, all run at
+   0.8, stands.
+2. **Per-joint alpha is rejected.** It is worse than a single alpha on both
+   datasets (selection overfits the validation subjects) and is not
+   implemented in the model.
+3. **Depth awareness itself is the gain.** Going from the plain average to
+   0.8 saves 2.3 mm on FreeMan and 2.8 mm on Fit3D, several times more than
+   any further tuning of alpha.
+4. **The private reference cannot select alpha.** Its curve falls steeply
+   up to 0.95: the 0.8 -> 0.95 step is worth 1.2 mm there, against
+   0.02-0.5 mm on the datasets with an independent reference. This matches
+   the pseudo-reference bias above (the triangulated reference is built
+   from the same image-plane coordinates that alpha -> 1 trusts).
+
+Cross-dataset transfer (FreeMan's per-joint table scored on Fit3D and the
+reverse, both tables on the private data) is running. Uncovered joints
+(toes and heels, plus the neck on FreeMan) now fall back to the dataset's
+global alpha; the first transfer run had set them to 0 and is discarded.
+
+## Architecture decision: v1.2 (proposed, 2026-09-25)
+
+v1.2 is **a model version, not a loss version**: v1.1 with
+`model.reliability.enabled=false`. No code changes. The reliability head is
+bypassed, both views get weight 1/2 (the only valid view takes weight 1),
+`P_base` becomes exactly the closed-form rule, and the residual head reads
+`(C_A + C_B) / 2` instead of `w_A C_A + w_B C_B`. The loss config stays
+`loss/v3`. `L_rel` has no gradient path any more, so the effective objective
+is `L_rec + 0.01 L_res`. The learned part is now only the bounded residual:
+a fixed geometric prior (alpha) gives the accuracy, and the residual gives
+robustness under damaged input.
+
+Not done yet: a `model/v1_2.yaml` config, and an official 5-fold run on all
+three datasets (Fit3D has no `equal_reliability` run so far).
+
+## Status (2026-09-25)
+
+* Robustness, strata, measurement, pseudo-reference, cost and alpha
+  results above. Code: `corruption_sweep.py`, `analysis_rows.py`,
+  `pseudo_reference.py`, `cost_table.py`, `alpha_calibration.py`, all in
+  `src/fusion/external/published/`.
+* Open: alpha transfer tables (running); `model/v1_2.yaml` and the official
+  three-dataset v1.2 runs, if v1.2 becomes the main model.
 
 ## Status (2026-09-24)
 
