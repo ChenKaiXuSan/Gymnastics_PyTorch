@@ -541,6 +541,9 @@ attention carry most of the effect (0.5-0.7 mm at level 2), and the
 long- and short-motion branches contribute 0.1-0.3 mm. The phase encoding
 never helps. It is not significant on the private data or Fit3D and is
 slightly harmful on FreeMan at level 2 (removing it gains 0.06 mm).
+**Decision (2026-09-25): the phase encoding stays in v1.2.** The effect is
+at most 0.06 mm, and it is reported as a component without measurable
+contribution.
 
 Reference-supervised final model (`experiment=reference_supervised`, v1.2 +
 loss v4 with the dataset reference as the recovery target), 12 joints:
