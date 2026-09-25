@@ -28,6 +28,9 @@
     model         --dataset ... --run <sweep dir> [--joints comparison12|all]
                   our own model's checkpoints through the same evaluator, so its
                   number is on the joints the external methods cover
+    alpha         --dataset ... [--joints all|comparison12] [--tables freeman,fit3d] [--no-calibrate]
+                  fold-wise (validation-selected) and per-joint calibration of the
+                  rule's depth discount alpha; dataset-wide tables for transfer
     cost          parameters, inference time and what each method's recipe requires
     pseudo-reference build   triangulate FreeMan's two selected views into a
                   private-style pseudo-reference, to measure how much such a
@@ -433,6 +436,13 @@ def make_parser() -> argparse.ArgumentParser:
     md_.add_argument("--device", default="cuda")
     md_.add_argument("--folds-dir", type=Path, default=None)
     md_.add_argument("--override", nargs="*", default=None)
+    al = sub.add_parser("alpha", help="calibrate the rule's depth discount alpha (fold-wise, per joint, transfer)")
+    al.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "fit3d"))
+    al.add_argument("--joints", default="all")
+    al.add_argument("--tables", default="")
+    al.add_argument("--no-calibrate", action="store_true")
+    al.add_argument("--folds-dir", type=Path, default=None)
+    al.add_argument("--override", nargs="*", default=None)
     ct = sub.add_parser("cost", help="parameter counts, inference time and method requirements")
     ct.add_argument("--device", default="cuda")
     ct.add_argument("--repeats", type=int, default=20)
@@ -499,6 +509,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.override:
             argv2 += ["--override", *args.override]
         return model_main(argv2)
+    if args.method == "alpha":
+        from .alpha_calibration import main as alpha_main
+
+        argv2 = ["--dataset", args.dataset, "--joints", args.joints, "--tables", args.tables]
+        if args.no_calibrate:
+            argv2.append("--no-calibrate")
+        if args.folds_dir:
+            argv2 += ["--folds-dir", str(args.folds_dir)]
+        if args.override:
+            argv2 += ["--override", *args.override]
+        return alpha_main(argv2)
     if args.method == "cost":
         from .cost_table import main as cost_main
 
