@@ -419,10 +419,22 @@ Conclusions:
    the pseudo-reference bias above (the triangulated reference is built
    from the same image-plane coordinates that alpha -> 1 trusts).
 
-Cross-dataset transfer (FreeMan's per-joint table scored on Fit3D and the
-reverse, both tables on the private data) is running. Uncovered joints
-(toes and heels, plus the neck on FreeMan) now fall back to the dataset's
-global alpha; the first transfer run had set them to 0 and is discarded.
+Cross-dataset transfer of the dataset-wide per-joint tables (fold mean,
+20 joints). Joints the source reference does not cover (toes and heels,
+plus the neck on FreeMan) take the source's global alpha.
+
+| Scored on | Fixed 0.8 | FreeMan table | Fit3D table |
+|---|---:|---:|---:|
+| FreeMan | **41.41** | (own) | 42.08 |
+| Fit3D | **49.42** | 49.67 | (own) |
+| Gymnastics (diagnostic only) | 17.33 | 17.87 | 16.55 |
+
+5. **Per-joint tables do not transfer.** On both datasets with an
+   independent reference, the other dataset's table is worse than the fixed
+   0.8 (+0.67 and +0.25 mm). On the private data the Fit3D table (higher
+   alphas) looks 0.8 mm better and the FreeMan table 0.5 mm worse. That
+   ordering follows each table's mean alpha, which is the pseudo-reference
+   artefact again, not a transfer gain.
 
 ## Architecture decision: v1.2 (proposed, 2026-09-25)
 
@@ -445,7 +457,7 @@ three datasets (Fit3D has no `equal_reliability` run so far).
   results above. Code: `corruption_sweep.py`, `analysis_rows.py`,
   `pseudo_reference.py`, `cost_table.py`, `alpha_calibration.py`, all in
   `src/fusion/external/published/`.
-* Open: alpha transfer tables (running); `model/v1_2.yaml` and the official
+* Open: `model/v1_2.yaml` and the official
   three-dataset v1.2 runs, if v1.2 becomes the main model.
 
 ## Status (2026-09-24)
