@@ -448,8 +448,10 @@ is `L_rec + 0.01 L_res`. The learned part is now only the bounded residual:
 a fixed geometric prior (alpha) gives the accuracy, and the residual gives
 robustness under damaged input.
 
-Not done yet: a `model/v1_2.yaml` config, and an official 5-fold run on all
-three datasets (Fit3D has no `equal_reliability` run so far).
+Configs since commit dd76abc: `model/v1_2.yaml` + `loss/v4.yaml` (v3 with the
+reliability weight at 0) are the Hydra defaults; v1.1 is `model=v1_1
+loss=v3`. Not done yet: the official 5-fold v1.2 runs on all three datasets
+(Fit3D has no `equal_reliability` run so far).
 
 ## Status (2026-09-25)
 
@@ -457,7 +459,7 @@ three datasets (Fit3D has no `equal_reliability` run so far).
   results above. Code: `corruption_sweep.py`, `analysis_rows.py`,
   `pseudo_reference.py`, `cost_table.py`, `alpha_calibration.py`, all in
   `src/fusion/external/published/`.
-* Open: `model/v1_2.yaml` and the official
+* Open: the official
   three-dataset v1.2 runs, if v1.2 becomes the main model.
 
 ## Status (2026-09-24)
