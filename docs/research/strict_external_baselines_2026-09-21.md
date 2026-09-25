@@ -506,6 +506,60 @@ This reverses the v1.1 ablation, where removing FiLM or the motion branches
 *improved* the clean error: in v1.1 the encoder also fed the harmful
 reliability weights.
 
+## Final model v1.2: module ablations on all three datasets and the reference-supervised row (2026-09-25)
+
+Each ablation (`<data>_v1_2_<preset>_5fold_seed0`) is scored at corruption levels
+0/1/2 and paired over subjects against v1.2 at the same level. Difference =
+ablation minus v1.2 (positive = the component helps), with the number of
+subjects where v1.2 is better. Holm correction is applied within each dataset
+(18 tests).
+
+| Removed | Gymnastics (137) clean / L1 / L2 | FreeMan (37) clean / L1 / L2 | Fit3D (8) clean / L1 / L2 |
+|---|---|---|---|
+| Motion branches + FiLM (pose only) | +0.20 / +0.34 / **+0.64** (129) | +0.03 / +0.18 / **+0.59** (36) | -0.01 / +0.10 / +0.28 (8/8) |
+| FiLM | +0.18 / +0.30 / **+0.58** (126) | +0.03 / +0.17 / **+0.54** (36) | -0.03 / +0.07 / +0.23 (8/8) |
+| Cross-view attention | +0.11 / +0.25 / **+0.48** (122) | -0.01 / +0.20 / **+0.72** (36) | -0.01 / +0.07 / +0.27 (8/8) |
+| Long-motion branch | +0.04 / +0.09 / +0.27 (108) | +0.00 / +0.07 / +0.21 (30) | +0.02 / +0.03 / +0.04 (6/8) |
+| Short-motion branch | +0.07 / +0.06 / +0.12 (102) | +0.02 / +0.08 / +0.20 (34) | +0.01 / +0.04 / +0.15 (7/8) |
+| Phase encoding | +0.03 / +0.02 / +0.02 (75), n.s. | -0.01 / -0.02 / **-0.06** (9, p_Holm 0.002) | +0.01 / +0.02 / +0.00 (3/8) |
+
+v1.2 absolute errors (subject means): gymnastics 18.29 / 20.68 / 26.57,
+FreeMan 40.35 / 41.34 / 44.64, Fit3D 47.45 / 48.43 / 51.36.
+
+Significance: on the private data every row except the phase encoding is
+significant at all three levels (p_Holm <= 5e-4). On FreeMan every row
+except the phase encoding is significant at levels 1 and 2 (p_Holm <= 2e-4),
+and none is significant on clean data. Fit3D has 8 subjects, so the smallest
+Wilcoxon p is 0.0078 and no row survives the Holm correction over 18 tests.
+The direction still matches the other two datasets: pose only, FiLM and
+cross-view are better than their ablation on 8/8 subjects at level 2.
+
+Reading: the encoder components matter for recovery from damaged input,
+not for clean accuracy. The ranking is the same on the two datasets with
+enough subjects: the FiLM-conditioned motion branches and cross-view
+attention carry most of the effect (0.5-0.7 mm at level 2), and the
+long- and short-motion branches contribute 0.1-0.3 mm. The phase encoding
+never helps. It is not significant on the private data or Fit3D and is
+slightly harmful on FreeMan at level 2 (removing it gains 0.06 mm).
+
+Reference-supervised final model (`experiment=reference_supervised`, v1.2 +
+loss v4 with the dataset reference as the recovery target), 12 joints:
+
+| | FreeMan | Fit3D |
+|---|---:|---:|
+| v1.2, reference-supervised | **37.8** | 25.1 |
+| v1.1, reference-supervised (archived) | 37.3 | 24.9 |
+| MDVPose | 39.8 | **21.7** |
+| MHFormer | 43.6 | 27.2 |
+| VideoPose3D (trained) | 46.3 | 27.1 |
+
+Paired over subjects, v1.2-refsup beats MDVPose on FreeMan (+1.78 mm, CI
+0.96-2.58, 32/37, p 1e-4), MHFormer (+6.0, 35/37) and VideoPose3D (+8.6,
+36/37). On Fit3D it beats MHFormer and VideoPose3D on 6/8 subjects (n.s.)
+and loses to MDVPose (-3.4 mm, 1/8, p 0.016). Compared with v1.1-refsup it
+is 0.43 mm worse on FreeMan (5/37, p 3e-6) and 0.21 mm worse on Fit3D (n.s.).
+With a real target, learned weights can carry a little signal.
+
 ## Status (2026-09-25)
 
 * Robustness, strata, measurement, pseudo-reference, cost and alpha
