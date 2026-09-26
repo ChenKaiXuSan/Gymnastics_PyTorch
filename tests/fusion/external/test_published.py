@@ -278,3 +278,32 @@ def test_model_rows_score_the_reported_final_weights(tmp_path):
         fold_checkpoint(tmp_path / "old", "fold_01", which="final")
     with pytest.raises(ValueError):
         fold_checkpoint(tmp_path / "new", "fold_01", which="latest")
+
+
+def test_failure_strata_detects_swaps_and_flipped_limbs():
+    import torch
+
+    from fusion.external.published.failure_strata import _max_limb_angle, _swap, label, summarise
+
+    torch.manual_seed(0)
+    reference = torch.randn(1, 4, 6, 3)
+    usable = torch.ones(1, 4, 6, dtype=torch.bool)
+    pairs = [(0, 1), (2, 3), (4, 5)]
+    swapped = _swap(reference, pairs)
+    assert torch.equal(_swap(swapped, pairs), reference)
+    # A pose that equals the reference has no limb error; flipping one limb end gives a large angle.
+    bones = [(0, 2), (1, 3)]
+    assert float(_max_limb_angle(reference, reference, usable, bones).max()) < 0.5  # arccos noise near 1 in fp32
+    flipped = reference.clone()
+    flipped[..., 2, :] = 2 * flipped[..., 0, :] - flipped[..., 2, :]
+    assert float(_max_limb_angle(flipped, reference, usable, bones).max()) > 60.0
+    records = [
+        {"subject": str(i % 6), "model_mm": 10.0 - (i % 3), "rule_mm": 10.0, "face_mm": 10.0 + i, "side_mm": 12.0, "gap": float(i),
+         "swap_face": i % 50 == 0, "swap_side": False, "limb_face": 70.0 if i % 40 == 0 else 5.0, "limb_side": 5.0}
+        for i in range(400)
+    ]
+    labels = label(records)
+    assert set(labels["view_disagreement"]) == {"0-50 %", "50-90 %", "90-99 %", "99-100 %"}
+    assert labels["lr_swap"].count("face") == 8 and labels["gross_limb"].count("face") == 10
+    rows = {(r["stratum"], r["level"]): r for r in summarise(records)}
+    assert rows[("lr_swap", "none")]["diff_mm"] > 0 and rows[("view_ratio", "> 2x")]["frames"] > 0

@@ -185,7 +185,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - thin C
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dataset", required=True, choices=("gymnastics", "freeman", "fit3d"))
     parser.add_argument("--run", type=Path, required=True)
-    parser.add_argument("--what", default="strata,measurement", help="comma/plus-separated: strata, measurement")
+    parser.add_argument("--what", default="strata,measurement", help="comma/plus-separated: strata, measurement, failures")
     parser.add_argument("--joints", default="comparison12")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--folds-dir", type=Path, default=None)
@@ -207,4 +207,13 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - thin C
         print(f"[analysis] {args.dataset} measurement (trunk twist, per cycle):")
         for row in payload["measurement"]:
             print(f"   {row['variant']:6s} cycles={row['cycles']:5d}  ROM err {row['rom_error_deg']:5.2f}°  ROM ratio {row['rom_relative']:.3f}  peak err {row['peak_error_deg_s']:6.2f}°/s  peak ratio {row['peak_relative']:.3f}")
+    if "failures" in wanted:
+        from .failure_strata import run as failure_run
+
+        payload = failure_run(args.dataset, args.run, joints=joints, device=args.device, folds_dir=args.folds_dir, extra=list(args.override or []))
+        (root / "failures.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        print(f"[analysis] {args.dataset} real-failure strata (rule - model, positive = model better), {payload['frames']} frames:")
+        for row in payload["strata"]:
+            print(f"   {row['stratum']:18s} {row['level']:9s} share {100 * row['frame_share']:5.1f} %  model {row['model_mm']:6.2f}  rule {row['rule_mm']:6.2f}"
+                  f"  face {row['face_mm']:6.2f}  side {row['side_mm']:6.2f}  diff {row['diff_mm']:+5.2f}  subjects {row['subjects_model_better']}/{row['subjects']}  p {row['wilcoxon_p']:.2g}")
     return 0

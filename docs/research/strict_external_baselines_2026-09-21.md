@@ -579,6 +579,55 @@ and loses to MDVPose (-3.4 mm, 1/8, p 0.016). Compared with v1.1-refsup it
 is 0.43 mm worse on FreeMan (5/37, p 3e-6) and 0.21 mm worse on Fit3D (n.s.).
 With a real target, learned weights can carry a little signal.
 
+## Real SAM3D failures: does v1.2 beat the rule where the inputs are wrong? (2026-09-26)
+
+The corruption sweep only shows recovery from *synthetic* damage.
+`python -m fusion external-published analysis --what failures`
+(`failure_strata.py`) labels every test frame by real input failures and
+compares v1.2 with the rule, per frame and per subject (subjects with >= 10
+frames in a level; Wilcoxon). 12 joints; difference = rule minus v1.2, so
+positive = v1.2 better.
+
+| Stratum (share of frames) | Gymnastics (pseudo-GT) | FreeMan | Fit3D |
+|---|---|---|---|
+| View disagreement, 0-50 % (label-free) | -0.09 (26/137) | +0.02 (29/37) | -0.03 (3/8) |
+| View disagreement, 90-99 % | -0.40 (6/82) | +0.11 (29/31) | -0.11 (2/8) |
+| View disagreement, top 1 % | -1.00 (3/24) | +0.20 (19/22) | -0.07 (3/8) |
+| Worse view error, top 1 % | -0.83 (0/19) | -0.21 (18/23, n.s.) | +0.23 (7/8, p 0.04) |
+| One view with a limb > 60 deg off (face / side) | -0.44 / -1.36 (0.4 % / 0.1 %) | +0.09 / +0.14 (3.3 % / 3.7 %; 27/30, 30/31) | +0.59 / +0.61 (0.2 % each; 5/6, 6/7) |
+| Both views with a limb > 60 deg off | -1.16 (< 0.1 %) | -0.18 (1.2 %) | +0.05 (0.3 %) |
+| Worse view > 2x the better | -0.26 (14.8 %) | +0.12 (4.9 %; 32/34) | +1.10 (0.3 %; 6/6, p 0.03) |
+| Left-right swap in a view | < 0.1 % of frames | < 0.1 % | none |
+
+Reading:
+
+1. **SAM3D rarely fails grossly in these data.** Left-right swaps are
+   practically absent. A limb more than 60 degrees off occurs in 0.5 % of the
+   private frames, 8 % of FreeMan and 0.7 % of Fit3D.
+2. **The rule already handles a single failing view.** When one FreeMan view
+   has a gross limb error (face 81 mm, side 52 mm), the rule gives 50.4 mm,
+   better than the good view alone. This leaves little for a learned
+   correction to recover.
+3. **On the datasets with an independent reference, v1.2 is ahead of the rule
+   in the failure strata, but by very little.** FreeMan: +0.1-0.2 mm in the
+   hard strata, consistent over subjects (27/30 to 32/34). Fit3D: +0.6-1.1 mm
+   in the 0.2-0.3 % of frames where one view fails (p 0.03 with 6-7
+   subjects). The gain grows with the difficulty of the frame, which matches
+   the corruption sweep, but it is 0.3-1 % of the error.
+4. **Frames where both views fail are not rescued.** Top-1 % frames of FreeMan
+   (~200-350 mm) are equal for v1.2 and the rule.
+5. **The private column goes the other way** (v1.2 loses up to 1 mm on the
+   hardest frames). Its reference is triangulated from the same 2D keypoints
+   and favours the rule by construction (see the pseudo-reference section),
+   so it is not evidence either way.
+
+Conclusion: on real inputs the learned residual is a small, consistent
+safeguard that gains most where one view fails. The accuracy of the method
+comes from the closed-form depth-aware rule. The paper should present the
+rule as the main contribution and the network as a robustness component,
+with the synthetic corruption sweep as its main evidence and these strata as
+the real-data check.
+
 ## Status (2026-09-25)
 
 * Robustness, strata, measurement, pseudo-reference, cost and alpha

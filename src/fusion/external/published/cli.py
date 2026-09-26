@@ -35,7 +35,7 @@
     pseudo-reference build   triangulate FreeMan's two selected views into a
                   private-style pseudo-reference, to measure how much such a
                   reference flatters two-view fusion
-    analysis      --dataset ... --run <sweep> [--what strata,measurement]
+    analysis      --dataset ... --run <sweep> [--what strata,measurement,failures]
                   where the learned model beats its rule (strata that ignore the
                   reference) and trunk-rotation measurement error per cycle
     corruption    --dataset ... --run <sweep> [--levels 0,0.5,1,2] [--variants model,rule]
