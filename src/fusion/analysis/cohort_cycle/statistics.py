@@ -432,8 +432,13 @@ def analyze_feature_artifacts(
     try_random_slope: bool = True,
     log_outcomes: set[str] | None = None,
     sensitivity_sources: Mapping[str, str | Path] | None = None,
+    primary_source: str = "oof_a6",
 ) -> dict[str, int]:
-    """Run the prespecified core, variability, ICC, and phase analyses."""
+    """Run the prespecified core, variability, ICC, and phase analyses.
+
+    ``primary_source`` names the pose source of ``feature_root`` in the
+    sensitivity tables ("oof_a6" for the archived model, "ours" for v1.2).
+    """
     source = Path(feature_root)
     output = Path(output_root)
     if output.exists():
@@ -625,7 +630,7 @@ def analyze_feature_artifacts(
                 phase_rows.append({"metric": metric, **cluster})
     phase_rows = adjust_phase_cluster_families(phase_rows)
 
-    sensitivity_paths: dict[str, Path] = {"oof_a6": source}
+    sensitivity_paths: dict[str, Path] = {str(primary_source): source}
     for name, path in (sensitivity_sources or {}).items():
         if name in sensitivity_paths:
             raise ValueError(f"duplicate sensitivity source: {name}")

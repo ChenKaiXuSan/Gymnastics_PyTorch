@@ -294,13 +294,12 @@ def _render_figure(
             "#a14f3d",
         ),
     )
-    source_order = [
-        source
-        for source in ("oof_a6", "face", "side", "deterministic")
-        if source in set(sensitivity["source"])
-    ]
+    secondary = ("face", "side", "deterministic")
+    primary = [s for s in dict.fromkeys(sensitivity["source"]) if s not in secondary]
+    source_order = primary + [s for s in secondary if s in set(sensitivity["source"])]
     source_labels = {
         "oof_a6": "OOF A6",
+        "ours": "Ours (OOF)",
         "face": "Face",
         "side": "Side",
         "deterministic": "Deterministic",

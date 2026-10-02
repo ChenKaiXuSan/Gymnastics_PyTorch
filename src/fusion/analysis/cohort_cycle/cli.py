@@ -62,6 +62,8 @@ def make_parser() -> argparse.ArgumentParser:
             child.add_argument("--output-root")
             child.add_argument("--permutations", type=int)
             child.add_argument("--no-random-slope", action="store_true")
+            child.add_argument("--primary-source", default="oof_a6",
+                               help="name of the feature-root pose source in the sensitivity tables")
             child.add_argument(
                 "--sensitivity-feature",
                 action="append",
@@ -350,6 +352,7 @@ def _cmd_analyze(
         try_random_slope=not args.no_random_slope,
         log_outcomes={str(value) for value in raw_log},
         sensitivity_sources=_parse_named_paths(args.sensitivity_feature),
+        primary_source=args.primary_source,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
