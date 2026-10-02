@@ -341,8 +341,8 @@ the residual is the closed-form rule. The long-term context is
 - `configs/`: runtime configuration grouped by domain.
 - `docs/`: current workflow, module, and runbook documentation.
 - `pegasus/`: NQSV job scripts for the cluster (one per stage family); see `pegasus/README.md`.
-- `paper/image_and_vision_computing/`: local manuscript workspace; generated builds are not
-  part of the Python package.
+- `paper/scientific_reports/`: local (git-ignored) manuscript workspace of the Scientific
+  Reports submission; generated builds are not part of the Python package.
 
 ## Verification
 

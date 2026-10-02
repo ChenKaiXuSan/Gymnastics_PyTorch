@@ -38,6 +38,6 @@ The four pipeline stages are the top-level packages and the only entry points;
 | `src/fusion/external/third_party/` | Upstream baseline checkouts: git submodules (VideoPose3D, CanonPose, MHFormer, MDVPose) plus the vendored `metapose` (TensorFlow, patched; see its `VENDORED.md`). Run `git submodule update --init --recursive` after cloning. |
 | `tests/` | Automated verification of active code. |
 | `pegasus/` | NQSV job scripts for the cluster, named by stage (`fusion_*`, `archive_*`, `benchmark_*`); see `pegasus/README.md`. |
-| `paper/` | Manuscript sources (`sports_engineering/` is current; `image_and_vision_computing/`, `scientific_reports/` earlier submissions) and their generation scripts. |
+| `paper/` | Git-ignored manuscript workspace: `scientific_reports/` (current submission, final model v1.2; the 2026-09-18 draft is under its `archive/`). |
 | `docs/` | This documentation: `pipeline.md`, `cycle_aware_fusion.md`, `triangulation.md`, `results_summary.md`, dated `research/` reports, retired notes under `archive/`. |
 | `local/` | Ignored checkpoints, videos, runs, caches, and migration backups. |
