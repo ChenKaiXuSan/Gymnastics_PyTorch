@@ -119,14 +119,30 @@ class DeterministicTrialTransform:
         self.method = str(method)
 
     def __call__(self, trial: PosePairTrial) -> PosePairTrial:
-        fused = np.asarray(fuse_views(self.method, trial.face, trial.side, fps=float(trial.fps)), dtype=np.float32)
+        valid_face = np.asarray(trial.valid_face, dtype=bool)
+        valid_side = np.asarray(trial.valid_side, dtype=bool)
+        # A trial stores missing joints as zeros; the fusion methods expect NaN
+        # (a zero would be fused as a real point at the origin, and a frame
+        # whose view-A body frame is missing would be restored to all zeros).
+        face = np.where(valid_face[..., None], np.asarray(trial.face, dtype=np.float64), np.nan)
+        side = np.where(valid_side[..., None], np.asarray(trial.side, dtype=np.float64), np.nan)
+        fused = np.asarray(fuse_views(self.method, face, side, fps=float(trial.fps)), dtype=np.float32)
+        if self.method not in VIEW_ROWS:
+            # A joint valid in one view only takes that view -- the convention of
+            # the closed-form rule and the model -- so every method is scored on
+            # the same joint-frames. The rules restore to view A's frame and give
+            # nothing where view A is missing; per-frame Procrustes scoring makes
+            # the other view's frame equally valid there.
+            missing = ~np.isfinite(fused).all(axis=-1)
+            fused = np.where((missing & valid_face & ~valid_side)[..., None], face, fused)
+            fused = np.where((missing & valid_side & ~valid_face)[..., None], side, fused).astype(np.float32)
         finite = np.isfinite(fused).all(axis=-1)
         if self.method == "view_a":
-            valid = np.asarray(trial.valid_face, dtype=bool) & finite
+            valid = valid_face & finite
         elif self.method == "view_b":
-            valid = np.asarray(trial.valid_side, dtype=bool) & finite
+            valid = valid_side & finite
         else:
-            valid = (np.asarray(trial.valid_face, dtype=bool) | np.asarray(trial.valid_side, dtype=bool)) & finite
+            valid = (valid_face | valid_side) & finite
         fused = np.where(valid[..., None], fused, 0.0).astype(np.float32)
         return replace(
             trial,
